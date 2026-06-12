@@ -3,6 +3,7 @@
 !.env.example
 .DS_Store
 .superpowers/
+.worktrees/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -11,4 +12,3 @@ node_modules/
 dist/
 coverage/
 *.pyc
-
