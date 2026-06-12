@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+.superpowers/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+node_modules/
+dist/
+coverage/
+*.pyc
+
