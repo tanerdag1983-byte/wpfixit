@@ -70,7 +70,7 @@ wp-fixpilot-new/
 - Create: `.github/workflows/ci.yml`
 - Create: `.env.example`
 
-- [ ] **Step 1: Write failing backend health test**
+- [x] **Step 1: Write failing backend health test**
 
 ```python
 from fastapi.testclient import TestClient
@@ -85,13 +85,13 @@ def test_health_reports_service_status() -> None:
     assert response.json() == {"status": "ok", "service": "wp-fixpilot-api"}
 ```
 
-- [ ] **Step 2: Run backend test and verify RED**
+- [x] **Step 2: Run backend test and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_health.py -q`
 
 Expected: FAIL because `app.main` does not exist.
 
-- [ ] **Step 3: Implement minimal FastAPI application**
+- [x] **Step 3: Implement minimal FastAPI application**
 
 ```python
 from fastapi import FastAPI
@@ -104,7 +104,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "wp-fixpilot-api"}
 ```
 
-- [ ] **Step 4: Write and run failing frontend smoke test**
+- [x] **Step 4: Write and run failing frontend smoke test**
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -120,12 +120,12 @@ Run: `cd frontend && npm test -- --run`
 
 Expected: FAIL because the app is not implemented.
 
-- [ ] **Step 5: Implement frontend shell and local services**
+- [x] **Step 5: Implement frontend shell and local services**
 
 Create the minimal app heading, Vite/Vitest configuration, PostgreSQL and Redis
 services, strict environment validation, and CI jobs for backend and frontend.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
