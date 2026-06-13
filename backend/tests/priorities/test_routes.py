@@ -1,0 +1,107 @@
+from datetime import date, timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.domains.audits.models import PageAudit, SeoRecommendation
+from app.domains.ga4.models import Ga4PagePerformance
+from app.domains.gsc.models import GscPagePerformance
+from app.domains.wordpress.models import WordPressPage
+from tests.projects.conftest import ProjectFixtures
+
+
+def test_priority_endpoint_combines_wordpress_gsc_and_ga4(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="wp-priority",
+        project_id=projects.member_project.id,
+        wordpress_object_id=42,
+        post_type="page",
+        status="publish",
+        title="Transmissie revisie",
+        slug="revisie",
+        url="https://member.example/revisie",
+    )
+    session.add(page)
+    session.flush()
+    session.add(
+        PageAudit(
+            id="audit-priority",
+            project_id=projects.member_project.id,
+            wordpress_page_id=page.id,
+            score=48,
+            page_type_label="service",
+            facts={"importance": 0.9},
+        )
+    )
+    today = date.today()
+    for offset, clicks, sessions, conversions in (
+        (30, 180, 1_800, 18),
+        (5, 80, 1_100, 3),
+    ):
+        row_date = today - timedelta(days=offset)
+        session.add_all(
+            [
+                GscPagePerformance(
+                    id=f"gsc-{offset}",
+                    project_id=projects.member_project.id,
+                    property_uri="sc-domain:member.example",
+                    date=row_date,
+                    page_url=page.url,
+                    clicks=clicks,
+                    impressions=10_000,
+                    ctr=clicks / 10_000,
+                    average_position=4.8,
+                ),
+                Ga4PagePerformance(
+                    id=f"ga4-{offset}",
+                    project_id=projects.member_project.id,
+                    property_id="123",
+                    date=row_date,
+                    page_path="/revisie",
+                    sessions=sessions,
+                    active_users=sessions - 100,
+                    engagement_rate=0.58,
+                    key_events=conversions,
+                    revenue=None,
+                ),
+            ]
+        )
+    session.commit()
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/seo-priority-score"
+    )
+
+    assert response.status_code == 200
+    result = response.json()["items"][0]
+    assert result["url"] == page.url
+    assert result["seo_score"] == 48
+    assert result["clicks"] == 260
+    assert result["impressions"] == 20_000
+    assert result["sessions"] == 2_900
+    assert result["conversions"] == 21
+    assert result["priority_score"] > 50
+    assert result["action"]
+    assert result["evidence"]
+
+    first = client.post(
+        f"/projects/{projects.member_project.id}/recommendations/generate",
+        params={"limit": 1},
+    )
+    second = client.post(
+        f"/projects/{projects.member_project.id}/recommendations/generate",
+        params={"limit": 1},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["items"][0]["approval_state"] == "proposed"
+    assert first.json()["items"][0]["provider"] == "rules"
+    assert session.scalar(select(func.count(SeoRecommendation.id))) == 1

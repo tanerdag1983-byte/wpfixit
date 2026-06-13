@@ -7,6 +7,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -65,6 +66,12 @@ class SeoIssue(Base):
 
 class SeoRecommendation(Base):
     __tablename__ = "seo_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "evidence_hash",
+            name="seo_recommendations_evidence_hash_key",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(
@@ -87,9 +94,25 @@ class SeoRecommendation(Base):
         nullable=False,
     )
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(128))
+    evidence_hash: Mapped[str | None] = mapped_column(
+        String(64),
+    )
+    input_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
-

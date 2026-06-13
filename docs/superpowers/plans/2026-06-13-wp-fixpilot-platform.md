@@ -503,7 +503,7 @@ Commit `feat: add external crawl analysis`.
 - Create: `frontend/src/routes/dashboard/OpportunitiesPage.tsx`
 - Create: `frontend/src/routes/dashboard/PriorityPage.tsx`
 
-- [ ] **Step 1: Write failing deterministic score tests**
+- [x] **Step 1: Write failing deterministic score tests**
 
 ```python
 def test_high_impressions_low_ctr_and_low_seo_score_rank_first(score_pages):
@@ -518,7 +518,7 @@ def test_high_impressions_low_ctr_and_low_seo_score_rank_first(score_pages):
     assert results[0].priority_score > results[1].priority_score
 ```
 
-- [ ] **Step 2: Write failing AI schema and evidence tests**
+- [x] **Step 2: Write failing AI schema and evidence tests**
 
 ```python
 def test_ai_recommendation_requires_evidence_and_never_auto_approves(generator):
@@ -528,26 +528,26 @@ def test_ai_recommendation_requires_evidence_and_never_auto_approves(generator):
     assert recommendation.approval_state == "proposed"
 ```
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run priority and recommendation tests.
 
-- [ ] **Step 4: Implement normalized component scoring**
+- [x] **Step 4: Implement normalized component scoring**
 
 Combine audit severity, GSC opportunity, ranking opportunity, GA4 conversion,
 trend, importance, and confidence into a bounded 0-100 score with explanations.
 
-- [ ] **Step 5: Implement structured AI recommendations**
+- [x] **Step 5: Implement structured AI recommendations**
 
 Use schema-validated outputs, bounded excerpts, evidence IDs, provider/model
 metadata, deduplication, retries, usage metering, and rule-based fallback.
 
-- [ ] **Step 6: Implement endpoint and opportunity interfaces**
+- [x] **Step 6: Implement endpoint and opportunity interfaces**
 
 Return all required fields from `/seo-priority-score`, component breakdowns,
 concrete actions, confidence, filters, and recommendation detail.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run deterministic fixtures, OpenAI adapter contracts, UI tests, and build.
 Commit `feat: add data-driven SEO priority engine`.
