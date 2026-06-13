@@ -14,6 +14,12 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/includes/class-auth.php';
+require_once __DIR__ . '/includes/seo-adapters/interface-seo-adapter.php';
+require_once __DIR__ . '/includes/seo-adapters/class-adapter-changes.php';
+require_once __DIR__ . '/includes/seo-adapters/class-yoast-adapter.php';
+require_once __DIR__ . '/includes/seo-adapters/class-rank-math-adapter.php';
+require_once __DIR__ . '/includes/seo-adapters/class-aioseo-adapter.php';
+require_once __DIR__ . '/includes/class-change-controller.php';
 require_once __DIR__ . '/includes/class-rest-controller.php';
 
 register_activation_hook(__FILE__, static function (): void {
@@ -31,3 +37,17 @@ add_action('rest_api_init', static function (): void {
     $controller->register_routes();
 });
 
+add_action('template_redirect', static function (): void {
+    if (!is_singular()) {
+        return;
+    }
+    $target = (string) get_post_meta(
+        (int) get_queried_object_id(),
+        '_wp_fixpilot_redirect_to',
+        true
+    );
+    if ($target !== '') {
+        wp_safe_redirect($target, 301, 'WP FixPilot');
+        exit;
+    }
+});

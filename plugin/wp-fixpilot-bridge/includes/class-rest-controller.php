@@ -18,6 +18,16 @@ final class WPFixPilot_REST_Controller
             'callback' => [$this, 'inventory'],
             'permission_callback' => [$this, 'authorize'],
         ]);
+        register_rest_route(self::NAMESPACE, '/content/(?P<id>\d+)', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'current_content'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
+        register_rest_route(self::NAMESPACE, '/changes/(?P<id>\d+)', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'apply_change'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
     }
 
     public function authorize(WP_REST_Request $request): bool|WP_Error
@@ -87,7 +97,9 @@ final class WPFixPilot_REST_Controller
                 'slug' => (string) $post->post_name,
                 'url' => get_permalink($post),
                 'modified' => get_post_modified_time('c', true, $post),
-                'content_hash' => hash('sha256', $content),
+                'content_hash' => (
+                    new WPFixPilot_Change_Controller()
+                )->current_state((int) $post->ID)['content_hash'],
             ];
         }
 
@@ -97,6 +109,25 @@ final class WPFixPilot_REST_Controller
             'count' => count($items),
             'items' => $items,
         ]);
+    }
+
+    public function current_content(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = (new WPFixPilot_Change_Controller())->current_state(
+            (int) $request->get_param('id')
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
+    }
+
+    public function apply_change(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = (new WPFixPilot_Change_Controller())->apply(
+            (int) $request->get_param('id'),
+            (array) $request->get_json_params()
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
     }
 
     private function detect_seo_plugin(): ?string
@@ -113,4 +144,3 @@ final class WPFixPilot_REST_Controller
         return null;
     }
 }
-

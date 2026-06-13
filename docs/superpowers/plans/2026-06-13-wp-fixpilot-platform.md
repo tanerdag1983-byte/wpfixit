@@ -563,7 +563,7 @@ Commit `feat: add data-driven SEO priority engine`.
 - Create: `backend/tests/wordpress/test_publishing.py`
 - Create: `frontend/src/features/publishing/`
 
-- [ ] **Step 1: Write failing content hash conflict test**
+- [x] **Step 1: Write failing content hash conflict test**
 
 ```python
 def test_publish_rejects_changed_wordpress_base(publisher, proposal):
@@ -574,31 +574,31 @@ def test_publish_rejects_changed_wordpress_base(publisher, proposal):
         publisher.publish(proposal)
 ```
 
-- [ ] **Step 2: Write failing plugin adapter tests**
+- [x] **Step 2: Write failing plugin adapter tests**
 
 Test title, description, canonical, noindex, content, internal links, and
 redirect writes for Yoast SEO, Rank Math, and All in One SEO.
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run pytest and PHPUnit focused publishing tests.
 
-- [ ] **Step 4: Implement proposal, approval, and publish flow**
+- [x] **Step 4: Implement proposal, approval, and publish flow**
 
 Require exact diffs, project role authorization, fresh content hashes, signed
 bridge calls, immutable audit records, and safe error mapping.
 
-- [ ] **Step 5: Implement rollback as audited mutation**
+- [x] **Step 5: Implement rollback as audited mutation**
 
 Rollback restores captured before values only after confirmation and records its
 own actor, timestamp, before value, and after value.
 
-- [ ] **Step 6: Implement review UI**
+- [x] **Step 6: Implement review UI**
 
 Build side-by-side diffs, evidence, approval controls, conflicts, publish
 progress, history, and rollback confirmation.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run plugin, backend, frontend, and end-to-end publishing tests.
 Commit `feat: add approved WordPress publishing and rollback`.

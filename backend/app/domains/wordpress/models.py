@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
     Integer,
@@ -73,3 +74,68 @@ class WordPressPage(Base):
         nullable=False,
     )
 
+
+class WordPressChangeProposal(Base):
+    __tablename__ = "wordpress_change_proposals"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    wordpress_page_id: Mapped[str] = mapped_column(
+        ForeignKey("wordpress_pages.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    recommendation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("seo_recommendations.id", ondelete="SET NULL"),
+    )
+    change_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_value: Mapped[object] = mapped_column(JSON, nullable=False)
+    after_value: Mapped[object] = mapped_column(JSON, nullable=False)
+    base_content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    approval_state: Mapped[str] = mapped_column(
+        String(24),
+        default="proposed",
+        server_default="proposed",
+        nullable=False,
+    )
+    proposed_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_content_hash: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class WordPressChangeEvent(Base):
+    __tablename__ = "wordpress_change_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    proposal_id: Mapped[str] = mapped_column(
+        ForeignKey("wordpress_change_proposals.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    actor_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mutation_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    before_value: Mapped[object] = mapped_column(JSON, nullable=False)
+    after_value: Mapped[object] = mapped_column(JSON, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_response: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

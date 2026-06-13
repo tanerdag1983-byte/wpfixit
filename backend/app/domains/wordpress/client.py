@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import secrets
 import time
 from dataclasses import dataclass
@@ -57,6 +58,22 @@ class WordPressClient:
         response.raise_for_status()
         return response.json()
 
+    def _post(self, endpoint: str, payload: dict) -> dict:
+        route = f"/wpfixpilot/v1/{endpoint}"
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        response = requests.post(
+            f"{self.site_url}/wp-json{route}",
+            headers={
+                **self._headers("POST", route, body),
+                "Content-Type": "application/json",
+            },
+            data=body.encode(),
+            timeout=30,
+            verify=self.verify_ssl,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def health(self) -> WordPressHealth:
         data = self._get("health")
         return WordPressHealth(
@@ -69,3 +86,8 @@ class WordPressClient:
     def inventory(self) -> list[dict]:
         return list(self._get("inventory").get("items", []))
 
+    def current_state(self, object_id: int) -> dict:
+        return self._get(f"content/{object_id}")
+
+    def apply_change(self, object_id: int, payload: dict) -> dict:
+        return self._post(f"changes/{object_id}", payload)
