@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     google_redirect_uri: str = (
         "http://localhost:5173/auth/google/callback"
     )
+    firecrawl_api_key: str = ""
+    firecrawl_webhook_secret: str = ""
+    firecrawl_webhook_url: str = "http://localhost:8000/webhooks/firecrawl"
 
 
 @lru_cache

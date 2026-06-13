@@ -448,7 +448,7 @@ Commit `feat: integrate Google Analytics 4`.
 - Create: `backend/tests/crawls/`
 - Create: `frontend/src/routes/dashboard/CrawlPage.tsx`
 
-- [ ] **Step 1: Write failing provider contract tests**
+- [x] **Step 1: Write failing provider contract tests**
 
 ```python
 @pytest.mark.parametrize("provider", provider_contracts())
@@ -458,7 +458,7 @@ def test_provider_never_exceeds_project_limit(provider):
     assert request.limit == 5_000
 ```
 
-- [ ] **Step 2: Write failing webhook idempotency test**
+- [x] **Step 2: Write failing webhook idempotency test**
 
 ```python
 def test_duplicate_firecrawl_webhook_is_processed_once(client, signed_payload):
@@ -467,26 +467,26 @@ def test_duplicate_firecrawl_webhook_is_processed_once(client, signed_payload):
     assert processed_event_count() == 1
 ```
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run crawl tests and confirm failures are due to missing implementation.
 
-- [ ] **Step 4: Implement Firecrawl adapter**
+- [x] **Step 4: Implement Firecrawl adapter**
 
 Start, poll, cancel, paginate, verify webhook events, map errors, retry 429/5xx,
 restrict domains, and enforce a 5,000 URL application cap.
 
-- [ ] **Step 5: Persist pages, links, and technical issues**
+- [x] **Step 5: Persist pages, links, and technical issues**
 
 Normalize URLs and detect broken links, redirect chains, duplicate metadata,
 canonical conflicts, noindex conflicts, and orphan candidates.
 
-- [ ] **Step 6: Implement crawl dashboard and history**
+- [x] **Step 6: Implement crawl dashboard and history**
 
 Provide crawl state, progress, issue filters, affected URLs, links, and run
 comparison.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run provider contracts, worker tests, UI tests, and build.
 Commit `feat: add external crawl analysis`.

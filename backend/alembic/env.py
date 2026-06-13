@@ -6,6 +6,7 @@ from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
 from app.domains.audits import models as audit_models  # noqa: F401
+from app.domains.crawls import models as crawl_models  # noqa: F401
 from app.domains.ga4 import models as ga4_models  # noqa: F401
 from app.domains.google import models as google_models  # noqa: F401
 from app.domains.gsc import models as gsc_models  # noqa: F401
