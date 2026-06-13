@@ -41,6 +41,27 @@ class AiConnectionTestRequest(BaseModel):
     model: str | None = Field(default=None, max_length=255)
 
 
+class AiConnectionResponse(BaseModel):
+    id: str
+    name: str
+    provider: AiProvider
+    base_url: str
+    default_model: str | None
+    enabled: bool
+    last_tested_at: datetime | None
+    last_test_status: str | None
+    last_test_message: str | None
+    configured: bool
+
+
+class AiConnectionListResponse(BaseModel):
+    items: list[AiConnectionResponse]
+
+
+class AiConnectionTestResponse(AiConnectionResponse):
+    pass
+
+
 class CompanyProfileRequest(BaseModel):
     company_name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=5_000)
@@ -50,24 +71,32 @@ class CompanyProfileRequest(BaseModel):
     custom_prompt: str = Field(default="", max_length=5_000)
 
 
-@router.get("/organizations/{organization_id}/ai-connections")
+@router.get(
+    "/organizations/{organization_id}/ai-connections",
+    response_model=AiConnectionListResponse,
+)
 def get_ai_connections(
     organization_id: str,
     session: SessionDependency,
     user: UserDependency,
-) -> list[dict]:
+) -> dict:
     _require_membership(session, user, organization_id)
     connections = session.scalars(
         select(AiConnection)
         .where(AiConnection.organization_id == organization_id)
         .order_by(AiConnection.name, AiConnection.id)
     ).all()
-    return [_connection_payload(connection) for connection in connections]
+    return {
+        "items": [
+            _connection_payload(connection) for connection in connections
+        ]
+    }
 
 
 @router.post(
     "/organizations/{organization_id}/ai-connections",
     status_code=status.HTTP_201_CREATED,
+    response_model=AiConnectionResponse,
 )
 def create_ai_connection(
     organization_id: str,
@@ -94,7 +123,10 @@ def create_ai_connection(
     return _connection_payload(connection)
 
 
-@router.put("/organizations/{organization_id}/ai-connections/{connection_id}")
+@router.put(
+    "/organizations/{organization_id}/ai-connections/{connection_id}",
+    response_model=AiConnectionResponse,
+)
 def update_ai_connection(
     organization_id: str,
     connection_id: str,
@@ -153,7 +185,8 @@ def delete_ai_connection(
 
 
 @router.post(
-    "/organizations/{organization_id}/ai-connections/{connection_id}/test"
+    "/organizations/{organization_id}/ai-connections/{connection_id}/test",
+    response_model=AiConnectionTestResponse,
 )
 def test_ai_connection(
     organization_id: str,

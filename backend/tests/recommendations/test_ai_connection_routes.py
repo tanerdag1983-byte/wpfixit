@@ -1,6 +1,7 @@
 from uuid import UUID
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,6 +46,73 @@ def create_connection(
     return response.json()
 
 
+def set_member_role(
+    session: Session,
+    projects: ProjectFixtures,
+    role: str,
+) -> None:
+    membership = session.get(
+        OrganizationMember,
+        (projects.organization.id, projects.member.id),
+    )
+    assert membership is not None
+    membership.role = role
+    session.commit()
+
+
+def test_connection_routes_have_explicit_credential_free_response_models(
+    auth_as,
+) -> None:
+    expected_fields = {
+        "id",
+        "name",
+        "provider",
+        "base_url",
+        "default_model",
+        "enabled",
+        "last_tested_at",
+        "last_test_status",
+        "last_test_message",
+        "configured",
+    }
+    routes = {
+        (route.path, next(iter(route.methods))): route
+        for route in auth_as.app.routes
+        if isinstance(route, APIRoute)
+        and route.path.startswith("/organizations/{organization_id}/ai-connections")
+    }
+
+    item_routes = [
+        routes[("/organizations/{organization_id}/ai-connections", "POST")],
+        routes[
+            (
+                "/organizations/{organization_id}/ai-connections/{connection_id}",
+                "PUT",
+            )
+        ],
+    ]
+    list_route = routes[
+        ("/organizations/{organization_id}/ai-connections", "GET")
+    ]
+    test_route = routes[
+        (
+            "/organizations/{organization_id}/ai-connections/{connection_id}/test",
+            "POST",
+        )
+    ]
+
+    for route in item_routes:
+        assert route.response_model is not None
+        assert set(route.response_model.model_fields) == expected_fields
+    assert list_route.response_model is not None
+    assert set(list_route.response_model.model_fields) == {"items"}
+    assert set(
+        list_route.response_model.model_fields["items"].annotation.__args__[0].model_fields
+    ) == expected_fields
+    assert test_route.response_model is not None
+    assert set(test_route.response_model.model_fields) == expected_fields
+
+
 def test_owner_can_create_list_update_and_delete_connection(
     client: TestClient,
     session: Session,
@@ -76,7 +144,7 @@ def test_owner_can_create_list_update_and_delete_connection(
         f"/organizations/{projects.organization.id}/ai-connections"
     )
     assert list_response.status_code == 200
-    assert list_response.json() == [created]
+    assert list_response.json() == {"items": [created]}
 
     update_payload = connection_payload(
         name="OpenAI primary",
@@ -135,13 +203,7 @@ def test_member_can_list_but_cannot_manage_connections(
     auth_as,
     projects: ProjectFixtures,
 ) -> None:
-    membership = session.get(
-        OrganizationMember,
-        (projects.organization.id, projects.member.id),
-    )
-    assert membership is not None
-    membership.role = "member"
-    session.commit()
+    set_member_role(session, projects, "member")
     auth_as(projects.member)
 
     list_response = client.get(
@@ -153,8 +215,34 @@ def test_member_can_list_but_cannot_manage_connections(
     )
 
     assert list_response.status_code == 200
-    assert list_response.json() == []
+    assert list_response.json() == {"items": []}
     assert create_response.status_code == 404
+
+
+@pytest.mark.parametrize("operation", ["update", "delete", "test"])
+def test_member_cannot_update_delete_or_test_connection(
+    operation: str,
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    connection = create_connection(client, projects)
+    set_member_role(session, projects, "member")
+    endpoint = (
+        f"/organizations/{projects.organization.id}/ai-connections/"
+        f"{connection['id']}"
+    )
+
+    if operation == "update":
+        response = client.put(endpoint, json=connection_payload())
+    elif operation == "delete":
+        response = client.delete(endpoint)
+    else:
+        response = client.post(f"{endpoint}/test", json={})
+
+    assert response.status_code == 404
 
 
 def test_duplicate_connection_name_returns_conflict(
@@ -168,6 +256,26 @@ def test_duplicate_connection_name_returns_conflict(
     response = client.post(
         f"/organizations/{projects.organization.id}/ai-connections",
         json=connection_payload(provider="anthropic"),
+    )
+
+    assert response.status_code == 409
+
+
+def test_update_to_duplicate_connection_name_returns_conflict(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    create_connection(client, projects)
+    second = create_connection(client, projects, name="Second connection")
+
+    response = client.put(
+        (
+            f"/organizations/{projects.organization.id}/ai-connections/"
+            f"{second['id']}"
+        ),
+        json=connection_payload(),
     )
 
     assert response.status_code == 409
@@ -330,6 +438,47 @@ def test_connection_test_requires_body_or_default_model(
     )
 
     assert response.status_code == 422
+
+
+def test_connection_test_uses_default_model_when_body_has_no_model(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    connection = create_connection(
+        client,
+        projects,
+        default_model="saved-default-model",
+    )
+
+    class ProviderResponse:
+        status_code = 204
+
+    def provider_post(url: str, *, headers: dict, json: dict, timeout: int):
+        assert url == "https://api.openai.com/v1/responses"
+        assert headers == {"Authorization": "Bearer secret-key"}
+        assert json == {
+            "model": "saved-default-model",
+            "input": "Reply with OK",
+            "max_output_tokens": 8,
+        }
+        assert timeout == 15
+        return ProviderResponse()
+
+    monkeypatch.setattr("app.api.routes.ai_settings.requests.post", provider_post)
+
+    response = client.post(
+        (
+            f"/organizations/{projects.organization.id}/ai-connections/"
+            f"{connection['id']}/test"
+        ),
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["last_test_status"] == "connected"
 
 
 def test_failed_connection_test_is_safe_and_persisted(
