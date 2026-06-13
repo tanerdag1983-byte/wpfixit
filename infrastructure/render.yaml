@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: wp-fixpilot-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -e .
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: WP_FIXPILOT_ENVIRONMENT
+        value: production
+      - key: WP_FIXPILOT_DATABASE_URL
+        fromDatabase:
+          name: wp-fixpilot-db
+          property: connectionString
+      - key: WP_FIXPILOT_FRONTEND_URL
+        sync: false
+      - key: WP_FIXPILOT_CORS_ORIGINS
+        sync: false
+      - key: WP_FIXPILOT_TRUSTED_HOSTS
+        sync: false
+      - key: WP_FIXPILOT_SUPABASE_URL
+        sync: false
+      - key: WP_FIXPILOT_SUPABASE_ANON_KEY
+        sync: false
+      - key: WP_FIXPILOT_ENCRYPTION_KEY
+        generateValue: true
+      - key: WP_FIXPILOT_GOOGLE_CLIENT_ID
+        sync: false
+      - key: WP_FIXPILOT_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: WP_FIXPILOT_GOOGLE_REDIRECT_URI
+        sync: false
+      - key: WP_FIXPILOT_FIRECRAWL_API_KEY
+        sync: false
+      - key: WP_FIXPILOT_FIRECRAWL_WEBHOOK_SECRET
+        sync: false
+      - key: WP_FIXPILOT_FIRECRAWL_WEBHOOK_URL
+        sync: false
+      - key: WP_FIXPILOT_OPENAI_API_KEY
+        sync: false
+
+databases:
+  - name: wp-fixpilot-db
+    plan: basic-256mb
+    databaseName: wpfixpilot
+    user: wpfixpilot
+    ipAllowList: []
