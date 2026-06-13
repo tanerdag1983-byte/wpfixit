@@ -6,7 +6,9 @@ from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
 from app.domains.audits import models as audit_models  # noqa: F401
+from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.projects import models as project_models  # noqa: F401
+from app.domains.subscriptions import models as subscription_models  # noqa: F401
 from app.domains.wordpress import models as wordpress_models  # noqa: F401
 
 config = context.config

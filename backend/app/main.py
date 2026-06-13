@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.wordpress import router as wordpress_router
 
@@ -10,6 +11,7 @@ app = FastAPI(
 )
 app.include_router(projects_router)
 app.include_router(wordpress_router)
+app.include_router(dashboards_router)
 
 
 @app.get("/health")

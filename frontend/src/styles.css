@@ -537,6 +537,131 @@ h2 {
   display: block;
 }
 
+.audit-section {
+  margin-top: 54px;
+}
+
+.result-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) repeat(4, minmax(120px, 0.7fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.filter-bar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.filter-bar select,
+.table-search {
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  color: var(--ink);
+}
+
+.filter-bar select {
+  padding: 0 10px;
+}
+
+.table-search {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  align-self: end;
+  padding: 0 12px;
+}
+
+.table-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+}
+
+.audit-table-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+  border-block: 1px solid var(--line);
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 15px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.audit-table th {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.audit-table td {
+  font-size: 12px;
+}
+
+.audit-table td:first-child {
+  min-width: 300px;
+}
+
+.audit-table td strong,
+.audit-table td small {
+  display: block;
+}
+
+.audit-table td small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.priority-tag {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #eef2ef;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.priority-tag.high,
+.priority-tag.critical {
+  background: #ffe9de;
+  color: #ad431e;
+}
+
+.priority-tag.medium {
+  background: #fff4cc;
+  color: #8a6810;
+}
+
+.table-score {
+  font-family: "Manrope", sans-serif;
+  font-weight: 800;
+}
+
+.empty-state {
+  padding: 38px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .priority-row strong {
   font-size: 13px;
 }
@@ -748,6 +873,10 @@ h2 {
   .workspace-grid {
     grid-template-columns: 1fr;
   }
+
+  .filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -817,6 +946,10 @@ h2 {
 
   .workspace-grid {
     gap: 34px;
+  }
+
+  .filter-bar {
+    grid-template-columns: 1fr;
   }
 
   .auth-layout {

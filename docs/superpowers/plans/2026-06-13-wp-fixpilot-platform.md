@@ -288,7 +288,7 @@ Commit `feat: add WordPress sync and deterministic SEO audits`.
 - Create: `frontend/src/features/recommendations/`
 - Create: `frontend/tests/dashboard.spec.ts`
 
-- [ ] **Step 1: Write failing combined filter API test**
+- [x] **Step 1: Write failing combined filter API test**
 
 ```python
 def test_dashboard_combines_search_and_all_filters(client, project):
@@ -307,27 +307,27 @@ def test_dashboard_combines_search_and_all_filters(client, project):
     assert all(item["priority"] == "high" for item in response.json()["pages"])
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run focused backend and frontend dashboard tests.
 
-- [ ] **Step 3: Implement dashboard query service and jobs**
+- [x] **Step 3: Implement dashboard query service and jobs**
 
 Return summary, issues, recommendations, priority actions, job status, audit
 history, pagination, sorting, search, and combined filters.
 
-- [ ] **Step 4: Implement frontend dashboard foundation**
+- [x] **Step 4: Implement frontend dashboard foundation**
 
 Build the shell, responsive navigation, KPI components, accessible chart
 wrappers, data tables, filters, realtime search, loading skeletons, empty states,
 and errors.
 
-- [ ] **Step 5: Add subscription and usage records**
+- [x] **Step 5: Add subscription and usage records**
 
 Implement plan limits and usage counters without coupling provider billing into
 domain services. Use a fake billing adapter in tests.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run pytest, Vitest, Playwright dashboard smoke tests, and production build.
 Commit `feat: add dashboard workflows and SaaS usage controls`.

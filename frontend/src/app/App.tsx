@@ -12,6 +12,7 @@ import {
 import { useState } from "react";
 
 import { CreateProjectDialog } from "../features/projects/CreateProjectDialog";
+import { AuditPagesTable } from "../features/issues/AuditPagesTable";
 import {
   ProjectSwitcher,
   type ProjectSummary,
@@ -38,6 +39,36 @@ const priorities = [
     score: 72,
     title: "Breid content uit voor automaat revisie",
     detail: "Positie 8,2 · hoge commerciële intentie",
+  },
+];
+
+const auditPages = [
+  {
+    id: "1",
+    title: "Transmissie revisie",
+    url: "https://shmtransmissie.nl/revisie",
+    status: "publish",
+    pageType: "service",
+    priority: "high",
+    score: 55,
+  },
+  {
+    id: "2",
+    title: "Automatische versnellingsbak",
+    url: "https://shmtransmissie.nl/automatische-versnellingsbak",
+    status: "publish",
+    pageType: "service",
+    priority: "high",
+    score: 64,
+  },
+  {
+    id: "3",
+    title: "Onderhoud en tips",
+    url: "https://shmtransmissie.nl/blog/onderhoud",
+    status: "publish",
+    pageType: "blog",
+    priority: "medium",
+    score: 78,
   },
 ];
 
@@ -208,6 +239,7 @@ export function App() {
               </div>
             </div>
           </section>
+          <AuditPagesTable pages={auditPages} />
         </div>
       </main>
       {showCreateProject && (
