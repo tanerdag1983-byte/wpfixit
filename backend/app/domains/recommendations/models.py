@@ -105,6 +105,3 @@ class CompanyProfile(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
-
-OrganizationAiSettings = AiConnection

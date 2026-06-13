@@ -6,6 +6,7 @@ Create Date: 2026-06-13 16:00:00.000000
 """
 
 from collections.abc import Sequence
+from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
 import sqlalchemy as sa
@@ -18,11 +19,23 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 LEGACY_CONNECTION_NAME = "Bestaande AI-koppeling"
+LEGACY_PROVIDER_MAP = {
+    "openai": "openai",
+    "openai_compatible": "openai_compatible",
+}
 
 
 def _legacy_connection_id(organization_id: str) -> str:
     value = uuid5(NAMESPACE_URL, f"wp-fixpilot:legacy-ai:{organization_id}")
     return f"legacy-{value.hex}"
+
+
+def _normalize_legacy_provider(provider: str) -> str:
+    known_provider = LEGACY_PROVIDER_MAP.get(provider)
+    if known_provider is not None:
+        return known_provider
+    digest = sha256(provider.encode()).hexdigest()[:25]
+    return f"legacy_{digest}"
 
 
 def upgrade() -> None:
@@ -134,7 +147,7 @@ def upgrade() -> None:
             "id": _legacy_connection_id(row["organization_id"]),
             "organization_id": row["organization_id"],
             "name": LEGACY_CONNECTION_NAME,
-            "provider": row["provider"],
+            "provider": _normalize_legacy_provider(row["provider"]),
             "base_url": row["base_url"],
             "default_model": row["model"],
             "encrypted_api_key": row["encrypted_api_key"],
