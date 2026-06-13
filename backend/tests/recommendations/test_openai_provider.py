@@ -28,6 +28,35 @@ def facts() -> PageFacts:
     )
 
 
+def test_company_context_is_included_in_openai_prompt() -> None:
+    captured = {}
+    parsed = GeneratedRecommendation(
+        action_type="snippet",
+        priority="high",
+        recommendation="Verbeter de title.",
+        rationale="De CTR is laag.",
+        evidence=["gsc:1"],
+    )
+
+    def parse(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_parsed=parsed,
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    generator = OpenAIRecommendationGenerator(
+        client,
+        "gpt-test",
+        company_context="Bedrijf: Transmissiespecialist.",
+    )
+
+    generator.generate(facts())
+
+    assert "Transmissiespecialist" in captured["input"][0]["content"]
+
+
 def test_openai_generator_preserves_proposed_state_and_usage() -> None:
     parsed = GeneratedRecommendation(
         action_type="snippet",

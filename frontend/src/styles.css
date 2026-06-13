@@ -1402,6 +1402,17 @@ h2 {
   font-size: 18px;
 }
 
+.auth-security {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  max-width: 590px;
+  margin-top: 28px;
+  color: #9eb4aa;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .auth-logo {
   display: grid;
   width: 48px;
@@ -1422,6 +1433,73 @@ h2 {
   padding: 40px;
   border-radius: 18px;
   background: white;
+}
+
+.auth-intro {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.sso-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.sso-button:hover {
+  background: #f0f4f1;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 22px 0 4px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.auth-email-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.auth-email-field input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+}
+
+.auth-loading {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  color: var(--muted);
+  background: #eef2ef;
+  font-weight: 700;
 }
 
 .auth-form label {
@@ -1468,6 +1546,62 @@ h2 {
   margin: 16px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.ai-settings {
+  display: grid;
+  gap: 36px;
+  max-width: 980px;
+  margin-top: 48px;
+  padding-top: 38px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-settings > section {
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 20px 0;
+}
+
+.settings-field-grid label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-field-grid input,
+.settings-field-grid select,
+.settings-field-grid textarea {
+  min-height: 42px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+.settings-field-grid textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.settings-field-grid .wide-field {
+  grid-column: 1 / -1;
+}
+
+.settings-message {
+  color: #147a50;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .dialog-backdrop {
@@ -1730,6 +1864,14 @@ h2 {
   }
 
   .settings-form fieldset {
+    grid-column: auto;
+  }
+
+  .settings-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-field-grid .wide-field {
     grid-column: auto;
   }
 

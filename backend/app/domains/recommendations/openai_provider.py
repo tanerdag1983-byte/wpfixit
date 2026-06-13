@@ -8,9 +8,16 @@ from app.domains.recommendations.schemas import (
 
 
 class OpenAIRecommendationGenerator:
-    def __init__(self, client, model: str) -> None:
+    def __init__(
+        self,
+        client,
+        model: str,
+        *,
+        company_context: str = "",
+    ) -> None:
         self.client = client
         self.model = model
+        self.company_context = company_context[:10_000]
 
     def generate(self, facts: PageFacts) -> RecommendationResult:
         response = self.client.responses.parse(
@@ -22,7 +29,8 @@ class OpenAIRecommendationGenerator:
                     "content": (
                         "Formuleer één concreet Nederlands SEO-advies. Baseer ieder "
                         "feit uitsluitend op de meegeleverde evidence-ID's. Stel nooit "
-                        "voor om een wijziging automatisch te publiceren."
+                        "voor om een wijziging automatisch te publiceren.\n\n"
+                        f"Bedrijfscontext:\n{self.company_context or 'Niet ingesteld.'}"
                     ),
                 },
                 {

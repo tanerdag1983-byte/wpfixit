@@ -12,11 +12,13 @@ describe("ProjectSwitcher", () => {
         projects={[
           {
             id: "project-1",
+            organizationId: "org-1",
             name: "SHM Transmissie",
             domain: "https://shmtransmissie.nl",
           },
           {
             id: "project-2",
+            organizationId: "org-1",
             name: "Tweede Site",
             domain: "https://tweede.example",
           },

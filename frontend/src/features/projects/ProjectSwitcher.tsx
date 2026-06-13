@@ -3,6 +3,7 @@ import { useState } from "react";
 
 export type ProjectSummary = {
   id: string;
+  organizationId: string;
   name: string;
   domain: string;
 };
@@ -74,4 +75,3 @@ export function ProjectSwitcher({
     </div>
   );
 }
-

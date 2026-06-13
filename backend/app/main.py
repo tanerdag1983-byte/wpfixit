@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes.ai_settings import router as ai_settings_router
 from app.api.routes.crawls import router as crawls_router
 from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.ga4 import router as ga4_router
@@ -18,6 +19,7 @@ app.include_router(projects_router)
 app.include_router(wordpress_router)
 app.include_router(dashboards_router)
 app.include_router(crawls_router)
+app.include_router(ai_settings_router)
 app.include_router(google_router)
 app.include_router(priorities_router)
 app.include_router(preferences_router)

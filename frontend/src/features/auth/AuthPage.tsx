@@ -1,77 +1,105 @@
+import { KeyRound, LockKeyhole, Mail } from "lucide-react";
 import { useState } from "react";
 
+import { defaultBrand } from "../../config/brand";
 import { supabase } from "../../lib/supabase";
 
 export function AuthPage() {
-  const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function signInWithSso(provider: "google" | "azure") {
     if (!supabase) {
-      setMessage("Supabase is nog niet geconfigureerd.");
+      setMessage("SSO is nog niet geconfigureerd.");
       return;
     }
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/`,
+        scopes: provider === "azure" ? "email openid profile" : undefined,
+      },
+    });
+    if (error) setMessage(error.message);
+  }
 
-    const result =
-      mode === "login"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-    setMessage(result.error?.message ?? "Controleer je e-mail om door te gaan.");
+  async function sendMagicLink(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase) {
+      setMessage("Login is nog niet geconfigureerd.");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/`,
+      },
+    });
+    setMessage(
+      error?.message ?? "Controleer je e-mail voor de beveiligde inloglink.",
+    );
   }
 
   return (
     <main className="auth-layout">
       <section className="auth-brand">
-        <span className="auth-logo">W</span>
-        <p className="eyebrow">WP FixPilot</p>
+        <span className="auth-logo">{defaultBrand.name.charAt(0)}</span>
+        <p className="eyebrow">{defaultBrand.name}</p>
         <h1>Van SEO-data naar uitvoerbaar werk.</h1>
         <p>
-          Combineer WordPress, Google en crawldata zonder tussen losse tools te
-          schakelen.
+          Eén beveiligde omgeving voor WordPress, Google-data, crawls en
+          gecontroleerde publicaties.
         </p>
+        <div className="auth-security">
+          <LockKeyhole size={17} />
+          OAuth 2.0 · versleutelde providersleutels · sessies met automatische
+          vernieuwing
+        </div>
       </section>
-      <form className="auth-form" onSubmit={submit}>
-        <p className="eyebrow">{mode === "login" ? "Welkom terug" : "Start nu"}</p>
-        <h2>{mode === "login" ? "Inloggen" : "Account aanmaken"}</h2>
-        <label>
-          E-mailadres
-          <input
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          Wachtwoord
-          <input
-            type="password"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            minLength={8}
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        <button className="auth-submit" type="submit">
-          {mode === "login" ? "Inloggen" : "Registreren"}
+      <section className="auth-form">
+        <p className="eyebrow">SSO login</p>
+        <h2>Veilig inloggen</h2>
+        <p className="auth-intro">
+          Gebruik je zakelijke Google- of Microsoft-account. Er wordt geen
+          wachtwoord door WP FixPilot opgeslagen.
+        </p>
+        <button
+          className="sso-button"
+          onClick={() => signInWithSso("google")}
+          type="button"
+        >
+          <KeyRound size={17} />
+          Doorgaan met Google
         </button>
         <button
-          className="auth-mode"
+          className="sso-button"
+          onClick={() => signInWithSso("azure")}
           type="button"
-          onClick={() => setMode(mode === "login" ? "register" : "login")}
         >
-          {mode === "login"
-            ? "Nog geen account? Registreren"
-            : "Al een account? Inloggen"}
+          <KeyRound size={17} />
+          Doorgaan met Microsoft
         </button>
+        <div className="auth-divider"><span>of via beveiligde e-maillink</span></div>
+        <form onSubmit={sendMagicLink}>
+          <label>
+            Zakelijk e-mailadres
+            <span className="auth-email-field">
+              <Mail size={16} />
+              <input
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </span>
+          </label>
+          <button className="auth-submit" type="submit">
+            Stuur inloglink
+          </button>
+        </form>
         {message && <p className="auth-message">{message}</p>}
-      </form>
+      </section>
     </main>
   );
 }
-

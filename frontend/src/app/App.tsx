@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 
 import { defaultBrand, applyBrand, type BrandSettings } from "../config/brand";
 import { PublishingReview } from "../features/publishing/PublishingReview";
+import { AiSettingsPanel } from "../features/settings/AiSettingsPanel";
 import {
   ProjectSwitcher,
   type ProjectSummary,
@@ -38,11 +39,13 @@ import { ActionWorkspace } from "../routes/dashboard/views/ActionWorkspace";
 const initialProjects: ProjectSummary[] = [
   {
     id: "shm",
+    organizationId: "org-member",
     name: "SHM Transmissie",
     domain: "https://shmtransmissie.nl",
   },
   {
     id: "demo",
+    organizationId: "org-member",
     name: "Demo project",
     domain: "https://demo.wpfixpilot.nl",
   },
@@ -164,6 +167,10 @@ function AppShell({
         </header>
         <RouteContent
           route={route}
+          activeProject={
+            projects.find((project) => project.id === activeProjectId) ??
+            projects[0]
+          }
           brand={brand}
           locale={locale}
           onBrandChange={onBrandChange}
@@ -174,7 +181,11 @@ function AppShell({
         <CreateProjectDialog
           onClose={() => setShowCreateProject(false)}
           onSubmit={(draft) => {
-            const project = { ...draft, id: crypto.randomUUID() };
+            const project = {
+              ...draft,
+              id: crypto.randomUUID(),
+              organizationId: "org-member",
+            };
             setProjects((current) => [...current, project]);
             setActiveProjectId(project.id);
             setShowCreateProject(false);
@@ -187,12 +198,14 @@ function AppShell({
 
 function RouteContent({
   route,
+  activeProject,
   brand,
   locale,
   onBrandChange,
   onLocaleChange,
 }: {
   route: string;
+  activeProject: ProjectSummary;
   brand: BrandSettings;
   locale: Locale;
   onBrandChange: (brand: BrandSettings) => void;
@@ -213,6 +226,7 @@ function RouteContent({
   if (route === "settings")
     return (
       <SettingsPanel
+        activeProject={activeProject}
         brand={brand}
         locale={locale}
         onBrandChange={onBrandChange}
@@ -233,11 +247,13 @@ function RouteContent({
 }
 
 function SettingsPanel({
+  activeProject,
   brand,
   locale,
   onBrandChange,
   onLocaleChange,
 }: {
+  activeProject: ProjectSummary;
   brand: BrandSettings;
   locale: Locale;
   onBrandChange: (brand: BrandSettings) => void;
@@ -300,6 +316,10 @@ function SettingsPanel({
           </button>
         </fieldset>
       </div>
+      <AiSettingsPanel
+        organizationId={activeProject.organizationId}
+        projectId={activeProject.id}
+      />
     </section>
   );
 }

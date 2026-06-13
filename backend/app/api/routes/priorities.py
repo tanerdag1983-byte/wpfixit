@@ -4,10 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.crypto import decrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.priorities.service import project_priorities
 from app.domains.projects.service import get_project
+from app.domains.recommendations.models import (
+    CompanyProfile,
+    OrganizationAiSettings,
+)
 from app.domains.recommendations.schemas import PageFacts
 from app.domains.recommendations.service import (
     RuleBasedRecommendationGenerator,
@@ -57,7 +62,29 @@ def seo_priority_score(
     return {"items": items[:limit]}
 
 
-def _recommendation_generator():
+def _recommendation_generator(session: Session, project):
+    ai_settings = session.get(
+        OrganizationAiSettings,
+        project.organization_id,
+    )
+    company_profile = session.get(CompanyProfile, project.id)
+    company_context = _company_context(company_profile)
+    if ai_settings is not None:
+        from openai import OpenAI
+
+        from app.domains.recommendations.openai_provider import (
+            OpenAIRecommendationGenerator,
+        )
+
+        return OpenAIRecommendationGenerator(
+            OpenAI(
+                api_key=decrypt_text(ai_settings.encrypted_api_key),
+                base_url=ai_settings.base_url,
+                max_retries=3,
+            ),
+            ai_settings.model,
+            company_context=company_context,
+        )
     settings = get_settings()
     if not settings.openai_api_key:
         return RuleBasedRecommendationGenerator()
@@ -70,6 +97,7 @@ def _recommendation_generator():
     return OpenAIRecommendationGenerator(
         OpenAI(api_key=settings.openai_api_key, max_retries=3),
         settings.openai_model,
+        company_context=company_context,
     )
 
 
@@ -83,7 +111,7 @@ def generate_recommendations(
     project = get_project(session, user.id, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    generator = _recommendation_generator()
+    generator = _recommendation_generator(session, project)
     items = []
     for page, result, evidence in project_priorities(session, project_id)[:limit]:
         recommendation = persist_recommendation(
@@ -113,3 +141,18 @@ def generate_recommendations(
             }
         )
     return {"items": items}
+
+
+def _company_context(profile: CompanyProfile | None) -> str:
+    if profile is None:
+        return ""
+    return "\n".join(
+        [
+            f"Bedrijf: {profile.company_name}",
+            f"Omschrijving: {profile.description}",
+            f"Doelgroep: {profile.audience}",
+            f"Diensten: {', '.join(profile.services)}",
+            f"Tone of voice: {profile.tone_of_voice}",
+            f"Extra instructie: {profile.custom_prompt}",
+        ]
+    )[:10_000]

@@ -12,6 +12,7 @@ from app.domains.google import models as google_models  # noqa: F401
 from app.domains.gsc import models as gsc_models  # noqa: F401
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.projects import models as project_models  # noqa: F401
+from app.domains.recommendations import models as recommendation_models  # noqa: F401
 from app.domains.subscriptions import models as subscription_models  # noqa: F401
 from app.domains.wordpress import models as wordpress_models  # noqa: F401
 

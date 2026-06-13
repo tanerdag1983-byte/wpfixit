@@ -28,19 +28,32 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
-    if not settings.supabase_jwt_secret:
+    if not settings.supabase_url and not settings.supabase_jwt_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication is not configured",
         )
 
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
+        if settings.supabase_url:
+            issuer = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+            signing_key = jwt.PyJWKClient(
+                f"{issuer}/.well-known/jwks.json",
+            ).get_signing_key_from_jwt(credentials.credentials)
+            payload = jwt.decode(
+                credentials.credentials,
+                signing_key.key,
+                algorithms=["ES256", "RS256"],
+                audience="authenticated",
+                issuer=issuer,
+            )
+        else:
+            payload = jwt.decode(
+                credentials.credentials,
+                settings.supabase_jwt_secret,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
     except jwt.PyJWTError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
