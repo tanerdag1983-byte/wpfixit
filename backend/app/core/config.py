@@ -13,13 +13,15 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_url: str = Field(
-        default="postgresql+psycopg://wpfixpilot:wpfixpilot@localhost:5432/wpfixpilot"
+        default="postgresql+psycopg://wpfixpilot:wpfixpilot@localhost:55432/wpfixpilot"
     )
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://localhost:56379/0"
     frontend_url: str = "http://localhost:5173"
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_jwt_secret: str = ""
+    encryption_key: str = ""
+    verify_wordpress_ssl: bool = True
 
 
 @lru_cache

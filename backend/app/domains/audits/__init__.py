@@ -1,0 +1,2 @@
+"""Deterministic SEO audit domain."""
+

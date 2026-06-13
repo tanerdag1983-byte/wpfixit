@@ -1,0 +1,75 @@
+from datetime import datetime
+
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.database import Base
+
+
+class WordPressConnection(Base):
+    __tablename__ = "wordpress_connections"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+    site_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    plugin_version: Mapped[str | None] = mapped_column(String(32))
+    seo_plugin: Mapped[str | None] = mapped_column(String(32))
+    health_state: Mapped[str] = mapped_column(
+        String(24),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class WordPressPage(Base):
+    __tablename__ = "wordpress_pages"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "wordpress_object_id",
+            "post_type",
+            name="uq_wordpress_page_identity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    wordpress_object_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    post_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    slug: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(128))
+    wordpress_modified_at: Mapped[str | None] = mapped_column(String(64))
+    last_synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+

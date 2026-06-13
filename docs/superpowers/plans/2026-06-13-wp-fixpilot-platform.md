@@ -220,7 +220,7 @@ downgrade, then commit `feat: add tenant-safe project management`.
 - Create: `backend/tests/wordpress/`
 - Create: `backend/tests/audits/`
 
-- [ ] **Step 1: Write failing signature and replay tests**
+- [x] **Step 1: Write failing signature and replay tests**
 
 ```php
 public function test_rejects_replayed_signed_request(): void {
@@ -231,7 +231,7 @@ public function test_rejects_replayed_signed_request(): void {
 }
 ```
 
-- [ ] **Step 2: Write failing backend audit tests**
+- [x] **Step 2: Write failing backend audit tests**
 
 ```python
 def test_audit_flags_missing_title_and_long_slug(audit_page):
@@ -244,16 +244,16 @@ def test_audit_flags_missing_title_and_long_slug(audit_page):
     }
 ```
 
-- [ ] **Step 3: Verify RED in PHPUnit and pytest**
+- [x] **Step 3: Verify RED in PHPUnit and pytest**
 
 Expected: both suites fail because bridge and audit engine are absent.
 
-- [ ] **Step 4: Implement secure bridge and inventory**
+- [x] **Step 4: Implement secure bridge and inventory**
 
 Add health and inventory routes for posts/pages. Authenticate timestamped HMAC
 requests, reject nonce replay, check capabilities, and return normalized fields.
 
-- [ ] **Step 5: Implement WordPress connection and idempotent sync**
+- [x] **Step 5: Implement WordPress connection and idempotent sync**
 
 Support:
 
@@ -266,12 +266,12 @@ GET /projects/{id}/wordpress-pages
 Use unique `(project_id, wordpress_object_id, post_type)` constraints and
 upserts rather than delete/reinsert.
 
-- [ ] **Step 6: Implement deterministic audit, issues, and recommendations**
+- [x] **Step 6: Implement deterministic audit, issues, and recommendations**
 
 Create page scores, typed issues, rule-based recommendations, audit history, and
 the requested project audit endpoint.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run PHPUnit, WordPress route contract tests, backend audit tests, and migrations.
 Commit `feat: add WordPress sync and deterministic SEO audits`.

@@ -61,11 +61,6 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("organization_id", "profile_id"),
-        sa.UniqueConstraint(
-            "organization_id",
-            "profile_id",
-            name="uq_organization_member",
-        ),
     )
     op.create_table(
         "projects",
@@ -106,4 +101,3 @@ def downgrade() -> None:
     op.drop_table("organization_members")
     op.drop_table("organizations")
     op.drop_table("profiles")
-
