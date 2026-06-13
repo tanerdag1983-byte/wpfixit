@@ -395,7 +395,7 @@ and build. Commit `feat: integrate Google Search Console`.
 - Create: `backend/tests/ga4/`
 - Create: `frontend/src/routes/dashboard/Ga4Page.tsx`
 
-- [ ] **Step 1: Write failing GA4 report mapping tests**
+- [x] **Step 1: Write failing GA4 report mapping tests**
 
 ```python
 def test_page_report_maps_key_events_and_optional_revenue(map_report):
@@ -414,26 +414,26 @@ def test_page_report_maps_key_events_and_optional_revenue(map_report):
     assert row.revenue is None
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `cd backend && uv run pytest tests/ga4 -q`
 
-- [ ] **Step 3: Implement property selection and reports**
+- [x] **Step 3: Implement property selection and reports**
 
 Use the Google Analytics Admin API to list properties and the Data API
 `runReport` method for page/date and source-medium-campaign/date reports.
 
-- [ ] **Step 4: Implement requested GA4 endpoints**
+- [x] **Step 4: Implement requested GA4 endpoints**
 
 Support connect, sync, and data endpoints with idempotent daily upserts and
 explicit quota/error states.
 
-- [ ] **Step 5: Implement GA4 dashboard**
+- [x] **Step 5: Implement GA4 dashboard**
 
 Show sessions, users, engagement rate, key events, revenue, page performance,
 traffic sources, trends, best pages, and weak-conversion pages.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run backend and frontend GA4 tests, migrations, and build.
 Commit `feat: integrate Google Analytics 4`.
