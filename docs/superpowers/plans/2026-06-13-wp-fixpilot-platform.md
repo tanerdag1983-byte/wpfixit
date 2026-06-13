@@ -343,7 +343,7 @@ Commit `feat: add dashboard workflows and SaaS usage controls`.
 - Create: `frontend/src/features/google-connections/`
 - Create: `frontend/src/routes/dashboard/SearchConsolePage.tsx`
 
-- [ ] **Step 1: Write failing OAuth state and token encryption tests**
+- [x] **Step 1: Write failing OAuth state and token encryption tests**
 
 ```python
 def test_oauth_callback_rejects_state_for_another_user(oauth_service, users):
@@ -353,7 +353,7 @@ def test_oauth_callback_rejects_state_for_another_user(oauth_service, users):
         oauth_service.consume_state(state, users.bob.id)
 ```
 
-- [ ] **Step 2: Write failing idempotent GSC import test**
+- [x] **Step 2: Write failing idempotent GSC import test**
 
 ```python
 def test_gsc_sync_upserts_same_daily_query(session, gsc_sync, gsc_fixture):
@@ -363,26 +363,26 @@ def test_gsc_sync_upserts_same_daily_query(session, gsc_sync, gsc_fixture):
     assert session.scalar(select(func.count(GscQuery.id))) == 1
 ```
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run: `cd backend && uv run pytest tests/gsc -q`
 
-- [ ] **Step 4: Implement OAuth2 Authorization Code plus PKCE**
+- [x] **Step 4: Implement OAuth2 Authorization Code plus PKCE**
 
 Use encrypted refresh tokens, state expiry, incremental read-only scopes,
 offline access, token refresh locking, disconnect, and revocation states.
 
-- [ ] **Step 5: Implement property selection and GSC sync**
+- [x] **Step 5: Implement property selection and GSC sync**
 
 Support the requested endpoints plus property listing and binding. Import daily
 page and query/page data with overlapping sync windows and composite upserts.
 
-- [ ] **Step 6: Implement Search Console dashboard**
+- [x] **Step 6: Implement Search Console dashboard**
 
 Add clicks, impressions, CTR, position, top queries, best pages, declining
 pages, date comparison, filters, and export.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run OAuth security tests, provider contract tests, migrations, frontend tests,
 and build. Commit `feat: integrate Google Search Console`.

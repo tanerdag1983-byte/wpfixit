@@ -1,0 +1,2 @@
+"""Search Console tests."""
+

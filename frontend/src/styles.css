@@ -662,6 +662,109 @@ h2 {
   text-align: center;
 }
 
+.data-page {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 44px 42px 60px;
+}
+
+.data-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 36px;
+  border-block: 1px solid var(--line);
+}
+
+.data-metrics > div {
+  padding: 22px;
+}
+
+.data-metrics > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.data-metrics span,
+.data-metrics strong {
+  display: block;
+}
+
+.data-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.data-metrics strong {
+  margin-top: 6px;
+  font-family: "Manrope", sans-serif;
+  font-size: 30px;
+}
+
+.data-metrics small {
+  color: #147a50;
+  font-weight: 700;
+}
+
+.data-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(380px, 1fr);
+  gap: 40px;
+  margin-top: 42px;
+}
+
+.mini-chart {
+  height: 280px;
+  margin-top: 22px;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 61px,
+    #e3e9e5 62px,
+    transparent 63px
+  );
+}
+
+.mini-chart svg {
+  width: 100%;
+  height: 100%;
+}
+
+.query-table {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.query-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.5fr) repeat(3, minmax(62px, 0.6fr));
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+}
+
+.query-row.header {
+  color: var(--muted);
+  cursor: default;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.query-row span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .priority-row strong {
   font-size: 13px;
 }
@@ -877,6 +980,10 @@ h2 {
   .filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .data-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -950,6 +1057,22 @@ h2 {
 
   .filter-bar {
     grid-template-columns: 1fr;
+  }
+
+  .data-page {
+    padding: 32px 20px 110px;
+  }
+
+  .data-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .data-metrics > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .data-metrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
   }
 
   .auth-layout {

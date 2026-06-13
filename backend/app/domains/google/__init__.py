@@ -1,0 +1,2 @@
+"""Shared Google OAuth domain."""
+

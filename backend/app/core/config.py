@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     encryption_key: str = ""
     verify_wordpress_ssl: bool = True
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = (
+        "http://localhost:5173/auth/google/callback"
+    )
 
 
 @lru_cache
