@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     frontend_url: str = "http://localhost:5173"
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_jwt_secret: str = ""
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

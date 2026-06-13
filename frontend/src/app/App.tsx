@@ -9,6 +9,13 @@ import {
   Settings,
   Sparkles,
 } from "lucide-react";
+import { useState } from "react";
+
+import { CreateProjectDialog } from "../features/projects/CreateProjectDialog";
+import {
+  ProjectSwitcher,
+  type ProjectSummary,
+} from "../features/projects/ProjectSwitcher";
 
 const metrics = [
   { label: "SEO health", value: "74", change: "+3 punten" },
@@ -35,6 +42,21 @@ const priorities = [
 ];
 
 export function App() {
+  const [projects, setProjects] = useState<ProjectSummary[]>([
+    {
+      id: "shm",
+      name: "SHM Transmissie",
+      domain: "https://shmtransmissie.nl",
+    },
+    {
+      id: "demo",
+      name: "Demo project",
+      domain: "https://demo.wpfixpilot.nl",
+    },
+  ]);
+  const [activeProjectId, setActiveProjectId] = useState(projects[0].id);
+  const [showCreateProject, setShowCreateProject] = useState(false);
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Hoofdnavigatie">
@@ -70,14 +92,12 @@ export function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <button className="project-switcher" type="button">
-            <span className="project-mark">S</span>
-            <span>
-              <small>Project</small>
-              shmtransmissie.nl
-            </span>
-            <ChevronDown size={16} />
-          </button>
+          <ProjectSwitcher
+            projects={projects}
+            activeProjectId={activeProjectId}
+            onSelect={setActiveProjectId}
+            onCreate={() => setShowCreateProject(true)}
+          />
 
           <div className="topbar-actions">
             <label className="search-field">
@@ -190,7 +210,20 @@ export function App() {
           </section>
         </div>
       </main>
+      {showCreateProject && (
+        <CreateProjectDialog
+          onClose={() => setShowCreateProject(false)}
+          onSubmit={(draft) => {
+            const project = {
+              ...draft,
+              id: crypto.randomUUID(),
+            };
+            setProjects((current) => [...current, project]);
+            setActiveProjectId(project.id);
+            setShowCreateProject(false);
+          }}
+        />
+      )}
     </div>
   );
 }
-

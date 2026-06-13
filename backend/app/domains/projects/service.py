@@ -1,0 +1,84 @@
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from sqlalchemy import Select, select
+from sqlalchemy.orm import Session
+
+from app.domains.projects.models import OrganizationMember, Project
+from app.domains.projects.schemas import ProjectCreate
+
+
+def _visible_projects(user_id: str) -> Select[tuple[Project]]:
+    return (
+        select(Project)
+        .join(
+            OrganizationMember,
+            OrganizationMember.organization_id == Project.organization_id,
+        )
+        .where(
+            OrganizationMember.profile_id == user_id,
+            Project.deleted_at.is_(None),
+        )
+    )
+
+
+def list_projects(session: Session, user_id: str) -> list[Project]:
+    return list(
+        session.scalars(_visible_projects(user_id).order_by(Project.created_at))
+    )
+
+
+def get_project(session: Session, user_id: str, project_id: str) -> Project | None:
+    return session.scalar(_visible_projects(user_id).where(Project.id == project_id))
+
+
+def get_membership(
+    session: Session,
+    user_id: str,
+    organization_id: str,
+) -> OrganizationMember | None:
+    return session.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.profile_id == user_id,
+            OrganizationMember.organization_id == organization_id,
+        )
+    )
+
+
+def create_project(
+    session: Session,
+    user_id: str,
+    payload: ProjectCreate,
+) -> Project | None:
+    membership = get_membership(session, user_id, payload.organization_id)
+    if membership is None or membership.role not in {"owner", "admin"}:
+        return None
+
+    project = Project(
+        id=str(uuid4()),
+        organization_id=payload.organization_id,
+        name=payload.name,
+        domain=str(payload.domain).rstrip("/"),
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
+def soft_delete_project(
+    session: Session,
+    user_id: str,
+    project_id: str,
+) -> bool:
+    project = get_project(session, user_id, project_id)
+    if project is None:
+        return False
+    membership = get_membership(session, user_id, project.organization_id)
+    if membership is None or membership.role not in {"owner", "admin"}:
+        return False
+
+    project.deleted_at = datetime.now(UTC)
+    session.commit()
+    return True
+

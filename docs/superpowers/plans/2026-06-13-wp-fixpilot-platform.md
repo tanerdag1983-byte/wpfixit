@@ -152,7 +152,7 @@ Commit: `git commit -am "build: scaffold WP FixPilot platform"`
 - Create: `frontend/src/features/auth/`
 - Create: `frontend/src/features/projects/`
 
-- [ ] **Step 1: Write tenant isolation route tests**
+- [x] **Step 1: Write tenant isolation route tests**
 
 ```python
 def test_member_can_list_only_organization_projects(client, auth_as, projects):
@@ -172,19 +172,19 @@ def test_non_member_cannot_read_project(client, auth_as, projects):
     assert response.status_code == 404
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `cd backend && uv run pytest tests/projects/test_project_routes.py -q`
 
 Expected: FAIL because tenancy models and routes are absent.
 
-- [ ] **Step 3: Implement identity and project persistence**
+- [x] **Step 3: Implement identity and project persistence**
 
 Create `profiles`, `organizations`, `organization_members`, and `projects`.
 Validate Supabase JWTs, resolve the current profile, and require membership in
 every project service query.
 
-- [ ] **Step 4: Implement project CRUD API**
+- [x] **Step 4: Implement project CRUD API**
 
 Support:
 
@@ -197,12 +197,12 @@ DELETE /projects/{id}
 
 Deletion is soft-delete and available only to organization owners/admins.
 
-- [ ] **Step 5: Implement auth and project UI**
+- [x] **Step 5: Implement auth and project UI**
 
 Build login, registration, protected routes, organization/project switchers,
 project list, creation dialog, and delete confirmation with TanStack Query.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run backend project tests, frontend auth/project tests, migration upgrade and
 downgrade, then commit `feat: add tenant-safe project management`.

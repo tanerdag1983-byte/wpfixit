@@ -12,3 +12,6 @@ node_modules/
 dist/
 coverage/
 *.pyc
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
