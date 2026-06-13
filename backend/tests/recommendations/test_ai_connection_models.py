@@ -278,7 +278,7 @@ def test_upgrade_preserves_legacy_settings_and_normalizes_providers(
         "org-compatible": ("openai_compatible", "openai_compatible"),
         "org-unknown": (
             "custom",
-            _legacy_provider_fallback("custom"),
+            "custom",
         ),
         "org-custom": (
             "custom-provider-name-that-is-longer-than-thirty-two-characters",

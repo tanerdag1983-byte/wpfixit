@@ -19,10 +19,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 LEGACY_CONNECTION_NAME = "Bestaande AI-koppeling"
-LEGACY_PROVIDER_MAP = {
-    "openai": "openai",
-    "openai_compatible": "openai_compatible",
-}
 
 
 def _legacy_connection_id(organization_id: str) -> str:
@@ -31,9 +27,8 @@ def _legacy_connection_id(organization_id: str) -> str:
 
 
 def _normalize_legacy_provider(provider: str) -> str:
-    known_provider = LEGACY_PROVIDER_MAP.get(provider)
-    if known_provider is not None:
-        return known_provider
+    if len(provider) <= 32:
+        return provider
     digest = sha256(provider.encode()).hexdigest()[:25]
     return f"legacy_{digest}"
 
