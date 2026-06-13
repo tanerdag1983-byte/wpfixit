@@ -1,12 +1,11 @@
 from collections.abc import Generator
 from datetime import UTC, datetime
-from hashlib import sha256
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, delete, event, select, text
+from sqlalchemy import create_engine, delete, event, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,6 +17,8 @@ from app.core.database import Base
 from app.domains.projects.models import Organization, Project
 from app.domains.recommendations import models as recommendation_models
 from app.domains.recommendations.models import AiConnection, ProjectAiPolicy
+
+LONG_LEGACY_PROVIDER = "provider-" + ("x" * 55)
 
 
 @pytest.fixture
@@ -99,10 +100,6 @@ def _downgrade_migration(revision: str) -> None:
     command.downgrade(config, revision)
 
 
-def _legacy_provider_fallback(provider: str) -> str:
-    return f"legacy_{sha256(provider.encode()).hexdigest()[:25]}"
-
-
 def test_legacy_model_alias_is_removed() -> None:
     assert not hasattr(recommendation_models, "OrganizationAiSettings")
 
@@ -133,6 +130,7 @@ def test_organization_has_multiple_ai_connections_and_project_policy(
     session.add(
         ProjectAiPolicy(
             project_id=projects.member_project.id,
+            organization_id=projects.organization.id,
             primary_connection_id=primary.id,
             primary_model="gpt-5.4-mini",
             fallback_connection_id=fallback.id,
@@ -210,6 +208,7 @@ def test_policy_connection_delete_rules(
     )
     policy = ProjectAiPolicy(
         project_id=projects.member_project.id,
+        organization_id=projects.organization.id,
         primary_connection_id=primary.id,
         primary_model="gpt-5.4-mini",
         fallback_connection_id=fallback.id,
@@ -224,10 +223,37 @@ def test_policy_connection_delete_rules(
     session.rollback()
 
     session.delete(fallback)
-    session.commit()
-    session.refresh(policy)
+    with pytest.raises(IntegrityError):
+        session.commit()
 
-    assert policy.fallback_connection_id is None
+
+def test_cross_organization_connection_policy_is_rejected(
+    session: Session,
+    projects: SimpleNamespace,
+) -> None:
+    other_organization = Organization(id="org-other", name="Other Organization")
+    other_connection = AiConnection(
+        id="ai-other",
+        organization_id=other_organization.id,
+        name="Other",
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        encrypted_api_key="encrypted-other",
+    )
+    session.add_all([other_organization, other_connection])
+    session.commit()
+
+    session.add(
+        ProjectAiPolicy(
+            project_id=projects.member_project.id,
+            organization_id=projects.organization.id,
+            primary_connection_id=other_connection.id,
+            primary_model="gpt-5.4-mini",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
 
 
 def test_organization_and_project_delete_cascade_owned_ai_records(
@@ -244,6 +270,7 @@ def test_organization_and_project_delete_cascade_owned_ai_records(
     )
     policy = ProjectAiPolicy(
         project_id=projects.member_project.id,
+        organization_id=projects.organization.id,
         primary_connection_id=connection.id,
         primary_model="gpt-5.4-mini",
     )
@@ -267,28 +294,21 @@ def test_organization_and_project_delete_cascade_owned_ai_records(
     assert session.get(AiConnection, connection_id) is None
 
 
-def test_upgrade_preserves_legacy_settings_and_normalizes_providers(
+def test_upgrade_and_downgrade_preserve_legacy_settings_exactly(
     migration_database_url: str,
 ) -> None:
+    assert len(LONG_LEGACY_PROVIDER) == 64
     _run_migration("0010_ai_settings")
     engine = create_engine(migration_database_url)
     legacy_updated_at = datetime(2026, 1, 2, tzinfo=UTC)
     providers = {
-        "org-openai": ("openai", "openai"),
-        "org-compatible": ("openai_compatible", "openai_compatible"),
-        "org-unknown": (
-            "custom",
-            "custom",
-        ),
-        "org-custom": (
-            "custom-provider-name-that-is-longer-than-thirty-two-characters",
-            _legacy_provider_fallback(
-                "custom-provider-name-that-is-longer-than-thirty-two-characters"
-            ),
-        ),
+        "org-openai": "openai",
+        "org-compatible": "openai_compatible",
+        "org-unknown": "custom",
+        "org-long": LONG_LEGACY_PROVIDER,
     }
     with engine.begin() as connection:
-        for organization_id, (legacy_provider, _) in providers.items():
+        for organization_id, legacy_provider in providers.items():
             connection.execute(
                 text(
                     "INSERT INTO organizations (id, name) "
@@ -333,17 +353,38 @@ def test_upgrade_preserves_legacy_settings_and_normalizes_providers(
         ).scalar_one()
 
     assert set(migrated) == set(providers)
-    for organization_id, (_, expected_provider) in providers.items():
+    for organization_id, expected_provider in providers.items():
         row = migrated[organization_id]
         assert row["name"] == "Bestaande AI-koppeling"
         assert row["provider"] == expected_provider
-        assert len(row["provider"]) <= 32
+        assert len(row["provider"]) <= 64
         assert row["base_url"] == f"https://{organization_id}.example/v1"
         assert row["default_model"] == f"{organization_id}-model"
         assert row["encrypted_api_key"] == f"{organization_id}-secret"
         assert row["created_at"] == legacy_updated_at
         assert row["updated_at"] == legacy_updated_at
     assert policy_count == 0
+
+    indexes = {
+        index["name"]
+        for index in inspect(engine).get_indexes("project_ai_policies")
+    }
+    assert indexes == {
+        "ix_project_ai_policies_fallback_connection_id",
+        "ix_project_ai_policies_primary_connection_id",
+    }
+
+    _downgrade_migration("0010_ai_settings")
+
+    with engine.connect() as connection:
+        restored_rows = connection.execute(
+            text(
+                "SELECT organization_id, provider "
+                "FROM organization_ai_settings ORDER BY organization_id"
+            )
+        ).all()
+
+    assert dict(restored_rows) == providers
     engine.dispose()
 
 

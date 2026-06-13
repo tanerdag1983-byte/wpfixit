@@ -6,7 +6,6 @@ Create Date: 2026-06-13 16:00:00.000000
 """
 
 from collections.abc import Sequence
-from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
 import sqlalchemy as sa
@@ -26,20 +25,18 @@ def _legacy_connection_id(organization_id: str) -> str:
     return f"legacy-{value.hex}"
 
 
-def _normalize_legacy_provider(provider: str) -> str:
-    if len(provider) <= 32:
-        return provider
-    digest = sha256(provider.encode()).hexdigest()[:25]
-    return f"legacy_{digest}"
-
-
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "uq_projects_id_organization_id",
+        "projects",
+        ["id", "organization_id"],
+    )
     op.create_table(
         "ai_connections",
         sa.Column("id", sa.String(length=64), nullable=False),
         sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=160), nullable=False),
-        sa.Column("provider", sa.String(length=32), nullable=False),
+        sa.Column("provider", sa.String(length=64), nullable=False),
         sa.Column("base_url", sa.String(length=2048), nullable=False),
         sa.Column("default_model", sa.String(length=255), nullable=True),
         sa.Column("encrypted_api_key", sa.Text(), nullable=False),
@@ -75,6 +72,11 @@ def upgrade() -> None:
             "name",
             name="uq_ai_connection_org_name",
         ),
+        sa.UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_ai_connections_id_organization_id",
+        ),
     )
     op.create_index(
         op.f("ix_ai_connections_organization_id"),
@@ -85,6 +87,7 @@ def upgrade() -> None:
     op.create_table(
         "project_ai_policies",
         sa.Column("project_id", sa.String(length=64), nullable=False),
+        sa.Column("organization_id", sa.String(length=64), nullable=False),
         sa.Column("primary_connection_id", sa.String(length=64), nullable=False),
         sa.Column("primary_model", sa.String(length=255), nullable=False),
         sa.Column("fallback_connection_id", sa.String(length=64), nullable=True),
@@ -96,21 +99,36 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["fallback_connection_id"],
-            ["ai_connections.id"],
-            ondelete="SET NULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["primary_connection_id"],
-            ["ai_connections.id"],
+            ["fallback_connection_id", "organization_id"],
+            ["ai_connections.id", "ai_connections.organization_id"],
+            name="fk_project_ai_policy_fallback_connection_org",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["projects.id"],
+            ["primary_connection_id", "organization_id"],
+            ["ai_connections.id", "ai_connections.organization_id"],
+            name="fk_project_ai_policy_primary_connection_org",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_project_ai_policy_project_org",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("project_id"),
+    )
+    op.create_index(
+        op.f("ix_project_ai_policies_primary_connection_id"),
+        "project_ai_policies",
+        ["primary_connection_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_project_ai_policies_fallback_connection_id"),
+        "project_ai_policies",
+        ["fallback_connection_id"],
+        unique=False,
     )
 
     connection = op.get_bind()
@@ -128,7 +146,7 @@ def upgrade() -> None:
         sa.column("id", sa.String(length=64)),
         sa.column("organization_id", sa.String(length=64)),
         sa.column("name", sa.String(length=160)),
-        sa.column("provider", sa.String(length=32)),
+        sa.column("provider", sa.String(length=64)),
         sa.column("base_url", sa.String(length=2048)),
         sa.column("default_model", sa.String(length=255)),
         sa.column("encrypted_api_key", sa.Text()),
@@ -142,7 +160,7 @@ def upgrade() -> None:
             "id": _legacy_connection_id(row["organization_id"]),
             "organization_id": row["organization_id"],
             "name": LEGACY_CONNECTION_NAME,
-            "provider": _normalize_legacy_provider(row["provider"]),
+            "provider": row["provider"],
             "base_url": row["base_url"],
             "default_model": row["model"],
             "encrypted_api_key": row["encrypted_api_key"],
@@ -185,7 +203,7 @@ def downgrade() -> None:
         "ai_connections",
         sa.column("id", sa.String(length=64)),
         sa.column("organization_id", sa.String(length=64)),
-        sa.column("provider", sa.String(length=32)),
+        sa.column("provider", sa.String(length=64)),
         sa.column("base_url", sa.String(length=2048)),
         sa.column("default_model", sa.String(length=255)),
         sa.column("encrypted_api_key", sa.Text()),
@@ -228,9 +246,29 @@ def downgrade() -> None:
     if restored_rows:
         connection.execute(sa.insert(old_settings), restored_rows)
 
+    policy_indexes = {
+        index["name"]
+        for index in sa.inspect(connection).get_indexes("project_ai_policies")
+    }
+    for index_name in (
+        op.f("ix_project_ai_policies_fallback_connection_id"),
+        op.f("ix_project_ai_policies_primary_connection_id"),
+    ):
+        if index_name in policy_indexes:
+            op.drop_index(index_name, table_name="project_ai_policies")
     op.drop_table("project_ai_policies")
     op.drop_index(
         op.f("ix_ai_connections_organization_id"),
         table_name="ai_connections",
     )
     op.drop_table("ai_connections")
+    project_constraints = {
+        constraint["name"]
+        for constraint in sa.inspect(connection).get_unique_constraints("projects")
+    }
+    if "uq_projects_id_organization_id" in project_constraints:
+        op.drop_constraint(
+            "uq_projects_id_organization_id",
+            "projects",
+            type_="unique",
+        )

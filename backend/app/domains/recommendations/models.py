@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     String,
     Text,
     UniqueConstraint,
@@ -23,6 +24,11 @@ class AiConnection(Base):
             "name",
             name="uq_ai_connection_org_name",
         ),
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_ai_connections_id_organization_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -32,7 +38,7 @@ class AiConnection(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
-    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     default_model: Mapped[str | None] = mapped_column(String(255))
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -60,18 +66,38 @@ class AiConnection(Base):
 
 class ProjectAiPolicy(Base):
     __tablename__ = "project_ai_policies"
-
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
-        primary_key=True,
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_project_ai_policy_project_org",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["primary_connection_id", "organization_id"],
+            ["ai_connections.id", "ai_connections.organization_id"],
+            name="fk_project_ai_policy_primary_connection_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["fallback_connection_id", "organization_id"],
+            ["ai_connections.id", "ai_connections.organization_id"],
+            name="fk_project_ai_policy_fallback_connection_org",
+            ondelete="RESTRICT",
+        ),
     )
+
+    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False)
     primary_connection_id: Mapped[str] = mapped_column(
-        ForeignKey("ai_connections.id", ondelete="RESTRICT"),
+        String(64),
+        index=True,
         nullable=False,
     )
     primary_model: Mapped[str] = mapped_column(String(255), nullable=False)
     fallback_connection_id: Mapped[str | None] = mapped_column(
-        ForeignKey("ai_connections.id", ondelete="SET NULL"),
+        String(64),
+        index=True,
     )
     fallback_model: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(
