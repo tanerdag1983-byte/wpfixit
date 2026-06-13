@@ -614,7 +614,7 @@ Commit `feat: add approved WordPress publishing and rollback`.
 - Modify: `backend/app/domains/dashboards/`
 - Modify: `backend/app/domains/projects/models.py`
 
-- [ ] **Step 1: Write failing saved preference test**
+- [x] **Step 1: Write failing saved preference test**
 
 ```tsx
 it("restores the signed-in user's dashboard view", async () => {
@@ -626,21 +626,21 @@ it("restores the signed-in user's dashboard view", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run focused Vitest and API profile tests.
 
-- [ ] **Step 3: Implement shared dashboard data model**
+- [x] **Step 3: Implement shared dashboard data model**
 
 Expose common summaries, trends, top pages, weak pages, top queries, sources,
 and priorities without embedding presentation-specific response shapes.
 
-- [ ] **Step 4: Implement all three responsive views**
+- [x] **Step 4: Implement all three responsive views**
 
 Match the approved green visual direction. Add keyboard-accessible view switch,
 chart table alternatives, mobile layouts, and persisted per-user preference.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run Vitest, Playwright at desktop/mobile sizes, accessibility checks, and build.
 Commit `feat: add personalized dashboard modes`.

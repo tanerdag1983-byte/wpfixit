@@ -1199,6 +1199,147 @@ h2 {
   color: var(--muted);
 }
 
+.dashboard-mode-container {
+  position: relative;
+}
+
+.mode-switcher {
+  position: absolute;
+  z-index: 2;
+  top: 44px;
+  right: 42px;
+}
+
+.dashboard-view {
+  min-height: 650px;
+}
+
+.dashboard-view > h1 {
+  max-width: 760px;
+}
+
+.analytics-console-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.75fr);
+  gap: 44px;
+  margin-top: 42px;
+}
+
+.compact-data-list {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-data-list > div {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 70px 55px;
+  gap: 10px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.compact-data-list span {
+  color: var(--muted);
+  text-align: right;
+}
+
+.subsection-title {
+  margin-top: 34px;
+}
+
+.action-workspace-list {
+  margin-top: 38px;
+  border-top: 1px solid var(--line);
+}
+
+.action-workspace-list > button {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto auto;
+  gap: 18px;
+  align-items: center;
+  width: 100%;
+  padding: 20px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.action-workspace-list strong,
+.action-workspace-list small {
+  display: block;
+}
+
+.action-workspace-list small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.settings-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 180px 180px;
+  gap: 18px;
+  max-width: 850px;
+  margin-top: 38px;
+}
+
+.settings-form label,
+.settings-form fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: white;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-form input {
+  min-height: 42px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-form input[type="color"] {
+  width: 100%;
+  padding: 4px;
+}
+
+.settings-form fieldset {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr;
+}
+
+.settings-form legend {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0 6px;
+}
+
+.settings-form fieldset button {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.settings-form fieldset button.selected {
+  border-color: var(--forest);
+  background: var(--forest);
+  color: white;
+}
+
 .priority-action {
   justify-content: space-between;
   font-weight: 700;
@@ -1431,6 +1572,10 @@ h2 {
   .data-grid {
     grid-template-columns: 1fr;
   }
+
+  .analytics-console-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1452,9 +1597,16 @@ h2 {
     box-shadow: 0 18px 50px rgba(18, 47, 35, 0.28);
   }
 
-  .brand,
-  .settings-link {
+  .brand {
     display: none;
+  }
+
+  .settings-link {
+    display: flex;
+    justify-content: center;
+    margin-top: 0;
+    padding: 10px 14px;
+    font-size: 0;
   }
 
   .sidebar nav {
@@ -1462,6 +1614,7 @@ h2 {
     justify-content: space-around;
     width: 100%;
     margin: 0;
+    overflow-x: auto;
   }
 
   .nav-item {
@@ -1522,6 +1675,11 @@ h2 {
     border-top: 1px solid var(--line);
   }
 
+  .dashboard-view .data-metrics > div:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    border-left: 0;
+  }
+
   .crawl-status {
     grid-template-columns: 1fr 1fr;
   }
@@ -1549,6 +1707,30 @@ h2 {
 
   .publishing-review {
     padding: 32px 20px 110px;
+  }
+
+  .mode-switcher {
+    position: static;
+    width: max-content;
+    max-width: 100%;
+    margin-bottom: 28px;
+    overflow-x: auto;
+  }
+
+  .action-workspace-list > button {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+  }
+
+  .action-workspace-list .priority-tag {
+    display: none;
+  }
+
+  .settings-form {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-form fieldset {
+    grid-column: auto;
   }
 
   .publishing-grid,

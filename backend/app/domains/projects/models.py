@@ -18,6 +18,12 @@ class Profile(Base):
         server_default="hybrid",
         nullable=False,
     )
+    locale: Mapped[str] = mapped_column(
+        String(8),
+        default="nl",
+        server_default="nl",
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -30,6 +36,24 @@ class Organization(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
+    brand_name: Mapped[str] = mapped_column(
+        String(160),
+        default="WP FixPilot",
+        server_default="WP FixPilot",
+        nullable=False,
+    )
+    primary_color: Mapped[str] = mapped_column(
+        String(7),
+        default="#173b2d",
+        server_default="#173b2d",
+        nullable=False,
+    )
+    accent_color: Mapped[str] = mapped_column(
+        String(7),
+        default="#d7ff54",
+        server_default="#d7ff54",
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

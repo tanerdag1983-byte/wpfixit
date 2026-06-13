@@ -1,9 +1,13 @@
-from collections import Counter
+from collections import Counter, defaultdict
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.audits.models import PageAudit, SeoIssue, SeoRecommendation
+from app.domains.ga4.models import Ga4PagePerformance, Ga4TrafficSource
+from app.domains.gsc.models import GscPagePerformance, GscQuery
+from app.domains.priorities.service import project_priorities
 from app.domains.wordpress.models import WordPressPage
 
 PRIORITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -41,6 +45,20 @@ def dashboard_overview(
     issues = list(
         session.scalars(
             select(SeoIssue).where(SeoIssue.project_id == project_id)
+        )
+    )
+    gsc_pages = list(
+        session.scalars(
+            select(GscPagePerformance).where(
+                GscPagePerformance.project_id == project_id
+            )
+        )
+    )
+    ga4_pages = list(
+        session.scalars(
+            select(Ga4PagePerformance).where(
+                Ga4PagePerformance.project_id == project_id
+            )
         )
     )
 
@@ -103,6 +121,58 @@ def dashboard_overview(
         )
     )
     issue_counts = Counter(issue.issue_type for issue in issues)
+    trends: dict[str, dict[str, int]] = defaultdict(
+        lambda: {
+            "clicks": 0,
+            "impressions": 0,
+            "sessions": 0,
+            "conversions": 0,
+        }
+    )
+    page_performance: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"clicks": 0, "impressions": 0, "sessions": 0, "conversions": 0}
+    )
+    urls_by_path = {
+        urlsplit(page.url).path.rstrip("/") or "/": page.url for page in pages
+    }
+    for row in gsc_pages:
+        day = row.date.isoformat()
+        trends[day]["clicks"] += row.clicks
+        trends[day]["impressions"] += row.impressions
+        page_performance[row.page_url]["clicks"] += row.clicks
+        page_performance[row.page_url]["impressions"] += row.impressions
+    for row in ga4_pages:
+        day = row.date.isoformat()
+        trends[day]["sessions"] += row.sessions
+        trends[day]["conversions"] += row.key_events
+        url = urls_by_path.get(row.page_path.rstrip("/") or "/", row.page_path)
+        page_performance[url]["sessions"] += row.sessions
+        page_performance[url]["conversions"] += row.key_events
+    top_queries = list(
+        session.scalars(
+            select(GscQuery)
+            .where(GscQuery.project_id == project_id)
+            .order_by(GscQuery.clicks.desc())
+            .limit(20)
+        )
+    )
+    traffic_sources = list(
+        session.scalars(
+            select(Ga4TrafficSource)
+            .where(Ga4TrafficSource.project_id == project_id)
+            .order_by(Ga4TrafficSource.sessions.desc())
+            .limit(20)
+        )
+    )
+    priority_rows = project_priorities(session, project_id)
+    ranked_pages = sorted(
+        (
+            {"url": url, **metrics}
+            for url, metrics in page_performance.items()
+        ),
+        key=lambda item: (item["clicks"] + item["sessions"]),
+        reverse=True,
+    )
     return {
         "summary": {
             "total_pages": len(pages),
@@ -115,5 +185,48 @@ def dashboard_overview(
         },
         "issue_counts": dict(issue_counts),
         "pages": rows,
+        "trends": [
+            {"date": day, **metrics}
+            for day, metrics in sorted(trends.items())
+        ],
+        "top_pages": ranked_pages[:20],
+        "weak_pages": [
+            {
+                "url": page.url,
+                "title": page.title,
+                "priority_score": result.priority_score,
+                "action": result.action,
+            }
+            for page, result, _ in priority_rows[:20]
+        ],
+        "top_queries": [
+            {
+                "query": row.query,
+                "page_url": row.page_url,
+                "clicks": row.clicks,
+                "impressions": row.impressions,
+                "ctr": row.ctr,
+                "average_position": row.average_position,
+            }
+            for row in top_queries
+        ],
+        "traffic_sources": [
+            {
+                "source": row.source,
+                "medium": row.medium,
+                "sessions": row.sessions,
+                "conversions": row.key_events,
+            }
+            for row in traffic_sources
+        ],
+        "priorities": [
+            {
+                "url": page.url,
+                "title": page.title,
+                "priority_score": result.priority_score,
+                "components": result.components,
+                "action": result.action,
+            }
+            for page, result, _ in priority_rows[:20]
+        ],
     }
-

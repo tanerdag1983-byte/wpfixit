@@ -1,123 +1,145 @@
 import {
   Activity,
-  ArrowUpRight,
   BarChart3,
   CheckCircle2,
-  ChevronDown,
+  Globe2,
   LayoutDashboard,
+  Radar,
   Search,
   Settings,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { CreateProjectDialog } from "../features/projects/CreateProjectDialog";
-import { AuditPagesTable } from "../features/issues/AuditPagesTable";
+import { defaultBrand, applyBrand, type BrandSettings } from "../config/brand";
+import { PublishingReview } from "../features/publishing/PublishingReview";
 import {
   ProjectSwitcher,
   type ProjectSummary,
 } from "../features/projects/ProjectSwitcher";
+import { CreateProjectDialog } from "../features/projects/CreateProjectDialog";
+import {
+  DashboardModes,
+  type DashboardView,
+} from "../features/preferences/DashboardModes";
+import {
+  I18nProvider,
+} from "../features/preferences/i18n";
+import type { Locale } from "../features/preferences/i18n-core";
+import { useI18n } from "../features/preferences/useI18n";
+import { preferenceStorage } from "../features/preferences/storage";
+import { CrawlPage } from "../routes/dashboard/CrawlPage";
+import { Ga4Page } from "../routes/dashboard/Ga4Page";
+import { OpportunitiesPage } from "../routes/dashboard/OpportunitiesPage";
+import { PriorityPage } from "../routes/dashboard/PriorityPage";
+import { SearchConsolePage } from "../routes/dashboard/SearchConsolePage";
+import { ActionWorkspace } from "../routes/dashboard/views/ActionWorkspace";
 
-const metrics = [
-  { label: "SEO health", value: "74", change: "+3 punten" },
-  { label: "Organic clicks", value: "8.4K", change: "+12,6%" },
-  { label: "Kansen", value: "18", change: "6 hoge impact" },
-];
-
-const priorities = [
+const initialProjects: ProjectSummary[] = [
   {
-    score: 94,
-    title: "Verbeter de snippet van /revisie",
-    detail: "12.400 impressies · CTR 1,2% · positie 4,6",
+    id: "shm",
+    name: "SHM Transmissie",
+    domain: "https://shmtransmissie.nl",
   },
   {
-    score: 87,
-    title: "Verhoog conversie op /versnellingsbak",
-    detail: "1.840 sessies · 0,6% conversie · dalend",
-  },
-  {
-    score: 72,
-    title: "Breid content uit voor automaat revisie",
-    detail: "Positie 8,2 · hoge commerciële intentie",
-  },
-];
-
-const auditPages = [
-  {
-    id: "1",
-    title: "Transmissie revisie",
-    url: "https://shmtransmissie.nl/revisie",
-    status: "publish",
-    pageType: "service",
-    priority: "high",
-    score: 55,
-  },
-  {
-    id: "2",
-    title: "Automatische versnellingsbak",
-    url: "https://shmtransmissie.nl/automatische-versnellingsbak",
-    status: "publish",
-    pageType: "service",
-    priority: "high",
-    score: 64,
-  },
-  {
-    id: "3",
-    title: "Onderhoud en tips",
-    url: "https://shmtransmissie.nl/blog/onderhoud",
-    status: "publish",
-    pageType: "blog",
-    priority: "medium",
-    score: 78,
+    id: "demo",
+    name: "Demo project",
+    domain: "https://demo.wpfixpilot.nl",
   },
 ];
 
 export function App() {
-  const [projects, setProjects] = useState<ProjectSummary[]>([
-    {
-      id: "shm",
-      name: "SHM Transmissie",
-      domain: "https://shmtransmissie.nl",
-    },
-    {
-      id: "demo",
-      name: "Demo project",
-      domain: "https://demo.wpfixpilot.nl",
-    },
-  ]);
+  const [locale, setLocale] = useState<Locale>(
+    (preferenceStorage.get("locale") as Locale | null) ?? "nl",
+  );
+  const [brand, setBrand] = useState<BrandSettings>(() => {
+    const saved = preferenceStorage.get("brand-settings");
+    return saved ? (JSON.parse(saved) as BrandSettings) : defaultBrand;
+  });
+
+  useEffect(() => applyBrand(brand), [brand]);
+
+  return (
+    <I18nProvider locale={locale}>
+      <AppShell
+        brand={brand}
+        locale={locale}
+        onBrandChange={(next) => {
+          setBrand(next);
+          preferenceStorage.set("brand-settings", JSON.stringify(next));
+        }}
+        onLocaleChange={(next) => {
+          setLocale(next);
+          preferenceStorage.set("locale", next);
+        }}
+      />
+    </I18nProvider>
+  );
+}
+
+function AppShell({
+  brand,
+  locale,
+  onBrandChange,
+  onLocaleChange,
+}: {
+  brand: BrandSettings;
+  locale: Locale;
+  onBrandChange: (brand: BrandSettings) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const { t } = useI18n();
+  const [route, setRoute] = useState(
+    () => window.location.hash.slice(1) || "overview",
+  );
+  const [projects, setProjects] = useState(initialProjects);
   const [activeProjectId, setActiveProjectId] = useState(projects[0].id);
   const [showCreateProject, setShowCreateProject] = useState(false);
+
+  useEffect(() => {
+    const updateRoute = () =>
+      setRoute(window.location.hash.slice(1) || "overview");
+    window.addEventListener("hashchange", updateRoute);
+    return () => window.removeEventListener("hashchange", updateRoute);
+  }, []);
+
+  const navigate = (next: string) => ({
+    href: `#${next}`,
+    className: `nav-item ${route === next ? "active" : ""}`,
+  });
 
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Hoofdnavigatie">
-        <a className="brand" href="/" aria-label="WP FixPilot home">
-          <span>W</span>
-          <strong>WP FixPilot</strong>
+        <a className="brand" href="#overview" aria-label={`${brand.name} home`}>
+          <span>{brand.name.charAt(0).toUpperCase()}</span>
+          <strong>{brand.name}</strong>
         </a>
-
         <nav>
-          <a className="nav-item active" href="#overview">
-            <LayoutDashboard size={18} />
-            Overzicht
+          <a {...navigate("overview")}>
+            <LayoutDashboard size={18} /> {t("overview")}
           </a>
-          <a className="nav-item" href="#analytics">
-            <BarChart3 size={18} />
-            Analytics
+          <a {...navigate("search-console")}>
+            <Search size={18} /> Search Console
           </a>
-          <a className="nav-item" href="#actions">
-            <CheckCircle2 size={18} />
-            Acties
+          <a {...navigate("ga4")}>
+            <BarChart3 size={18} /> GA4
           </a>
-          <a className="nav-item" href="#opportunities">
-            <Sparkles size={18} />
-            Kansen
+          <a {...navigate("crawl")}>
+            <Radar size={18} /> Crawl
+          </a>
+          <a {...navigate("actions")}>
+            <CheckCircle2 size={18} /> {t("actions")}
+          </a>
+          <a {...navigate("opportunities")}>
+            <Sparkles size={18} /> {t("opportunities")}
+          </a>
+          <a {...navigate("priorities")}>
+            <Activity size={18} /> {t("priorities")}
           </a>
         </nav>
-
-        <a className="nav-item settings-link" href="#settings">
-          <Settings size={18} />
-          Instellingen
+        <a {...navigate("settings")} className={`nav-item settings-link ${route === "settings" ? "active" : ""}`}>
+          <Settings size={18} /> {t("settings")}
         </a>
       </aside>
 
@@ -129,7 +151,6 @@ export function App() {
             onSelect={setActiveProjectId}
             onCreate={() => setShowCreateProject(true)}
           />
-
           <div className="topbar-actions">
             <label className="search-field">
               <Search size={16} />
@@ -137,119 +158,23 @@ export function App() {
               <input placeholder="Zoek pagina of issue" />
             </label>
             <button className="sync-button" type="button">
-              <Activity size={16} />
-              Synchroniseren
+              <Activity size={16} /> Synchroniseren
             </button>
           </div>
         </header>
-
-        <div className="content">
-          <section className="page-heading">
-            <div>
-              <p className="eyebrow">SEO command center</p>
-              <h1>WP FixPilot</h1>
-              <p className="subtitle">
-                Google-data, WordPress en crawlinzichten in één werkruimte.
-              </p>
-            </div>
-            <div className="view-switcher" aria-label="Dashboardweergave">
-              <button type="button">Analytics</button>
-              <button type="button">Acties</button>
-              <button className="selected" type="button">
-                Hybride
-              </button>
-            </div>
-          </section>
-
-          <section className="metric-strip" aria-label="Belangrijkste statistieken">
-            {metrics.map((metric) => (
-              <div className="metric" key={metric.label}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
-                <small>{metric.change}</small>
-              </div>
-            ))}
-            <div className="sync-status">
-              <span className="status-dot" />
-              Alle bronnen actief
-              <small>8 minuten geleden bijgewerkt</small>
-            </div>
-          </section>
-
-          <section className="workspace-grid">
-            <div className="trend-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Organische prestaties</p>
-                  <h2>Clicks en conversies</h2>
-                </div>
-                <button className="text-button" type="button">
-                  Laatste 30 dagen <ChevronDown size={14} />
-                </button>
-              </div>
-
-              <div className="chart" aria-label="Voorbeeldgrafiek">
-                <div className="chart-lines" />
-                <svg viewBox="0 0 760 260" preserveAspectRatio="none">
-                  <path
-                    className="area"
-                    d="M0 220 C70 180 100 210 165 160 S290 185 350 112 S470 145 530 76 S650 108 760 34 L760 260 L0 260 Z"
-                  />
-                  <path
-                    className="primary-line"
-                    d="M0 220 C70 180 100 210 165 160 S290 185 350 112 S470 145 530 76 S650 108 760 34"
-                  />
-                  <path
-                    className="secondary-line"
-                    d="M0 238 C90 225 145 230 205 210 S330 218 400 180 S525 192 590 150 S690 162 760 116"
-                  />
-                </svg>
-                <div className="chart-labels">
-                  <span>14 mei</span>
-                  <span>21 mei</span>
-                  <span>28 mei</span>
-                  <span>4 juni</span>
-                  <span>12 juni</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="priority-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Vandaag</p>
-                  <h2>Topprioriteiten</h2>
-                </div>
-                <button className="icon-button" type="button" aria-label="Open acties">
-                  <ArrowUpRight size={18} />
-                </button>
-              </div>
-
-              <div className="priority-list">
-                {priorities.map((priority) => (
-                  <button className="priority-row" type="button" key={priority.title}>
-                    <span className="score">{priority.score}</span>
-                    <span>
-                      <strong>{priority.title}</strong>
-                      <small>{priority.detail}</small>
-                    </span>
-                    <ArrowUpRight size={16} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-          <AuditPagesTable pages={auditPages} />
-        </div>
+        <RouteContent
+          route={route}
+          brand={brand}
+          locale={locale}
+          onBrandChange={onBrandChange}
+          onLocaleChange={onLocaleChange}
+        />
       </main>
       {showCreateProject && (
         <CreateProjectDialog
           onClose={() => setShowCreateProject(false)}
           onSubmit={(draft) => {
-            const project = {
-              ...draft,
-              id: crypto.randomUUID(),
-            };
+            const project = { ...draft, id: crypto.randomUUID() };
             setProjects((current) => [...current, project]);
             setActiveProjectId(project.id);
             setShowCreateProject(false);
@@ -257,5 +182,124 @@ export function App() {
         />
       )}
     </div>
+  );
+}
+
+function RouteContent({
+  route,
+  brand,
+  locale,
+  onBrandChange,
+  onLocaleChange,
+}: {
+  route: string;
+  brand: BrandSettings;
+  locale: Locale;
+  onBrandChange: (brand: BrandSettings) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  if (route === "search-console") return <SearchConsolePage />;
+  if (route === "ga4") return <Ga4Page />;
+  if (route === "crawl") return <CrawlPage />;
+  if (route === "actions")
+    return (
+      <div className="content">
+        <ActionWorkspace />
+      </div>
+    );
+  if (route === "opportunities") return <OpportunitiesPage />;
+  if (route === "priorities") return <PriorityPage />;
+  if (route === "publishing") return <PublishingReview />;
+  if (route === "settings")
+    return (
+      <SettingsPanel
+        brand={brand}
+        locale={locale}
+        onBrandChange={onBrandChange}
+        onLocaleChange={onLocaleChange}
+      />
+    );
+  return (
+    <div className="content dashboard-mode-container">
+      <DashboardModes
+        brandName={brand.name}
+        savedView={
+          (preferenceStorage.get("dashboard-view") as DashboardView | null) ??
+          "hybrid"
+        }
+      />
+    </div>
+  );
+}
+
+function SettingsPanel({
+  brand,
+  locale,
+  onBrandChange,
+  onLocaleChange,
+}: {
+  brand: BrandSettings;
+  locale: Locale;
+  onBrandChange: (brand: BrandSettings) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  return (
+    <section className="data-page settings-page">
+      <p className="eyebrow">Personalisatie</p>
+      <h1>Instellingen</h1>
+      <p className="subtitle">
+        Wijzig taal, productnaam en kleuren zonder de applicatie om te bouwen.
+      </p>
+      <div className="settings-form">
+        <label>
+          Productnaam
+          <input
+            value={brand.name}
+            onChange={(event) =>
+              onBrandChange({ ...brand, name: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          Hoofdkleur
+          <input
+            type="color"
+            value={brand.primaryColor}
+            onChange={(event) =>
+              onBrandChange({ ...brand, primaryColor: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          Accentkleur
+          <input
+            type="color"
+            value={brand.accentColor}
+            onChange={(event) =>
+              onBrandChange({ ...brand, accentColor: event.target.value })
+            }
+          />
+        </label>
+        <fieldset>
+          <legend>
+            <Globe2 size={15} /> Taal
+          </legend>
+          <button
+            className={locale === "nl" ? "selected" : ""}
+            onClick={() => onLocaleChange("nl")}
+            type="button"
+          >
+            Nederlands
+          </button>
+          <button
+            className={locale === "en" ? "selected" : ""}
+            onClick={() => onLocaleChange("en")}
+            type="button"
+          >
+            English
+          </button>
+        </fieldset>
+      </div>
+    </section>
   );
 }

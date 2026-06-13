@@ -84,3 +84,11 @@ def test_dashboard_combines_search_and_all_filters(
         "https://member.example/revisie"
     ]
     assert all(item["priority"] == "high" for item in response.json()["pages"])
+    assert {
+        "trends",
+        "top_pages",
+        "weak_pages",
+        "top_queries",
+        "traffic_sources",
+        "priorities",
+    }.issubset(response.json())
