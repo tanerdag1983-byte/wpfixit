@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
+from app.domains.crawls.demo import DemoCrawlerProvider
 from app.domains.crawls.firecrawl import MAX_CRAWL_URLS, FirecrawlProvider
 from app.domains.crawls.models import CrawlIssue, CrawlPage, CrawlRun
 from app.domains.crawls.provider import CrawlerProvider
@@ -30,6 +31,8 @@ class StartCrawlRequest(BaseModel):
 
 def crawler_provider() -> CrawlerProvider:
     settings = get_settings()
+    if settings.environment == "development" and settings.demo_mode:
+        return DemoCrawlerProvider()
     return FirecrawlProvider(
         settings.firecrawl_api_key,
         webhook_url=settings.firecrawl_webhook_url,
@@ -87,8 +90,14 @@ def start_crawl(
             detail="External crawler could not be started",
         ) from error
     run.provider_crawl_id = str(result["id"])
-    run.state = "running"
-    session.commit()
+    documents = list(result.get("data") or [])
+    if documents:
+        for document in documents:
+            import_page(session, run, document)
+        complete_run(session, run)
+    else:
+        run.state = "running"
+        session.commit()
     return _run_payload(run)
 
 

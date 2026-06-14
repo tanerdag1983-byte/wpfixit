@@ -41,9 +41,7 @@ def test_status_collects_all_paginated_documents() -> None:
             FakeResponse(
                 {
                     "status": "completed",
-                    "data": [
-                        {"metadata": {"sourceURL": "https://example.com/about"}}
-                    ],
+                    "data": [{"metadata": {"sourceURL": "https://example.com/about"}}],
                     "next": None,
                 }
             ),

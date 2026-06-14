@@ -1,5 +1,7 @@
 import { AlertTriangle, CheckCircle2, RotateCcw, Upload } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { apiRequest } from "../../lib/api";
 
 type ProposalState =
   | "proposed"
@@ -9,14 +11,119 @@ type ProposalState =
   | "conflict"
   | "rolled_back";
 
-export function PublishingReview({
-  initialState = "proposed",
-}: {
-  initialState?: ProposalState;
-}) {
-  const [state, setState] = useState<ProposalState>(initialState);
-  const [confirmRollback, setConfirmRollback] = useState(false);
+type Proposal = {
+  id: string;
+  url: string;
+  change_type: string;
+  before_value: unknown;
+  after_value: unknown;
+  approval_state: ProposalState;
+  created_at: string;
+};
 
+export function PublishingReview({ projectId }: { projectId: string }) {
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [afterValue, setAfterValue] = useState("");
+  const [confirmRollback, setConfirmRollback] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ items: Proposal[] }>(
+      `/projects/${projectId}/change-proposals`,
+    )
+      .then((response) => {
+        if (!active) return;
+        const latest = response.items[0] ?? null;
+        setProposal(latest);
+        setAfterValue(stringValue(latest?.after_value));
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setMessage(
+            error instanceof Error ? error.message : "Voorstel laden mislukt.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
+
+  async function saveChange() {
+    if (!proposal) return;
+    try {
+      const updated = await apiRequest<Proposal>(
+        `/projects/${projectId}/change-proposals/${proposal.id}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ after_value: afterValue }),
+        },
+      );
+      setProposal(updated);
+      setMessage("De voorgestelde waarde is opgeslagen.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Opslaan mislukt.");
+    }
+  }
+
+  async function approve() {
+    if (!proposal) return;
+    try {
+      const updated = await apiRequest<Proposal>(
+        `/projects/${projectId}/change-proposals/${proposal.id}/approve`,
+        { method: "POST" },
+      );
+      setProposal(updated);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Goedkeuren mislukt.");
+    }
+  }
+
+  async function publish() {
+    if (!proposal) return;
+    try {
+      const response = await apiRequest<{ proposal: Proposal }>(
+        `/projects/${projectId}/change-proposals/${proposal.id}/publish`,
+        { method: "POST" },
+      );
+      setProposal(response.proposal);
+      setMessage("De wijziging is gepubliceerd.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Publiceren mislukt.");
+    }
+  }
+
+  async function rollback() {
+    if (!proposal) return;
+    try {
+      const response = await apiRequest<{ proposal: Proposal }>(
+        `/projects/${projectId}/change-proposals/${proposal.id}/rollback`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmed: true }),
+        },
+      );
+      setProposal(response.proposal);
+      setConfirmRollback(false);
+      setMessage("De wijziging is teruggedraaid.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Rollback mislukt.");
+    }
+  }
+
+  if (!proposal) {
+    return (
+      <section className="publishing-review">
+        <p className="eyebrow">Handmatige publicatie</p>
+        <h1>Wijziging beoordelen</h1>
+        <p className="settings-empty">Nog geen wijzigingsvoorstel beschikbaar.</p>
+        {message && <p className="settings-message">{message}</p>}
+      </section>
+    );
+  }
+
+  const state = proposal.approval_state;
   return (
     <section className="publishing-review">
       <div className="page-heading">
@@ -24,7 +131,7 @@ export function PublishingReview({
           <p className="eyebrow">Handmatige publicatie</p>
           <h1>Wijziging beoordelen</h1>
           <p className="subtitle">
-            /revisie · SEO-title · gebaseerd op Search Console en WordPress
+            {new URL(proposal.url).pathname} · {proposal.change_type}
           </p>
         </div>
         <span className={`publish-state ${state}`}>{stateLabel(state)}</span>
@@ -48,21 +155,27 @@ export function PublishingReview({
           <div className="diff-grid">
             <div className="diff-before">
               <span>Huidig</span>
-              <p>Oude title</p>
+              <p>{stringValue(proposal.before_value)}</p>
             </div>
-            <div className="diff-after">
+            <label className="diff-after">
               <span>Voorstel</span>
-              <p>Nieuwe title</p>
-            </div>
+              <textarea
+                aria-label="Voorgestelde waarde"
+                disabled={state !== "proposed"}
+                value={afterValue}
+                onChange={(event) => setAfterValue(event.target.value)}
+              />
+            </label>
           </div>
-          <div className="publish-evidence">
-            <strong>Waarom deze wijziging?</strong>
-            <p>
-              12.400 impressies, 1,2% CTR en positie 4,6. De huidige title
-              benut de commerciële zoekintentie onvoldoende.
-            </p>
-            <small>Evidence: gsc:revisie · audit:82 · confidence 92%</small>
-          </div>
+          <button
+            className="secondary-button"
+            disabled={state !== "proposed"}
+            onClick={saveChange}
+            type="button"
+          >
+            Wijziging opslaan
+          </button>
+          {message && <p className="settings-message">{message}</p>}
         </section>
 
         <aside className="publish-sidebar">
@@ -86,7 +199,7 @@ export function PublishingReview({
             <button
               className="secondary-button"
               disabled={state !== "proposed"}
-              onClick={() => setState("approved")}
+              onClick={approve}
               type="button"
             >
               Goedkeuren
@@ -94,7 +207,7 @@ export function PublishingReview({
             <button
               className="primary-button"
               disabled={state !== "approved"}
-              onClick={() => setState("published")}
+              onClick={publish}
               type="button"
             >
               Publiceren
@@ -113,30 +226,11 @@ export function PublishingReview({
         </aside>
       </div>
 
-      <section className="change-history">
-        <p className="eyebrow">Auditlog</p>
-        <h2>Wijzigingshistorie</h2>
-        <div>
-          <span>Vandaag, 10:32</span>
-          <strong>Voorstel aangemaakt</strong>
-          <span>door Taner</span>
-        </div>
-        {state === "published" && (
-          <div>
-            <span>Vandaag, 10:36</span>
-            <strong>Gepubliceerd naar WordPress</strong>
-            <span>hash gecontroleerd</span>
-          </div>
-        )}
-      </section>
-
       {confirmRollback && (
         <div className="dialog-backdrop" role="presentation">
           <div className="dialog" role="dialog" aria-modal="true">
             <h2>Rollback bevestigen</h2>
-            <p>
-              De oude title wordt als nieuwe, gelogde wijziging teruggezet.
-            </p>
+            <p>De oude waarde wordt als gelogde wijziging teruggezet.</p>
             <div className="dialog-actions">
               <button
                 className="secondary-button"
@@ -145,14 +239,7 @@ export function PublishingReview({
               >
                 Annuleren
               </button>
-              <button
-                className="primary-button"
-                onClick={() => {
-                  setState("rolled_back");
-                  setConfirmRollback(false);
-                }}
-                type="button"
-              >
+              <button className="primary-button" onClick={rollback} type="button">
                 Bevestig rollback
               </button>
             </div>
@@ -161,6 +248,11 @@ export function PublishingReview({
       )}
     </section>
   );
+}
+
+function stringValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
 function stateLabel(state: ProposalState) {

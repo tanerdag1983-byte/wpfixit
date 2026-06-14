@@ -1,29 +1,67 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublishingReview } from "./PublishingReview";
 
+const apiRequest = vi.fn();
+
+vi.mock("../../lib/api", () => ({
+  apiRequest: (...args: unknown[]) => apiRequest(...args),
+}));
+
+const proposal = {
+  id: "proposal-1",
+  url: "https://shmtransmissie.nl/revisie",
+  change_type: "seo_title",
+  before_value: "Oude title",
+  after_value: "Nieuwe title",
+  approval_state: "proposed",
+  created_at: "2026-06-14T10:00:00Z",
+};
+
 describe("PublishingReview", () => {
-  it("shows an exact diff and requires approval before publishing", () => {
-    render(<PublishingReview />);
-
-    expect(
-      screen.getByRole("heading", { name: "Wijziging beoordelen" }),
-    ).toBeVisible();
-    expect(screen.getByText("Oude title")).toBeVisible();
-    expect(screen.getByText("Nieuwe title")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Publiceren" })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Goedkeuren" }));
-
-    expect(screen.getByRole("button", { name: "Publiceren" })).toBeEnabled();
+  beforeEach(() => {
+    apiRequest.mockReset();
+    apiRequest.mockResolvedValueOnce({ items: [proposal] });
   });
 
-  it("requires confirmation before rollback", () => {
-    render(<PublishingReview initialState="published" />);
+  it("edits, approves and publishes through the API", async () => {
+    apiRequest
+      .mockResolvedValueOnce({
+        ...proposal,
+        after_value: "Beste transmissie revisie",
+      })
+      .mockResolvedValueOnce({
+        ...proposal,
+        after_value: "Beste transmissie revisie",
+        approval_state: "approved",
+      })
+      .mockResolvedValueOnce({
+        proposal: {
+          ...proposal,
+          after_value: "Beste transmissie revisie",
+          approval_state: "published",
+        },
+      });
+    render(<PublishingReview projectId="shm" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
+    const editor = await screen.findByLabelText("Voorgestelde waarde");
+    fireEvent.change(editor, {
+      target: { value: "Beste transmissie revisie" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wijziging opslaan" }));
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/shm/change-proposals/proposal-1",
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
 
-    expect(screen.getByText("Rollback bevestigen")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Goedkeuren" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Publiceren" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Publiceren" }));
+    expect(await screen.findByText("Gepubliceerd")).toBeVisible();
   });
 });

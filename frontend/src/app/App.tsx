@@ -213,16 +213,17 @@ function RouteContent({
 }) {
   if (route === "search-console") return <SearchConsolePage />;
   if (route === "ga4") return <Ga4Page />;
-  if (route === "crawl") return <CrawlPage />;
+  if (route === "crawl") return <CrawlPage projectId={activeProject.id} />;
   if (route === "actions")
     return (
       <div className="content">
-        <ActionWorkspace />
+        <ActionWorkspace projectId={activeProject.id} />
       </div>
     );
   if (route === "opportunities") return <OpportunitiesPage />;
   if (route === "priorities") return <PriorityPage />;
-  if (route === "publishing") return <PublishingReview />;
+  if (route === "publishing")
+    return <PublishingReview projectId={activeProject.id} />;
   if (route === "settings")
     return (
       <SettingsPanel
@@ -237,6 +238,7 @@ function RouteContent({
     <div className="content dashboard-mode-container">
       <DashboardModes
         brandName={brand.name}
+        projectId={activeProject.id}
         savedView={
           (preferenceStorage.get("dashboard-view") as DashboardView | null) ??
           "hybrid"

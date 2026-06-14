@@ -82,8 +82,7 @@ def test_approved_publish_and_confirmed_rollback_are_audited(
         == 200
     )
     published = client.post(
-        f"/projects/{projects.member_project.id}/change-proposals/"
-        f"{proposal_id}/publish"
+        f"/projects/{projects.member_project.id}/change-proposals/{proposal_id}/publish"
     )
     rolled_back = client.post(
         f"/projects/{projects.member_project.id}/change-proposals/"
@@ -96,3 +95,51 @@ def test_approved_publish_and_confirmed_rollback_are_audited(
     assert rolled_back.status_code == 200
     assert rolled_back.json()["proposal"]["approval_state"] == "rolled_back"
     assert session.scalar(select(func.count(WordPressChangeEvent.id))) == 2
+
+
+def test_proposed_change_can_be_edited_but_approved_change_is_locked(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="wp-edit",
+        project_id=projects.member_project.id,
+        wordpress_object_id=84,
+        post_type="page",
+        status="publish",
+        title="Revisie",
+        slug="revisie",
+        url="https://member.example/revisie",
+        content_hash="base-hash",
+    )
+    session.add(page)
+    session.commit()
+    created = client.post(
+        f"/projects/{projects.member_project.id}/change-proposals",
+        json={
+            "wordpress_page_id": page.id,
+            "change_type": "seo_title",
+            "before_value": "Oude title",
+            "after_value": "Eerste voorstel",
+        },
+    ).json()
+
+    edited = client.put(
+        f"/projects/{projects.member_project.id}/change-proposals/{created['id']}",
+        json={"after_value": "Verbeterd voorstel"},
+    )
+    client.post(
+        f"/projects/{projects.member_project.id}/change-proposals/"
+        f"{created['id']}/approve"
+    )
+    locked = client.put(
+        f"/projects/{projects.member_project.id}/change-proposals/{created['id']}",
+        json={"after_value": "Te laat gewijzigd"},
+    )
+
+    assert edited.status_code == 200
+    assert edited.json()["after_value"] == "Verbeterd voorstel"
+    assert locked.status_code == 409

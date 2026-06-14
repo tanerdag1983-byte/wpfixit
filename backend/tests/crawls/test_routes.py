@@ -38,6 +38,33 @@ class FakeCrawler:
         return hmac.compare_digest(expected, signature)
 
 
+class InlineCrawler(FakeCrawler):
+    def start(self, url: str, *, limit: int, metadata: dict) -> dict:
+        return {
+            "id": "demo-crawl-1",
+            "data": [
+                {
+                    "markdown": "# Home",
+                    "links": [f"{url}/contact"],
+                    "metadata": {
+                        "sourceURL": url,
+                        "statusCode": 200,
+                        "title": "Home",
+                    },
+                },
+                {
+                    "markdown": "# Contact",
+                    "links": [],
+                    "metadata": {
+                        "sourceURL": f"{url}/contact",
+                        "statusCode": 200,
+                        "title": "",
+                    },
+                },
+            ],
+        }
+
+
 def test_member_can_start_crawl_with_application_cap(
     client: TestClient,
     auth_as,
@@ -55,6 +82,30 @@ def test_member_can_start_crawl_with_application_cap(
     assert response.status_code == 202
     assert response.json()["provider_crawl_id"] == "provider-crawl-1"
     assert response.json()["url_limit"] == 5_000
+
+
+def test_inline_crawler_imports_results_and_completes_run(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    monkeypatch.setattr(crawl_routes, "crawler_provider", lambda: InlineCrawler())
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/crawls",
+        json={"limit": 20},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "completed"
+    assert response.json()["page_count"] == 2
+    results = client.get(
+        f"/projects/{projects.member_project.id}/crawls/{response.json()['id']}"
+    ).json()
+    assert len(results["pages"]) == 2
+    assert results["issues"][0]["issue_type"] == "missing_title"
 
 
 def test_outsider_cannot_list_project_crawls(

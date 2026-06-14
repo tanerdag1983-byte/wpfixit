@@ -12,7 +12,7 @@ describe("DashboardModes", () => {
 
     render(
       <I18nProvider locale="nl">
-        <DashboardModes />
+        <DashboardModes projectId="project-1" />
       </I18nProvider>,
     );
 

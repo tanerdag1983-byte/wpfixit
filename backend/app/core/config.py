@@ -26,12 +26,11 @@ class Settings(BaseSettings):
     verify_wordpress_ssl: bool = True
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = (
-        "http://localhost:5173/auth/google/callback"
-    )
+    google_redirect_uri: str = "http://localhost:5173/auth/google/callback"
     firecrawl_api_key: str = ""
     firecrawl_webhook_secret: str = ""
     firecrawl_webhook_url: str = "http://localhost:8000/webhooks/firecrawl"
+    demo_mode: bool = False
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -45,11 +44,7 @@ class Settings(BaseSettings):
         return [item.strip() for item in value.split(",") if item.strip()]
 
     def trusted_host_list(self) -> list[str]:
-        return [
-            item.strip()
-            for item in self.trusted_hosts.split(",")
-            if item.strip()
-        ]
+        return [item.strip() for item in self.trusted_hosts.split(",") if item.strip()]
 
     def production_configuration_errors(self) -> list[str]:
         if self.environment != "production":

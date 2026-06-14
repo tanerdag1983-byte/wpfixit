@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.crypto import decrypt_text, encrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
@@ -14,6 +15,7 @@ from app.domains.audits.models import SeoRecommendation
 from app.domains.audits.service import audit_project
 from app.domains.projects.service import get_membership, get_project
 from app.domains.wordpress.client import WordPressClient
+from app.domains.wordpress.demo import DemoWordPressClient
 from app.domains.wordpress.models import (
     WordPressChangeEvent,
     WordPressChangeProposal,
@@ -49,6 +51,10 @@ class RollbackRequest(BaseModel):
     confirmed: bool
 
 
+class ChangeProposalUpdate(BaseModel):
+    after_value: Any
+
+
 def _project_or_404(
     session: Session,
     user: CurrentUser,
@@ -73,11 +79,12 @@ def _require_manager(session: Session, user: CurrentUser, project) -> None:
 def _connection_client(
     session: Session,
     project_id: str,
-) -> WordPressClient:
+) -> WordPressClient | DemoWordPressClient:
+    settings = get_settings()
+    if settings.environment == "development" and settings.demo_mode:
+        return DemoWordPressClient()
     connection = session.scalar(
-        select(WordPressConnection).where(
-            WordPressConnection.project_id == project_id
-        )
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
     )
     if connection is None:
         raise HTTPException(status_code=404, detail="WordPress connection not found")
@@ -125,9 +132,7 @@ def connect_wordpress(
         ) from error
 
     connection = session.scalar(
-        select(WordPressConnection).where(
-            WordPressConnection.project_id == project_id
-        )
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
     )
     if connection is None:
         connection = WordPressConnection(id=str(uuid4()), project_id=project_id)
@@ -156,9 +161,7 @@ def sync_pages(
 ) -> dict[str, int | str]:
     _project_or_404(session, user, project_id)
     connection = session.scalar(
-        select(WordPressConnection).where(
-            WordPressConnection.project_id == project_id
-        )
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
     )
     if connection is None:
         raise HTTPException(status_code=404, detail="WordPress connection not found")
@@ -289,6 +292,29 @@ def list_change_proposals(
     }
 
 
+@router.put("/change-proposals/{proposal_id}")
+def update_change_proposal(
+    project_id: str,
+    proposal_id: str,
+    payload: ChangeProposalUpdate,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, Any]:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project)
+    proposal = _proposal_or_404(session, project_id, proposal_id)
+    if proposal.approval_state != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail="Only proposed changes can be edited",
+        )
+    proposal.after_value = payload.after_value
+    session.commit()
+    page = session.get(WordPressPage, proposal.wordpress_page_id)
+    assert page is not None
+    return _proposal_payload(proposal, page)
+
+
 @router.get("/change-events")
 def list_change_events(
     project_id: str,
@@ -316,6 +342,8 @@ def list_change_events(
             for event in events
         ]
     }
+
+
 @router.post("/change-proposals/{proposal_id}/approve")
 def approve_change_proposal(
     project_id: str,

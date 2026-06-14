@@ -3,6 +3,16 @@ import { supabase } from "./supabase";
 const apiBaseUrl =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
   "http://localhost:8000";
+const developmentAccessToken = import.meta.env.VITE_DEV_ACCESS_TOKEN as
+  | string
+  | undefined;
+
+export function resolveAccessToken(
+  sessionToken?: string,
+  developmentToken?: string,
+) {
+  return sessionToken || developmentToken;
+}
 
 export async function apiRequest<T>(
   path: string,
@@ -13,8 +23,12 @@ export async function apiRequest<T>(
     : null;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
-  if (session?.access_token) {
-    headers.set("Authorization", `Bearer ${session.access_token}`);
+  const accessToken = resolveAccessToken(
+    session?.access_token,
+    developmentAccessToken,
+  );
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -32,4 +46,3 @@ export async function apiRequest<T>(
   }
   return (await response.json()) as T;
 }
-

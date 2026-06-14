@@ -12,9 +12,11 @@ export type DashboardView = "analytics" | "action" | "hybrid";
 export function DashboardModes({
   savedView,
   brandName = defaultBrand.name,
+  projectId,
 }: {
   savedView?: DashboardView;
   brandName?: string;
+  projectId: string;
 }) {
   const [view, setView] = useState<DashboardView>(
     savedView ??
@@ -35,7 +37,7 @@ export function DashboardModes({
         <button className={view === "hybrid" ? "selected" : ""} onClick={() => select("hybrid")} type="button">{t("hybridView")}</button>
       </div>
       {view === "analytics" && <AnalyticsConsole />}
-      {view === "action" && <ActionWorkspace />}
+      {view === "action" && <ActionWorkspace projectId={projectId} />}
       {view === "hybrid" && <HybridCommandCenter brandName={brandName} />}
     </>
   );
