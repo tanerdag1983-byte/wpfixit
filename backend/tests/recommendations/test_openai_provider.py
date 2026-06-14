@@ -5,6 +5,7 @@ import pytest
 from app.domains.recommendations.openai_provider import (
     OpenAIRecommendationGenerator,
 )
+from app.domains.recommendations.provider import ProviderGenerationError
 from app.domains.recommendations.schemas import (
     EvidenceItem,
     GeneratedRecommendation,
@@ -99,5 +100,16 @@ def test_openai_generator_rejects_unknown_evidence() -> None:
         )
     )
 
-    with pytest.raises(ValueError, match="unknown evidence"):
+    with pytest.raises(ProviderGenerationError, match="unknown evidence"):
+        OpenAIRecommendationGenerator(client, "gpt-test").generate(facts())
+
+
+def test_openai_generator_translates_provider_failures() -> None:
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            parse=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("secret"))
+        )
+    )
+
+    with pytest.raises(ProviderGenerationError, match="OpenAI generation failed"):
         OpenAIRecommendationGenerator(client, "gpt-test").generate(facts())

@@ -10,9 +10,7 @@ def test_legacy_organization_ai_settings_routes_are_removed(
 ) -> None:
     auth_as(projects.member)
 
-    get_response = client.get(
-        f"/organizations/{projects.organization.id}/ai-settings"
-    )
+    get_response = client.get(f"/organizations/{projects.organization.id}/ai-settings")
     put_response = client.put(
         f"/organizations/{projects.organization.id}/ai-settings",
         json={},
@@ -49,8 +47,6 @@ def test_project_company_profile_and_prompt_are_saved(
     assert response.json()["company_name"] == "Member Transmissie"
     assert "vakmanschap" in response.json()["custom_prompt"]
 
-    get_response = client.get(
-        f"/projects/{projects.member_project.id}/company-profile"
-    )
+    get_response = client.get(f"/projects/{projects.member_project.id}/company-profile")
     assert get_response.status_code == 200
     assert get_response.json() == response.json()

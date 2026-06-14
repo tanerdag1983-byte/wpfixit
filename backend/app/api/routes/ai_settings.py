@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,23 @@ class CompanyProfileRequest(BaseModel):
     custom_prompt: str = Field(default="", max_length=5_000)
 
 
+class ProjectAiPolicyWrite(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    primary_connection_id: str
+    primary_model: str = Field(min_length=1, max_length=255)
+    fallback_connection_id: str | None = None
+    fallback_model: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def matching_fallback_fields(self):
+        if bool(self.fallback_connection_id) != bool(self.fallback_model):
+            raise ValueError(
+                "Fallback connection and model must be configured together"
+            )
+        return self
+
+
 @router.get(
     "/organizations/{organization_id}/ai-connections",
     response_model=AiConnectionListResponse,
@@ -86,11 +103,7 @@ def get_ai_connections(
         .where(AiConnection.organization_id == organization_id)
         .order_by(AiConnection.name, AiConnection.id)
     ).all()
-    return {
-        "items": [
-            _connection_payload(connection) for connection in connections
-        ]
-    }
+    return {"items": [_connection_payload(connection) for connection in connections]}
 
 
 @router.post(
@@ -227,6 +240,59 @@ def test_ai_connection(
     return _connection_payload(connection)
 
 
+@router.get("/projects/{project_id}/ai-policy")
+def get_project_ai_policy(
+    project_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = get_project(session, user.id, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    policy = session.get(ProjectAiPolicy, project_id)
+    if policy is None:
+        return {"configured": False}
+    return _policy_payload(session, policy)
+
+
+@router.put("/projects/{project_id}/ai-policy")
+def put_project_ai_policy(
+    project_id: str,
+    payload: ProjectAiPolicyWrite,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = get_project(session, user.id, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _require_manager(session, user, project.organization_id)
+    primary = _policy_connection(
+        session,
+        project.organization_id,
+        payload.primary_connection_id,
+    )
+    fallback = None
+    if payload.fallback_connection_id:
+        fallback = _policy_connection(
+            session,
+            project.organization_id,
+            payload.fallback_connection_id,
+        )
+    policy = session.get(ProjectAiPolicy, project_id)
+    if policy is None:
+        policy = ProjectAiPolicy(
+            project_id=project_id,
+            organization_id=project.organization_id,
+        )
+        session.add(policy)
+    policy.primary_connection_id = primary.id
+    policy.primary_model = payload.primary_model
+    policy.fallback_connection_id = fallback.id if fallback else None
+    policy.fallback_model = payload.fallback_model if fallback else None
+    session.commit()
+    return _policy_payload(session, policy)
+
+
 @router.get("/projects/{project_id}/company-profile")
 def get_company_profile(
     project_id: str,
@@ -317,6 +383,26 @@ def _ensure_unique_name(
         )
 
 
+def _policy_connection(
+    session: Session,
+    organization_id: str,
+    connection_id: str,
+) -> AiConnection:
+    connection = session.scalar(
+        select(AiConnection).where(
+            AiConnection.id == connection_id,
+            AiConnection.organization_id == organization_id,
+            AiConnection.enabled.is_(True),
+        )
+    )
+    if connection is None:
+        raise HTTPException(
+            status_code=422,
+            detail="AI connection is unavailable for this project",
+        )
+    return connection
+
+
 def _provider_test_request(
     connection: AiConnection,
     model: str,
@@ -383,6 +469,35 @@ def _connection_payload(connection: AiConnection) -> dict:
         "last_test_status": connection.last_test_status,
         "last_test_message": connection.last_test_message,
         "configured": True,
+    }
+
+
+def _policy_payload(session: Session, policy: ProjectAiPolicy) -> dict:
+    primary = session.get(AiConnection, policy.primary_connection_id)
+    fallback = (
+        session.get(AiConnection, policy.fallback_connection_id)
+        if policy.fallback_connection_id
+        else None
+    )
+    assert primary is not None
+    return {
+        "configured": True,
+        "primary": {
+            "connection_id": primary.id,
+            "name": primary.name,
+            "provider": primary.provider,
+            "model": policy.primary_model,
+        },
+        "fallback": (
+            {
+                "connection_id": fallback.id,
+                "name": fallback.name,
+                "provider": fallback.provider,
+                "model": policy.fallback_model,
+            }
+            if fallback
+            else None
+        ),
     }
 
 

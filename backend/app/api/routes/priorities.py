@@ -1,18 +1,21 @@
+import hashlib
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.crypto import decrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.priorities.service import project_priorities
 from app.domains.projects.service import get_project
 from app.domains.recommendations.models import (
+    AiConnection,
     CompanyProfile,
-    OrganizationAiSettings,
+    ProjectAiPolicy,
 )
+from app.domains.recommendations.policy import PolicyRecommendationGenerator
+from app.domains.recommendations.provider_factory import build_generator
 from app.domains.recommendations.schemas import PageFacts
 from app.domains.recommendations.service import (
     RuleBasedRecommendationGenerator,
@@ -63,41 +66,39 @@ def seo_priority_score(
 
 
 def _recommendation_generator(session: Session, project):
-    ai_settings = session.get(
-        OrganizationAiSettings,
-        project.organization_id,
-    )
     company_profile = session.get(CompanyProfile, project.id)
     company_context = _company_context(company_profile)
-    if ai_settings is not None:
-        from openai import OpenAI
-
-        from app.domains.recommendations.openai_provider import (
-            OpenAIRecommendationGenerator,
-        )
-
-        return OpenAIRecommendationGenerator(
-            OpenAI(
-                api_key=decrypt_text(ai_settings.encrypted_api_key),
-                base_url=ai_settings.base_url,
-                max_retries=3,
-            ),
-            ai_settings.model,
-            company_context=company_context,
-        )
-    settings = get_settings()
-    if not settings.openai_api_key:
+    policy = session.get(ProjectAiPolicy, project.id)
+    if policy is None:
         return RuleBasedRecommendationGenerator()
-    from openai import OpenAI
-
-    from app.domains.recommendations.openai_provider import (
-        OpenAIRecommendationGenerator,
+    primary = session.get(AiConnection, policy.primary_connection_id)
+    if (
+        primary is None
+        or primary.organization_id != project.organization_id
+        or not primary.enabled
+    ):
+        return RuleBasedRecommendationGenerator()
+    primary_generator = build_generator(
+        primary,
+        policy.primary_model,
+        company_context,
     )
-
-    return OpenAIRecommendationGenerator(
-        OpenAI(api_key=settings.openai_api_key, max_retries=3),
-        settings.openai_model,
-        company_context=company_context,
+    fallback_generator = None
+    if policy.fallback_connection_id and policy.fallback_model:
+        fallback = session.get(AiConnection, policy.fallback_connection_id)
+        if (
+            fallback is not None
+            and fallback.organization_id == project.organization_id
+            and fallback.enabled
+        ):
+            fallback_generator = build_generator(
+                fallback,
+                policy.fallback_model,
+                company_context,
+            )
+    return PolicyRecommendationGenerator(
+        primary_generator,
+        fallback_generator,
     )
 
 
@@ -112,6 +113,7 @@ def generate_recommendations(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     generator = _recommendation_generator(session, project)
+    prompt_version = _prompt_version(session.get(CompanyProfile, project.id))
     items = []
     for page, result, evidence in project_priorities(session, project_id)[:limit]:
         recommendation = persist_recommendation(
@@ -126,6 +128,7 @@ def generate_recommendations(
                 evidence=evidence,
             ),
             generator,
+            prompt_version=prompt_version,
         )
         items.append(
             {
@@ -138,6 +141,7 @@ def generate_recommendations(
                 "evidence": recommendation.evidence,
                 "provider": recommendation.provider,
                 "model": recommendation.model,
+                "prompt_version": recommendation.prompt_version,
             }
         )
     return {"items": items}
@@ -156,3 +160,24 @@ def _company_context(profile: CompanyProfile | None) -> str:
             f"Extra instructie: {profile.custom_prompt}",
         ]
     )[:10_000]
+
+
+def _prompt_version(profile: CompanyProfile | None) -> str | None:
+    if profile is None:
+        return None
+    payload = {
+        "company_name": profile.company_name,
+        "description": profile.description,
+        "audience": profile.audience,
+        "services": profile.services,
+        "tone_of_voice": profile.tone_of_voice,
+        "custom_prompt": profile.custom_prompt,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()

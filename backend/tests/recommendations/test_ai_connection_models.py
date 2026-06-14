@@ -278,9 +278,7 @@ def test_organization_and_project_delete_cascade_owned_ai_records(
     session.commit()
     connection_id = connection.id
 
-    session.execute(
-        delete(Project).where(Project.id == projects.member_project.id)
-    )
+    session.execute(delete(Project).where(Project.id == projects.member_project.id))
     session.commit()
 
     assert session.get(ProjectAiPolicy, projects.member_project.id) is None
@@ -366,8 +364,7 @@ def test_upgrade_and_downgrade_preserve_legacy_settings_exactly(
     assert policy_count == 0
 
     indexes = {
-        index["name"]
-        for index in inspect(engine).get_indexes("project_ai_policies")
+        index["name"] for index in inspect(engine).get_indexes("project_ai_policies")
     }
     assert indexes == {
         "ix_project_ai_policies_fallback_connection_id",
@@ -427,13 +424,17 @@ def test_downgrade_selects_oldest_connection_by_created_at_then_id(
     _downgrade_migration("0010_ai_settings")
 
     with engine.connect() as connection:
-        restored = connection.execute(
-            text(
-                "SELECT provider, base_url, model, encrypted_api_key, updated_at "
-                "FROM organization_ai_settings "
-                "WHERE organization_id = 'org-downgrade'"
+        restored = (
+            connection.execute(
+                text(
+                    "SELECT provider, base_url, model, encrypted_api_key, updated_at "
+                    "FROM organization_ai_settings "
+                    "WHERE organization_id = 'org-downgrade'"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
 
     assert dict(restored) == {
         "provider": "openai",

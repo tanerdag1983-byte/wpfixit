@@ -91,9 +91,7 @@ def test_connection_routes_have_explicit_credential_free_response_models(
             )
         ],
     ]
-    list_route = routes[
-        ("/organizations/{organization_id}/ai-connections", "GET")
-    ]
+    list_route = routes[("/organizations/{organization_id}/ai-connections", "GET")]
     test_route = routes[
         (
             "/organizations/{organization_id}/ai-connections/{connection_id}/test",
@@ -106,9 +104,14 @@ def test_connection_routes_have_explicit_credential_free_response_models(
         assert set(route.response_model.model_fields) == expected_fields
     assert list_route.response_model is not None
     assert set(list_route.response_model.model_fields) == {"items"}
-    assert set(
-        list_route.response_model.model_fields["items"].annotation.__args__[0].model_fields
-    ) == expected_fields
+    assert (
+        set(
+            list_route.response_model.model_fields["items"]
+            .annotation.__args__[0]
+            .model_fields
+        )
+        == expected_fields
+    )
     assert test_route.response_model is not None
     assert set(test_route.response_model.model_fields) == expected_fields
 
@@ -155,10 +158,7 @@ def test_owner_can_create_list_update_and_delete_connection(
     )
     update_payload.pop("api_key")
     update_response = client.put(
-        (
-            f"/organizations/{projects.organization.id}/ai-connections/"
-            f"{created['id']}"
-        ),
+        (f"/organizations/{projects.organization.id}/ai-connections/{created['id']}"),
         json=update_payload,
     )
     assert update_response.status_code == 200
@@ -173,8 +173,7 @@ def test_owner_can_create_list_update_and_delete_connection(
     assert decrypt_text(stored.encrypted_api_key) == "secret-key"
 
     delete_response = client.delete(
-        f"/organizations/{projects.organization.id}/ai-connections/"
-        f"{created['id']}"
+        f"/organizations/{projects.organization.id}/ai-connections/{created['id']}"
     )
     assert delete_response.status_code == 204
     assert session.get(AiConnection, created["id"]) is None
@@ -231,8 +230,7 @@ def test_member_cannot_update_delete_or_test_connection(
     connection = create_connection(client, projects)
     set_member_role(session, projects, "member")
     endpoint = (
-        f"/organizations/{projects.organization.id}/ai-connections/"
-        f"{connection['id']}"
+        f"/organizations/{projects.organization.id}/ai-connections/{connection['id']}"
     )
 
     if operation == "update":
@@ -271,10 +269,7 @@ def test_update_to_duplicate_connection_name_returns_conflict(
     second = create_connection(client, projects, name="Second connection")
 
     response = client.put(
-        (
-            f"/organizations/{projects.organization.id}/ai-connections/"
-            f"{second['id']}"
-        ),
+        (f"/organizations/{projects.organization.id}/ai-connections/{second['id']}"),
         json=connection_payload(),
     )
 
@@ -296,9 +291,7 @@ def test_connection_in_project_policy_cannot_be_deleted(
     target = create_connection(client, projects)
     other = create_connection(client, projects, name="Other connection")
     primary_id = (
-        target["id"]
-        if policy_field == "primary_connection_id"
-        else other["id"]
+        target["id"] if policy_field == "primary_connection_id" else other["id"]
     )
     fallback_id = target["id"] if policy_field == "fallback_connection_id" else None
     session.add(
@@ -314,8 +307,7 @@ def test_connection_in_project_policy_cannot_be_deleted(
     session.commit()
 
     response = client.delete(
-        f"/organizations/{projects.organization.id}/ai-connections/"
-        f"{target['id']}"
+        f"/organizations/{projects.organization.id}/ai-connections/{target['id']}"
     )
 
     assert response.status_code == 409

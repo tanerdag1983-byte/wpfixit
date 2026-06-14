@@ -70,14 +70,20 @@ def persist_recommendation(
     page: WordPressPage,
     facts: PageFacts,
     generator,
+    *,
+    prompt_version: str | None = None,
 ) -> SeoRecommendation:
     fingerprint = hashlib.sha256(
-        json.dumps(facts.model_dump(), sort_keys=True).encode()
+        json.dumps(
+            {
+                "facts": facts.model_dump(),
+                "prompt_version": prompt_version,
+            },
+            sort_keys=True,
+        ).encode()
     ).hexdigest()
     existing = session.scalar(
-        select(SeoRecommendation).where(
-            SeoRecommendation.evidence_hash == fingerprint
-        )
+        select(SeoRecommendation).where(SeoRecommendation.evidence_hash == fingerprint)
     )
     if existing is not None:
         return existing
@@ -100,6 +106,7 @@ def persist_recommendation(
         },
         provider=generated.provider,
         model=generated.model,
+        prompt_version=prompt_version,
         evidence_hash=fingerprint,
         input_tokens=generated.input_tokens,
         output_tokens=generated.output_tokens,

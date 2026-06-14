@@ -96,6 +96,7 @@ class SeoRecommendation(Base):
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     provider: Mapped[str | None] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
     evidence_hash: Mapped[str | None] = mapped_column(
         String(64),
     )
