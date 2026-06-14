@@ -333,6 +333,7 @@ def _provider_test_request(
                 "max_output_tokens": 8,
             },
             timeout=15,
+            allow_redirects=False,
         )
     if connection.provider == "anthropic":
         return requests.post(
@@ -347,13 +348,15 @@ def _provider_test_request(
                 "messages": [{"role": "user", "content": "Reply with OK"}],
             },
             timeout=15,
+            allow_redirects=False,
         )
     if connection.provider == "gemini":
         return requests.post(
-            f"{base_url}/models/{model}:generateContent?key={api_key}",
-            headers={},
+            f"{base_url}/models/{model}:generateContent",
+            headers={"x-goog-api-key": api_key},
             json={"contents": [{"parts": [{"text": "Reply with OK"}]}]},
             timeout=15,
+            allow_redirects=False,
         )
     return requests.post(
         f"{base_url}/chat/completions",
@@ -364,6 +367,7 @@ def _provider_test_request(
             "max_tokens": 8,
         },
         timeout=15,
+        allow_redirects=False,
     )
 
 

@@ -355,9 +355,9 @@ def test_connection_in_project_policy_cannot_be_deleted(
             "https://generativelanguage.googleapis.com/v1beta",
             (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
-                "test-model:generateContent?key=secret-key"
+                "test-model:generateContent"
             ),
-            {},
+            {"x-goog-api-key": "secret-key"},
             {"contents": [{"parts": [{"text": "Reply with OK"}]}]},
         ),
         (
@@ -397,11 +397,19 @@ def test_connection_uses_provider_specific_test_request(
     class ProviderResponse:
         status_code = 200
 
-    def provider_post(url: str, *, headers: dict, json: dict, timeout: int):
+    def provider_post(
+        url: str,
+        *,
+        headers: dict,
+        json: dict,
+        timeout: int,
+        allow_redirects: bool,
+    ):
         assert url == expected_url
         assert headers == expected_headers
         assert json == expected_json
         assert timeout == 15
+        assert allow_redirects is False
         return ProviderResponse()
 
     monkeypatch.setattr("app.api.routes.ai_settings.requests.post", provider_post)
@@ -456,7 +464,14 @@ def test_connection_test_uses_default_model_when_body_has_no_model(
     class ProviderResponse:
         status_code = 204
 
-    def provider_post(url: str, *, headers: dict, json: dict, timeout: int):
+    def provider_post(
+        url: str,
+        *,
+        headers: dict,
+        json: dict,
+        timeout: int,
+        allow_redirects: bool,
+    ):
         assert url == "https://api.openai.com/v1/responses"
         assert headers == {"Authorization": "Bearer secret-key"}
         assert json == {
@@ -465,6 +480,7 @@ def test_connection_test_uses_default_model_when_body_has_no_model(
             "max_output_tokens": 8,
         }
         assert timeout == 15
+        assert allow_redirects is False
         return ProviderResponse()
 
     monkeypatch.setattr("app.api.routes.ai_settings.requests.post", provider_post)
