@@ -12,49 +12,29 @@ vi.mock("../../lib/api", () => ({
 describe("AiSettingsPanel", () => {
   beforeEach(() => {
     apiRequest.mockReset();
-    apiRequest
-      .mockResolvedValueOnce({
-        configured: true,
-        provider: "openai_compatible",
-        base_url: "https://ai.example.com/v1",
-        model: "seo-model",
-      })
-      .mockResolvedValueOnce({
-        configured: true,
-        company_name: "SHM Transmissie",
-        description: "Transmissiespecialist",
-        audience: "Autobezitters",
-        services: ["Diagnose", "Revisie"],
-        tone_of_voice: "Deskundig",
-        custom_prompt: "Noem alleen aantoonbare voordelen.",
-      });
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/ai-connections")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/ai-policy")) return Promise.resolve({ configured: false });
+      if (path.endsWith("/company-profile")) {
+        return Promise.resolve({ configured: false });
+      }
+      return Promise.resolve({});
+    });
   });
 
-  it("lets an owner select a model and define company context", () => {
+  it("shows connection, project policy and company context settings", async () => {
     render(
-      <AiSettingsPanel
-        organizationId="org-1"
-        projectId="project-1"
-      />,
+      <AiSettingsPanel organizationId="org-1" projectId="project-1" />,
     );
 
-    expect(screen.getByLabelText("Model")).toBeVisible();
-    expect(screen.getByLabelText("API-key")).toBeVisible();
-    expect(screen.getByLabelText("Bedrijfsprofiel prompt")).toBeVisible();
-    expect(screen.getByRole("button", { name: "AI-koppeling opslaan" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Verbinding testen" })).toBeVisible();
-  });
-
-  it("loads the saved model and company profile", async () => {
-    render(
-      <AiSettingsPanel
-        organizationId="org-1"
-        projectId="project-1"
-      />,
-    );
-
-    expect(await screen.findByDisplayValue("seo-model")).toBeVisible();
-    expect(screen.getByDisplayValue("SHM Transmissie")).toBeVisible();
-    expect(screen.getByDisplayValue("Diagnose, Revisie")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "AI-verbindingen" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Modelbeleid voor dit project" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Bedrijf- en websiteprofiel" }),
+    ).toBeVisible();
   });
 });
