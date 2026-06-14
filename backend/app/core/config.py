@@ -32,8 +32,6 @@ class Settings(BaseSettings):
     firecrawl_api_key: str = ""
     firecrawl_webhook_secret: str = ""
     firecrawl_webhook_url: str = "http://localhost:8000/webhooks/firecrawl"
-    openai_api_key: str = ""
-    openai_model: str = "gpt-5.4-mini"
 
     @field_validator("database_url", mode="before")
     @classmethod

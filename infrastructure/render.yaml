@@ -42,8 +42,6 @@ services:
         sync: false
       - key: WP_FIXPILOT_FIRECRAWL_WEBHOOK_URL
         sync: false
-      - key: WP_FIXPILOT_OPENAI_API_KEY
-        sync: false
 
 databases:
   - name: wp-fixpilot-db

@@ -22,6 +22,12 @@ Set `WP_FIXPILOT_TRUSTED_HOSTS` to the API hostname only, and
 `WP_FIXPILOT_CORS_ORIGINS` to the exact Vercel production and preview origins
 that may call the API.
 
+Set `WP_FIXPILOT_ENCRYPTION_KEY` before creating AI or OAuth connections and
+retain it across deploys. Provider API keys are entered by organization owners
+in the application and stored encrypted in PostgreSQL; do not configure
+provider keys as frontend or Render environment variables. Apply migrations
+through `0012_prompt_version` before using project AI policies.
+
 ## Authentication
 
 Enable Google and Microsoft Azure in Supabase Auth. Use the Supabase callback
