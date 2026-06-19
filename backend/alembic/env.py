@@ -3,6 +3,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from app.core.alembic_url import escape_configparser_url
 from app.core.config import get_settings
 from app.core.database import Base
 from app.domains.audits import models as audit_models  # noqa: F401
@@ -17,7 +18,10 @@ from app.domains.subscriptions import models as subscription_models  # noqa: F40
 from app.domains.wordpress import models as wordpress_models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option(
+    "sqlalchemy.url",
+    escape_configparser_url(get_settings().database_url),
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
