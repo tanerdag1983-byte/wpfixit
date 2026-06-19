@@ -18,6 +18,41 @@ def test_member_can_list_only_organization_projects(
     ]
 
 
+def test_new_user_gets_workspace_when_listing_projects(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.new_user)
+
+    response = client.get("/projects")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_new_user_can_create_project_without_organization_id(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.new_user)
+
+    response = client.post(
+        "/projects",
+        json={
+            "name": "Live Site",
+            "domain": "https://live.example/",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "Live Site"
+    assert body["domain"] == "https://live.example"
+    assert body["organization_id"]
+
+
 def test_non_member_cannot_read_project(
     client: TestClient,
     auth_as,

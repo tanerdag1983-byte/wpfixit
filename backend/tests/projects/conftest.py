@@ -22,6 +22,7 @@ from app.main import app
 class ProjectFixtures:
     member: Profile
     outsider: Profile
+    new_user: Profile
     organization: Organization
     member_project: Project
     other_project: Project
@@ -43,6 +44,7 @@ def session() -> Generator[Session, None, None]:
 def projects(session: Session) -> ProjectFixtures:
     member = Profile(id="user-member", email="member@example.com")
     outsider = Profile(id="user-outsider", email="outsider@example.com")
+    new_user = Profile(id="user-new", email="new@example.com")
     organization = Organization(id="org-member", name="Member Organization")
     other_organization = Organization(id="org-other", name="Other Organization")
     member_project = Project(
@@ -61,6 +63,7 @@ def projects(session: Session) -> ProjectFixtures:
         [
             member,
             outsider,
+            new_user,
             organization,
             other_organization,
             OrganizationMember(
@@ -76,6 +79,7 @@ def projects(session: Session) -> ProjectFixtures:
     return ProjectFixtures(
         member=member,
         outsider=outsider,
+        new_user=new_user,
         organization=organization,
         member_project=member_project,
         other_project=other_project,
@@ -103,4 +107,3 @@ def client(session: Session) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.pop(get_session, None)
-

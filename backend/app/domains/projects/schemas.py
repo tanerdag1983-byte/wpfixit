@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class ProjectCreate(BaseModel):
-    organization_id: str = Field(min_length=1, max_length=64)
+    organization_id: str | None = Field(default=None, min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=160)
     domain: HttpUrl
 
@@ -27,4 +27,3 @@ class ProjectRead(BaseModel):
 
 class ProjectList(BaseModel):
     items: list[ProjectRead]
-

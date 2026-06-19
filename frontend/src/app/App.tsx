@@ -36,21 +36,27 @@ import { OpportunitiesPage } from "../routes/dashboard/OpportunitiesPage";
 import { PriorityPage } from "../routes/dashboard/PriorityPage";
 import { SearchConsolePage } from "../routes/dashboard/SearchConsolePage";
 import { ActionWorkspace } from "../routes/dashboard/views/ActionWorkspace";
+import { apiRequest } from "../lib/api";
 
-const initialProjects: ProjectSummary[] = [
-  {
-    id: "shm",
-    organizationId: "org-member",
-    name: "SHM Transmissie",
-    domain: "https://shmtransmissie.nl",
-  },
-  {
-    id: "demo",
-    organizationId: "org-member",
-    name: "Demo project",
-    domain: "https://demo.wpfixpilot.nl",
-  },
-];
+type ProjectRead = {
+  id: string;
+  organization_id: string;
+  name: string;
+  domain: string;
+};
+
+type ProjectList = {
+  items: ProjectRead[];
+};
+
+function toProjectSummary(project: ProjectRead): ProjectSummary {
+  return {
+    id: project.id,
+    organizationId: project.organization_id,
+    name: project.name,
+    domain: project.domain,
+  };
+}
 
 export function App() {
   const [locale, setLocale] = useState<Locale>(
@@ -100,9 +106,12 @@ function AppShell({
   const [route, setRoute] = useState(
     () => window.location.hash.slice(1) || "overview",
   );
-  const [projects, setProjects] = useState(initialProjects);
-  const [activeProjectId, setActiveProjectId] = useState(projects[0].id);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState("");
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [creatingProject, setCreatingProject] = useState(false);
 
   useEffect(() => {
     const updateRoute = () =>
@@ -111,10 +120,34 @@ function AppShell({
     return () => window.removeEventListener("hashchange", updateRoute);
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    apiRequest<ProjectList>("/projects")
+      .then((response) => {
+        if (!mounted) return;
+        const nextProjects = response.items.map(toProjectSummary);
+        setProjects(nextProjects);
+        setActiveProjectId((current) => current || nextProjects[0]?.id || "");
+        setProjectError(null);
+      })
+      .catch((error: Error) => {
+        if (!mounted) return;
+        setProjectError(error.message);
+      })
+      .finally(() => {
+        if (mounted) setProjectsLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const navigate = (next: string) => ({
     href: `#${next}`,
     className: `nav-item ${route === next ? "active" : ""}`,
   });
+  const activeProject =
+    projects.find((project) => project.id === activeProjectId) ?? projects[0];
 
   return (
     <div className="app-shell">
@@ -172,10 +205,10 @@ function AppShell({
         </header>
         <RouteContent
           route={route}
-          activeProject={
-            projects.find((project) => project.id === activeProjectId) ??
-            projects[0]
-          }
+          activeProject={activeProject}
+          projectError={projectError}
+          projectsLoading={projectsLoading}
+          onCreateProject={() => setShowCreateProject(true)}
           brand={brand}
           locale={locale}
           onBrandChange={onBrandChange}
@@ -184,16 +217,26 @@ function AppShell({
       </main>
       {showCreateProject && (
         <CreateProjectDialog
+          submitting={creatingProject}
+          error={projectError}
           onClose={() => setShowCreateProject(false)}
-          onSubmit={(draft) => {
-            const project = {
-              ...draft,
-              id: crypto.randomUUID(),
-              organizationId: "org-member",
-            };
-            setProjects((current) => [...current, project]);
-            setActiveProjectId(project.id);
-            setShowCreateProject(false);
+          onSubmit={async (draft) => {
+            setCreatingProject(true);
+            setProjectError(null);
+            try {
+              const created = await apiRequest<ProjectRead>("/projects", {
+                method: "POST",
+                body: JSON.stringify(draft),
+              });
+              const project = toProjectSummary(created);
+              setProjects((current) => [...current, project]);
+              setActiveProjectId(project.id);
+              setShowCreateProject(false);
+            } catch (error) {
+              setProjectError((error as Error).message);
+            } finally {
+              setCreatingProject(false);
+            }
           }}
         />
       )}
@@ -204,18 +247,44 @@ function AppShell({
 function RouteContent({
   route,
   activeProject,
+  projectError,
+  projectsLoading,
+  onCreateProject,
   brand,
   locale,
   onBrandChange,
   onLocaleChange,
 }: {
   route: string;
-  activeProject: ProjectSummary;
+  activeProject?: ProjectSummary;
+  projectError: string | null;
+  projectsLoading: boolean;
+  onCreateProject: () => void;
   brand: BrandSettings;
   locale: Locale;
   onBrandChange: (brand: BrandSettings) => void;
   onLocaleChange: (locale: Locale) => void;
 }) {
+  if (!activeProject) {
+    return (
+      <div className="content">
+        <section className="empty-state">
+          <p className="eyebrow">Live setup</p>
+          <h1>{projectsLoading ? "Projecten laden..." : "Maak je eerste project aan"}</h1>
+          <p>
+            {projectError ??
+              "Voeg je website toe om crawls, WordPress-acties en Google-data live te testen."}
+          </p>
+          {!projectsLoading && (
+            <button className="primary-button" type="button" onClick={onCreateProject}>
+              Project aanmaken
+            </button>
+          )}
+        </section>
+      </div>
+    );
+  }
+
   if (route === "search-console")
     return <SearchConsolePage projectId={activeProject.id} />;
   if (route === "ga4") return <Ga4Page projectId={activeProject.id} />;

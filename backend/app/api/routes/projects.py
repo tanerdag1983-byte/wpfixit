@@ -20,7 +20,7 @@ def create_project(
     session: SessionDependency,
     user: UserDependency,
 ) -> ProjectRead:
-    project = service.create_project(session, user.id, payload)
+    project = service.create_project(session, user, payload)
     if project is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     return ProjectRead.model_validate(project)
@@ -34,7 +34,7 @@ def get_projects(
     return ProjectList(
         items=[
             ProjectRead.model_validate(project)
-            for project in service.list_projects(session, user.id)
+            for project in service.list_projects(session, user)
         ]
     )
 
@@ -60,4 +60,3 @@ def delete_project(
     if not service.soft_delete_project(session, user.id, project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-

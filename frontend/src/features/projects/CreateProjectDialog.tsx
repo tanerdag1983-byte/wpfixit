@@ -7,11 +7,15 @@ type ProjectDraft = {
 };
 
 type CreateProjectDialogProps = {
+  error?: string | null;
+  submitting?: boolean;
   onClose: () => void;
-  onSubmit: (project: ProjectDraft) => void;
+  onSubmit: (project: ProjectDraft) => void | Promise<void>;
 };
 
 export function CreateProjectDialog({
+  error,
+  submitting = false,
   onClose,
   onSubmit,
 }: CreateProjectDialogProps) {
@@ -68,12 +72,18 @@ export function CreateProjectDialog({
               placeholder="https://voorbeeld.nl"
             />
           </label>
+          {error && <p className="form-error">{error}</p>}
           <div className="dialog-actions">
-            <button className="secondary-button" type="button" onClick={onClose}>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={submitting}
+              onClick={onClose}
+            >
               Annuleren
             </button>
-            <button className="primary-button" type="submit">
-              Project aanmaken
+            <button className="primary-button" type="submit" disabled={submitting}>
+              {submitting ? "Aanmaken..." : "Project aanmaken"}
             </button>
           </div>
         </form>
@@ -81,4 +91,3 @@ export function CreateProjectDialog({
     </div>
   );
 }
-

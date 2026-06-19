@@ -1808,6 +1808,13 @@ h2 {
   color: var(--ink);
 }
 
+.form-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
