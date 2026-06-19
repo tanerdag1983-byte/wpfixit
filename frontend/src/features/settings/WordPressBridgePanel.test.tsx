@@ -26,6 +26,9 @@ describe("WordPressBridgePanel", () => {
           health_state: "connected",
         });
       }
+      if (path.endsWith("/audit") && init?.method === "POST") {
+        return Promise.resolve({ audited_count: 89 });
+      }
       return Promise.resolve({});
     });
   });
@@ -54,5 +57,30 @@ describe("WordPressBridgePanel", () => {
       ),
     );
     expect(await screen.findByText("WordPress bridge is verbonden.")).toBeVisible();
+  });
+
+  it("runs a WordPress audit after a connection exists", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/wordpress-connection")) {
+        return Promise.resolve({
+          project_id: "project-1",
+          site_url: "https://example.com",
+          plugin_version: "0.1.0",
+          seo_plugin: "yoast",
+          health_state: "connected",
+        });
+      }
+      if (path.endsWith("/wordpress-pages")) return Promise.resolve({ count: 89 });
+      if (path.endsWith("/audit") && init?.method === "POST") {
+        return Promise.resolve({ audited_count: 89 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<WordPressBridgePanel projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "SEO-audit draaien" }));
+
+    expect(await screen.findByText("89 WordPress-pagina's geaudit.")).toBeVisible();
   });
 });

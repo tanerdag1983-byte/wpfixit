@@ -6,7 +6,9 @@ import { useI18n } from "../../../features/preferences/useI18n";
 
 type Recommendation = {
   id: string;
+  wordpress_page_id: string;
   url: string;
+  action_type: string;
   priority: string;
   recommendation: string;
   provider: string;
@@ -41,6 +43,32 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
+  async function createProposal(item: Recommendation) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/projects/${projectId}/change-proposals`, {
+        method: "POST",
+        body: JSON.stringify({
+          wordpress_page_id: item.wordpress_page_id,
+          recommendation_id: item.id,
+          change_type: item.action_type,
+          before_value: "",
+          after_value: item.recommendation,
+        }),
+      });
+      window.location.hash = "publishing";
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Wijzigingsvoorstel maken mislukt.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="dashboard-view">
       <div className="page-heading">
@@ -69,7 +97,12 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
           </p>
         )}
         {items.map((item, index) => (
-          <a href="#publishing" key={item.id}>
+          <button
+            disabled={busy}
+            key={item.id}
+            onClick={() => createProposal(item)}
+            type="button"
+          >
             <span className="priority-number">{100 - index * 8}</span>
             <span>
               <strong>{item.recommendation}</strong>
@@ -84,7 +117,7 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
               {item.approval_state === "proposed" ? "Voorstel" : item.approval_state}
             </span>
             <ArrowUpRight size={17} />
-          </a>
+          </button>
         ))}
       </div>
     </section>

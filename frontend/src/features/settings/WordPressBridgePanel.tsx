@@ -86,6 +86,22 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
     }
   }
 
+  async function runAudit() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<{ audited_count: number }>(
+        `/projects/${projectId}/audit`,
+        { method: "POST" },
+      );
+      setMessage(`${response.audited_count} WordPress-pagina's geaudit.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Audit draaien mislukt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section>
       <p className="eyebrow">WordPress bridge</p>
@@ -117,6 +133,14 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
                 type="button"
               >
                 Pagina's synchroniseren
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={runAudit}
+                type="button"
+              >
+                SEO-audit draaien
               </button>
             </div>
           </div>

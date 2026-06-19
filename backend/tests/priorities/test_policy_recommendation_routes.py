@@ -189,6 +189,7 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
 
     assert response.status_code == 200
     recommendation = response.json()["items"][0]
+    assert recommendation["wordpress_page_id"] == page.id
     assert recommendation["provider"] == "gemini"
     assert recommendation["model"] == "gemini-2.5-flash"
     assert recommendation["approval_state"] == "proposed"

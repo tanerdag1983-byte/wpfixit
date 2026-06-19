@@ -133,6 +133,7 @@ def generate_recommendations(
         items.append(
             {
                 "id": recommendation.id,
+                "wordpress_page_id": page.id,
                 "url": page.url,
                 "action_type": recommendation.action_type,
                 "priority": recommendation.priority,
