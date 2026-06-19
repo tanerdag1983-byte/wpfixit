@@ -668,6 +668,52 @@ h2 {
   padding: 44px 42px 60px;
 }
 
+.integration-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: #fbfdf9;
+}
+
+.integration-panel h2 {
+  margin: 4px 0 6px;
+  font-family: "Manrope", sans-serif;
+}
+
+.integration-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.integration-actions {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.integration-actions label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.integration-actions select {
+  min-width: 280px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
 .data-metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1904,6 +1950,25 @@ h2 {
 
   .data-page {
     padding: 32px 20px 110px;
+  }
+
+  .integration-panel,
+  .integration-actions {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .integration-panel {
+    display: grid;
+  }
+
+  .integration-actions {
+    display: grid;
+  }
+
+  .integration-actions select {
+    min-width: 0;
+    width: 100%;
   }
 
   .data-metrics {

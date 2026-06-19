@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 
 import { defaultBrand, applyBrand, type BrandSettings } from "../config/brand";
 import { PublishingReview } from "../features/publishing/PublishingReview";
+import { GoogleOAuthCallback } from "../features/google/GoogleOAuthCallback";
 import { AiSettingsPanel } from "../features/settings/AiSettingsPanel";
 import {
   ProjectSwitcher,
@@ -61,6 +62,10 @@ export function App() {
   });
 
   useEffect(() => applyBrand(brand), [brand]);
+
+  if (window.location.pathname === "/auth/google/callback") {
+    return <GoogleOAuthCallback />;
+  }
 
   return (
     <I18nProvider locale={locale}>
@@ -211,8 +216,9 @@ function RouteContent({
   onBrandChange: (brand: BrandSettings) => void;
   onLocaleChange: (locale: Locale) => void;
 }) {
-  if (route === "search-console") return <SearchConsolePage />;
-  if (route === "ga4") return <Ga4Page />;
+  if (route === "search-console")
+    return <SearchConsolePage projectId={activeProject.id} />;
+  if (route === "ga4") return <Ga4Page projectId={activeProject.id} />;
   if (route === "crawl") return <CrawlPage projectId={activeProject.id} />;
   if (route === "actions")
     return (
