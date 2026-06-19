@@ -153,6 +153,27 @@ def connect_wordpress(
     )
 
 
+@router.get("/wordpress-connection", response_model=WordPressConnectionRead)
+def get_wordpress_connection(
+    project_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> WordPressConnectionRead:
+    _project_or_404(session, user, project_id)
+    connection = session.scalar(
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="WordPress connection not found")
+    return WordPressConnectionRead(
+        project_id=project_id,
+        site_url=connection.site_url,
+        plugin_version=connection.plugin_version,
+        seo_plugin=connection.seo_plugin,
+        health_state=connection.health_state,
+    )
+
+
 @router.post("/sync-pages")
 def sync_pages(
     project_id: str,

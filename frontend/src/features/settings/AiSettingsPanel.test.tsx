@@ -13,6 +13,10 @@ describe("AiSettingsPanel", () => {
   beforeEach(() => {
     apiRequest.mockReset();
     apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/wordpress-connection")) {
+        return Promise.reject(new Error("not connected"));
+      }
+      if (path.endsWith("/wordpress-pages")) return Promise.resolve({ count: 0 });
       if (path.endsWith("/ai-connections")) return Promise.resolve({ items: [] });
       if (path.endsWith("/ai-policy")) return Promise.resolve({ configured: false });
       if (path.endsWith("/company-profile")) {
@@ -27,6 +31,9 @@ describe("AiSettingsPanel", () => {
       <AiSettingsPanel organizationId="org-1" projectId="project-1" />,
     );
 
+    expect(
+      screen.getByRole("heading", { name: "Website koppelen" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "AI-verbindingen" }),
     ).toBeVisible();

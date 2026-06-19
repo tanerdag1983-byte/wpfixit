@@ -3,7 +3,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.routes import wordpress as wordpress_routes
-from app.domains.wordpress.models import WordPressChangeEvent, WordPressPage
+from app.domains.wordpress.models import (
+    WordPressChangeEvent,
+    WordPressConnection,
+    WordPressPage,
+)
 from tests.projects.conftest import ProjectFixtures
 
 
@@ -25,6 +29,40 @@ class FakePublishingClient:
             "content_hash": self.content_hash,
             "values": {"seo_title": self.value},
         }
+
+
+def test_wordpress_connection_status_returns_existing_connection(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    session.add(
+        WordPressConnection(
+            id="wp-connection",
+            project_id=projects.member_project.id,
+            site_url="https://member.example",
+            encrypted_secret="encrypted",
+            plugin_version="0.1.0",
+            seo_plugin="yoast",
+            health_state="connected",
+        )
+    )
+    session.commit()
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/wordpress-connection"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": projects.member_project.id,
+        "site_url": "https://member.example",
+        "plugin_version": "0.1.0",
+        "seo_plugin": "yoast",
+        "health_state": "connected",
+    }
 
 
 def test_approved_publish_and_confirmed_rollback_are_audited(

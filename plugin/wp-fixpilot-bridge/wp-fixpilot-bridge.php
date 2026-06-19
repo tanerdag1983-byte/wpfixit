@@ -14,6 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 require_once __DIR__ . '/includes/class-auth.php';
+require_once __DIR__ . '/includes/class-admin.php';
 require_once __DIR__ . '/includes/seo-adapters/interface-seo-adapter.php';
 require_once __DIR__ . '/includes/seo-adapters/class-adapter-changes.php';
 require_once __DIR__ . '/includes/seo-adapters/class-yoast-adapter.php';
@@ -35,6 +36,10 @@ register_activation_hook(__FILE__, static function (): void {
 add_action('rest_api_init', static function (): void {
     $controller = new WPFixPilot_REST_Controller();
     $controller->register_routes();
+});
+
+add_action('admin_menu', static function (): void {
+    (new WPFixPilot_Admin())->register();
 });
 
 add_action('template_redirect', static function (): void {
