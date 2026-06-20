@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.crypto import decrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
@@ -23,7 +25,9 @@ from app.domains.recommendations.service import (
     RuleBasedRecommendationGenerator,
     persist_recommendation,
 )
-from app.domains.wordpress.models import WordPressPage
+from app.domains.wordpress.client import WordPressClient
+from app.domains.wordpress.demo import DemoWordPressClient
+from app.domains.wordpress.models import WordPressConnection, WordPressPage
 
 router = APIRouter(tags=["priorities"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -119,6 +123,7 @@ def generate_recommendations(
     prompt_version = _prompt_version(session.get(CompanyProfile, project.id))
     items = []
     for page, result, evidence in project_priorities(session, project_id)[:limit]:
+        wordpress_context = _wordpress_context(session, project_id, page)
         recommendation = persist_recommendation(
             session,
             project,
@@ -126,6 +131,11 @@ def generate_recommendations(
             PageFacts(
                 url=page.url,
                 title=page.title,
+                wordpress_object_id=page.wordpress_object_id,
+                post_type=page.post_type,
+                status=page.status,
+                seo_plugin=wordpress_context["seo_plugin"],
+                current_values=wordpress_context["current_values"],
                 priority_score=result.priority_score,
                 components=result.components,
                 evidence=evidence,
@@ -149,6 +159,48 @@ def generate_recommendations(
             }
         )
     return {"items": items}
+
+
+def _wordpress_context(
+    session: Session,
+    project_id: str,
+    page: WordPressPage,
+) -> dict[str, object]:
+    client = _wordpress_client(session, project_id)
+    if client is None:
+        return {"seo_plugin": None, "current_values": {}}
+    try:
+        state = client.current_state(page.wordpress_object_id)
+    except Exception:
+        return {"seo_plugin": None, "current_values": {}}
+    connection = session.scalar(
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
+    )
+    return {
+        "seo_plugin": connection.seo_plugin if connection else None,
+        "current_values": state.get("values", {}),
+    }
+
+
+def _wordpress_client(
+    session: Session,
+    project_id: str,
+) -> WordPressClient | DemoWordPressClient | None:
+    settings = get_settings()
+    if settings.environment == "development" and settings.demo_mode:
+        return DemoWordPressClient()
+    connection = session.scalar(
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
+    )
+    if connection is None:
+        return None
+    try:
+        return WordPressClient(
+            connection.site_url,
+            decrypt_text(connection.encrypted_secret),
+        )
+    except Exception:
+        return None
 
 
 @router.get("/projects/{project_id}/recommendations")

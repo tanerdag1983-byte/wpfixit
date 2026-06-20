@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.audits.models import SeoRecommendation
 from app.domains.projects.models import Project
+from app.domains.recommendations.provider import publishable_action_type
 from app.domains.recommendations.schemas import (
     PageFacts,
     RecommendationResult,
@@ -20,32 +21,32 @@ class RuleBasedRecommendationGenerator:
         strongest = max(facts.components, key=facts.components.get)
         options = {
             "audit": (
-                "technical_seo",
-                "Los de belangrijkste technische en on-page fouten op.",
+                "content",
+                _content_recommendation(facts),
             ),
             "gsc_ctr": (
-                "snippet",
-                "Herschrijf de SEO-title en meta description voor een hogere CTR.",
+                "meta_description",
+                _meta_description_recommendation(facts),
             ),
             "ranking": (
                 "content",
-                "Verdiep de content en voeg relevante interne links toe.",
+                _content_recommendation(facts),
             ),
             "conversion": (
-                "conversion",
-                "Maak de propositie en primaire CTA duidelijker.",
+                "content",
+                _content_recommendation(facts),
             ),
             "trend": (
-                "investigate_decline",
-                "Vergelijk recente wijzigingen en herstel de prestatiedaling.",
+                "content",
+                _content_recommendation(facts),
             ),
             "importance": (
-                "priority_review",
-                "Plan een volledige SEO-review voor deze belangrijke pagina.",
+                "content",
+                _content_recommendation(facts),
             ),
             "confidence": (
-                "data_quality",
-                "Koppel ontbrekende databronnen voordat je grote wijzigingen doet.",
+                "content",
+                _content_recommendation(facts),
             ),
         }
         action_type, recommendation = options[strongest]
@@ -95,7 +96,7 @@ def persist_recommendation(
         id=str(uuid4()),
         project_id=project.id,
         wordpress_page_id=page.id,
-        action_type=generated.action_type,
+        action_type=publishable_action_type(generated.action_type),
         priority=generated.priority,
         recommendation=generated.recommendation,
         approval_state="proposed",
@@ -125,3 +126,27 @@ def persist_recommendation(
         )
     session.commit()
     return recommendation
+
+
+def _meta_description_recommendation(facts: PageFacts) -> str:
+    base = facts.current_values.get("meta_description") or facts.title
+    text = str(base).strip()[:110]
+    if not text:
+        text = "Ontdek hoe onze specialisten je helpen met diagnose en revisie."
+    return f"{text} - vraag vandaag nog deskundig advies aan.".strip()[:155]
+
+
+def _content_recommendation(facts: PageFacts) -> str:
+    current = str(facts.current_values.get("content") or "").strip()
+    addition = (
+        "\n\n<h2>Waarom deze pagina belangrijk is</h2>\n"
+        "<p>Deze pagina verdient concretere uitleg, duidelijke vervolgstappen "
+        "en interne links naar relevante diensten.</p>"
+    )
+    if current:
+        return f"{current}{addition}"
+    return (
+        "<h2>Waarom deze pagina belangrijk is</h2>\n"
+        "<p>Leg de dienst concreet uit, benoem bewijs uit de audit en voeg een "
+        "duidelijke vervolgstap toe.</p>"
+    )

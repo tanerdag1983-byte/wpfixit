@@ -19,9 +19,22 @@ class PageFacts(BaseModel):
 
     url: str
     title: str
+    wordpress_object_id: int | None = None
+    post_type: str | None = None
+    status: str | None = None
+    seo_plugin: str | None = None
+    current_values: dict[str, object] = Field(default_factory=dict)
     priority_score: int = Field(ge=0, le=100)
     components: dict[str, float]
     evidence: list[EvidenceItem] = Field(min_length=1)
+
+    @field_validator("current_values")
+    @classmethod
+    def bound_current_values(cls, values: dict[str, object]) -> dict[str, object]:
+        bounded: dict[str, object] = {}
+        for key, value in values.items():
+            bounded[key] = value[:4_000] if isinstance(value, str) else value
+        return bounded
 
 
 class GeneratedRecommendation(BaseModel):

@@ -44,6 +44,23 @@ class Generator:
         )
 
 
+class CaptureGenerator:
+    def __init__(self) -> None:
+        self.facts: PageFacts | None = None
+
+    def generate(self, facts: PageFacts) -> RecommendationResult:
+        self.facts = facts
+        return RecommendationResult(
+            action_type="meta_description",
+            priority="high",
+            recommendation="Specialist in transmissierevisie met snelle diagnose.",
+            rationale="De huidige snippet mist concrete propositie.",
+            evidence=[facts.evidence[0].id],
+            provider="gemini",
+            model="gemini-2.5-flash",
+        )
+
+
 def test_project_policy_builds_primary_and_fallback_with_company_context(
     session: Session,
     projects: ProjectFixtures,
@@ -194,3 +211,65 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
     assert recommendation["model"] == "gemini-2.5-flash"
     assert recommendation["approval_state"] == "proposed"
     assert len(recommendation["prompt_version"]) == 64
+
+
+def test_generation_endpoint_sends_current_wordpress_context_to_generator(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="wp-context-route",
+        project_id=projects.member_project.id,
+        wordpress_object_id=188,
+        post_type="page",
+        status="publish",
+        title="Automaatbak revisie",
+        slug="automaatbak-revisie",
+        url="https://member.example/automaatbak-revisie",
+    )
+    session.add(page)
+    session.flush()
+    session.add(
+        PageAudit(
+            id="audit-context-route",
+            project_id=projects.member_project.id,
+            wordpress_page_id=page.id,
+            score=52,
+            page_type_label="service",
+            facts={"importance": 0.7},
+        )
+    )
+    session.commit()
+    generator = CaptureGenerator()
+    monkeypatch.setattr(priorities, "_recommendation_generator", lambda *_: generator)
+    monkeypatch.setattr(
+        priorities,
+        "_wordpress_context",
+        lambda *_: {
+            "seo_plugin": "yoast",
+            "current_values": {
+                "seo_title": "Oude SEO title",
+                "meta_description": "Oude meta description",
+                "content": "<p>Huidige WordPress content</p>",
+            },
+        },
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/recommendations/generate",
+        params={"limit": 1},
+    )
+
+    assert response.status_code == 200
+    assert generator.facts is not None
+    assert generator.facts.wordpress_object_id == 188
+    assert generator.facts.post_type == "page"
+    assert generator.facts.status == "publish"
+    assert generator.facts.seo_plugin == "yoast"
+    assert generator.facts.current_values["content"] == (
+        "<p>Huidige WordPress content</p>"
+    )

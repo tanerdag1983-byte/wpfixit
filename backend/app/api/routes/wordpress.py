@@ -14,6 +14,10 @@ from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
 from app.domains.audits.service import audit_project
 from app.domains.projects.service import get_membership, get_project
+from app.domains.recommendations.provider import (
+    PUBLISHABLE_ACTION_TYPES,
+    publishable_action_type,
+)
 from app.domains.wordpress.client import WordPressClient
 from app.domains.wordpress.demo import DemoWordPressClient
 from app.domains.wordpress.models import (
@@ -55,24 +59,7 @@ class ChangeProposalUpdate(BaseModel):
     after_value: Any
 
 
-SUPPORTED_CHANGE_TYPES = {
-    "seo_title",
-    "meta_description",
-    "canonical",
-    "noindex",
-    "content",
-    "internal_links",
-    "redirect",
-}
-
-RECOMMENDATION_CHANGE_TYPE_MAP = {
-    "snippet": "seo_title",
-    "technical_seo": "content",
-    "conversion": "content",
-    "investigate_decline": "content",
-    "priority_review": "content",
-    "data_quality": "content",
-}
+SUPPORTED_CHANGE_TYPES = PUBLISHABLE_ACTION_TYPES
 
 
 def _project_or_404(
@@ -131,9 +118,7 @@ def _proposal_or_404(
 
 
 def _publishable_change_type(action_type: str) -> str:
-    if action_type in SUPPORTED_CHANGE_TYPES:
-        return action_type
-    return RECOMMENDATION_CHANGE_TYPE_MAP.get(action_type, "content")
+    return publishable_action_type(action_type)
 
 
 def _current_wordpress_state(

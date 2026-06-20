@@ -1,4 +1,9 @@
-from app.domains.recommendations.schemas import EvidenceItem, PageFacts
+from app.domains.recommendations.provider import validated_result
+from app.domains.recommendations.schemas import (
+    EvidenceItem,
+    GeneratedRecommendation,
+    PageFacts,
+)
 from app.domains.recommendations.service import RuleBasedRecommendationGenerator
 
 
@@ -23,6 +28,7 @@ def test_recommendation_requires_evidence_and_never_auto_approves() -> None:
     assert recommendation.evidence
     assert recommendation.approval_state == "proposed"
     assert recommendation.provider == "rules"
+    assert recommendation.action_type == "meta_description"
 
 
 def test_evidence_excerpt_is_bounded() -> None:
@@ -33,3 +39,32 @@ def test_evidence_excerpt_is_bounded() -> None:
     )
 
     assert len(evidence.excerpt) == 500
+
+
+def test_provider_output_is_normalized_to_publishable_action_type() -> None:
+    result = validated_result(
+        GeneratedRecommendation(
+            action_type="snippet",
+            priority="high",
+            recommendation="Nieuwe meta description.",
+            rationale="De CTR is laag.",
+            evidence=["gsc:revisie"],
+        ),
+        PageFacts(
+            url="https://example.com/revisie",
+            title="Transmissie revisie",
+            priority_score=91,
+            components={"gsc_ctr": 18},
+            evidence=[
+                EvidenceItem(
+                    id="gsc:revisie",
+                    source="search_console",
+                    excerpt="12.400 impressies, CTR 1,2%, positie 4,6",
+                )
+            ],
+        ),
+        provider="test",
+        model="model",
+    )
+
+    assert result.action_type == "meta_description"
