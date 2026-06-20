@@ -173,6 +173,59 @@ def test_changed_company_prompt_creates_a_new_recommendation_version(
     assert session.scalar(select(func.count(SeoRecommendation.id))) == 2
 
 
+def test_changed_recommendation_engine_version_creates_new_recommendation(
+    session: Session,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    from app.domains.recommendations import service
+
+    page = WordPressPage(
+        id="wp-engine-version",
+        project_id=projects.member_project.id,
+        wordpress_object_id=85,
+        post_type="page",
+        status="publish",
+        title="Transmissie diagnose",
+        slug="diagnose",
+        url="https://member.example/diagnose",
+    )
+    session.add(page)
+    session.commit()
+    facts = PageFacts(
+        url=page.url,
+        title=page.title,
+        priority_score=68,
+        components={"audit": 18.0},
+        evidence=[
+            EvidenceItem(
+                id="audit:engine-version",
+                source="audit",
+                excerpt="De pagina mist concrete uitleg.",
+            )
+        ],
+    )
+
+    first = persist_recommendation(
+        session,
+        projects.member_project,
+        page,
+        facts,
+        RuleBasedRecommendationGenerator(),
+    )
+    monkeypatch.setattr(service, "RECOMMENDATION_ENGINE_VERSION", "rules-v-next")
+    second = persist_recommendation(
+        session,
+        projects.member_project,
+        page,
+        facts,
+        RuleBasedRecommendationGenerator(),
+    )
+
+    assert first.id != second.id
+    assert session.scalar(select(func.count(SeoRecommendation.id))) == 2
+
+
 def test_company_profile_prompt_version_is_stable_and_content_sensitive() -> None:
     from app.api.routes.priorities import _prompt_version
 

@@ -15,6 +15,8 @@ from app.domains.recommendations.schemas import (
 from app.domains.subscriptions.models import UsageEvent
 from app.domains.wordpress.models import WordPressPage
 
+RECOMMENDATION_ENGINE_VERSION = "rules-v2-publishable-content"
+
 
 class RuleBasedRecommendationGenerator:
     def generate(self, facts: PageFacts) -> RecommendationResult:
@@ -79,6 +81,7 @@ def persist_recommendation(
             {
                 "facts": facts.model_dump(),
                 "prompt_version": prompt_version,
+                "recommendation_engine_version": RECOMMENDATION_ENGINE_VERSION,
             },
             sort_keys=True,
         ).encode()
