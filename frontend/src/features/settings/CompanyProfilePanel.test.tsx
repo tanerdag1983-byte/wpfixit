@@ -45,6 +45,35 @@ describe("CompanyProfilePanel", () => {
     );
   });
 
+  it("allows saving a project prompt before the company name is filled", async () => {
+    apiRequest.mockReset();
+    apiRequest
+      .mockResolvedValueOnce({ configured: false })
+      .mockResolvedValueOnce({
+        configured: true,
+        company_name: "Website",
+        custom_prompt: "Gebruik mijn projectprompt.",
+      });
+
+    render(<CompanyProfilePanel projectId="project-1" />);
+
+    const prompt = await screen.findByLabelText(/Projectprompt voor dit project/i);
+    fireEvent.change(prompt, {
+      target: { value: "Gebruik mijn projectprompt." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Profiel opslaan" }));
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/company-profile",
+        expect.objectContaining({
+          method: "PUT",
+          body: expect.stringContaining('"company_name":"Website"'),
+        }),
+      ),
+    );
+  });
+
   it("labels the company profile prompt as project-specific", async () => {
     render(<CompanyProfilePanel projectId="project-1" />);
 

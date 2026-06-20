@@ -50,7 +50,7 @@ export function CompanyProfilePanel({ projectId }: { projectId: string }) {
       await apiRequest(`/projects/${projectId}/company-profile`, {
         method: "PUT",
         body: JSON.stringify({
-          company_name: companyName,
+          company_name: companyName.trim() || "Website",
           description,
           audience,
           services: services
@@ -125,7 +125,9 @@ export function CompanyProfilePanel({ projectId }: { projectId: string }) {
       </div>
       <button
         className="primary-button"
-        disabled={!companyName}
+        disabled={
+          !companyName && !description && !audience && !services && !tone && !prompt
+        }
         onClick={saveProfile}
         type="button"
       >
