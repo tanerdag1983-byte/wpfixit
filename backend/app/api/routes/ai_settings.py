@@ -418,7 +418,7 @@ def _provider_test_request(
             json={
                 "model": model,
                 "input": "Reply with OK",
-                "max_output_tokens": 8,
+                "max_output_tokens": 16,
             },
             timeout=15,
             allow_redirects=False,

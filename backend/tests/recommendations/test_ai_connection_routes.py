@@ -325,7 +325,7 @@ def test_connection_in_project_policy_cannot_be_deleted(
             {
                 "model": "test-model",
                 "input": "Reply with OK",
-                "max_output_tokens": 8,
+                "max_output_tokens": 16,
             },
         ),
         (
@@ -469,7 +469,7 @@ def test_connection_test_uses_default_model_when_body_has_no_model(
         assert json == {
             "model": "saved-default-model",
             "input": "Reply with OK",
-            "max_output_tokens": 8,
+            "max_output_tokens": 16,
         }
         assert timeout == 15
         assert allow_redirects is False
