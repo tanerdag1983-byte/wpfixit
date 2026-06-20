@@ -150,6 +150,7 @@ export function PublishingReview({ projectId }: { projectId: string }) {
   }
 
   const state = proposal.approval_state;
+  const proposalIsHtml = looksLikeHtml(afterValue);
   return (
     <section className="publishing-review">
       <a className="back-link" href="#actions">
@@ -196,15 +197,27 @@ export function PublishingReview({ projectId }: { projectId: string }) {
               <span>Huidig</span>
               <p>{stringValue(proposal.before_value)}</p>
             </div>
-            <label className="diff-after">
-              <span>Voorstel</span>
-              <textarea
-                aria-label="Voorgestelde waarde"
-                disabled={state !== "proposed"}
-                value={afterValue}
-                onChange={(event) => setAfterValue(event.target.value)}
-              />
-            </label>
+            <div className="diff-after">
+              <span>{proposalIsHtml ? "Voorbeeld" : "Voorstel"}</span>
+              {proposalIsHtml && (
+                <div
+                  aria-label="Voorbeeld van voorstel"
+                  className="proposal-preview"
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(afterValue) }}
+                />
+              )}
+              <label className="proposal-editor">
+                <span>{proposalIsHtml ? "HTML bewerken" : "Voorstel"}</span>
+                <textarea
+                  aria-label={
+                    proposalIsHtml ? "HTML bewerken" : "Voorgestelde waarde"
+                  }
+                  disabled={state !== "proposed"}
+                  value={afterValue}
+                  onChange={(event) => setAfterValue(event.target.value)}
+                />
+              </label>
+            </div>
           </div>
           <button
             className="secondary-button"
@@ -292,6 +305,64 @@ export function PublishingReview({ projectId }: { projectId: string }) {
 function stringValue(value: unknown) {
   if (value === null || value === undefined) return "";
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function looksLikeHtml(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value);
+}
+
+function sanitizeHtml(value: string) {
+  if (typeof document === "undefined") return value;
+
+  const allowedTags = new Set([
+    "a",
+    "b",
+    "br",
+    "em",
+    "h2",
+    "h3",
+    "h4",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "strong",
+    "ul",
+  ]);
+  const template = document.createElement("template");
+  template.innerHTML = value;
+
+  template.content
+    .querySelectorAll("script,style,iframe,object,embed")
+    .forEach((node) => node.remove());
+
+  template.content.querySelectorAll("*").forEach((element) => {
+    const tagName = element.tagName.toLowerCase();
+    if (!allowedTags.has(tagName)) {
+      element.replaceWith(...Array.from(element.childNodes));
+      return;
+    }
+
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const attributeValue = attribute.value;
+      const isSafeLink =
+        tagName === "a" &&
+        name === "href" &&
+        /^https?:\/\//i.test(attributeValue);
+
+      if (!isSafeLink) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+
+    if (tagName === "a") {
+      element.setAttribute("rel", "noopener noreferrer");
+      element.setAttribute("target", "_blank");
+    }
+  });
+
+  return template.innerHTML;
 }
 
 function stateLabel(state: ProposalState) {

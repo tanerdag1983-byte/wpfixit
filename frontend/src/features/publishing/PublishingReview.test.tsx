@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublishingReview } from "./PublishingReview";
@@ -98,5 +104,37 @@ describe("PublishingReview", () => {
     });
 
     expect(backLink).toHaveAttribute("href", "#actions");
+  });
+
+  it("renders HTML proposals as a readable preview with editable HTML", async () => {
+    apiRequest.mockReset();
+    apiRequest.mockResolvedValueOnce({
+      items: [
+        {
+          ...proposal,
+          change_type: "content",
+          after_value:
+            "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina contact helpt bezoekers snel te begrijpen welke oplossing past.</p>",
+        },
+      ],
+    });
+
+    render(<PublishingReview projectId="shm" />);
+
+    const preview = await screen.findByLabelText("Voorbeeld van voorstel");
+
+    expect(
+      within(preview).getByRole("heading", {
+        name: "Waarom deze pagina belangrijk is",
+      }),
+    ).toBeVisible();
+    expect(
+      within(preview).getByText(
+        "Bedankpagina contact helpt bezoekers snel te begrijpen welke oplossing past.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByLabelText("HTML bewerken")).toHaveValue(
+      "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina contact helpt bezoekers snel te begrijpen welke oplossing past.</p>",
+    );
   });
 });

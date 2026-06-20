@@ -1303,8 +1303,7 @@ h2 {
   margin-top: 20px;
 }
 
-.diff-grid > div,
-.diff-grid > label {
+.diff-grid > div {
   min-height: 150px;
   padding: 18px;
   border: 1px solid var(--line);
@@ -1332,6 +1331,42 @@ h2 {
 
 .diff-after {
   box-shadow: inset 3px 0 0 #147a50;
+}
+
+.proposal-preview {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbf7;
+}
+
+.proposal-preview h2,
+.proposal-preview h3,
+.proposal-preview h4 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font: 800 20px/1.25 "Manrope", sans-serif;
+}
+
+.proposal-preview p,
+.proposal-preview li {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font: 600 15px/1.55 "Manrope", sans-serif;
+}
+
+.proposal-preview :last-child {
+  margin-bottom: 0;
+}
+
+.proposal-editor {
+  display: block;
+  margin-top: 16px;
+}
+
+.proposal-editor > span {
+  display: block;
 }
 
 .diff-after textarea {
