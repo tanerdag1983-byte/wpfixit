@@ -20,9 +20,25 @@ describe("ActionWorkspace", () => {
     render(<ActionWorkspace projectId="shm" />);
 
     expect(await screen.findByText("Maak de SEO-title specifieker")).toBeVisible();
+    expect(screen.getByText(/Prioriteitsscore/i)).toBeVisible();
+    expect(screen.getByText("73")).toBeVisible();
     expect(apiRequest).toHaveBeenCalledWith(
       "/projects/shm/recommendations?limit=10",
     );
+  });
+
+  it("explains that generation handles the first ten priority pages", async () => {
+    apiRequest.mockResolvedValueOnce({ items: [] }).mockReturnValueOnce(new Promise(() => {}));
+
+    render(<ActionWorkspace projectId="shm" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Aanbevelingen genereren" }),
+    );
+
+    expect(
+      await screen.findByText(/maximaal 10 pagina's met de hoogste prioriteit/i),
+    ).toBeVisible();
   });
 
   it("generates project recommendations through the API", async () => {
@@ -127,6 +143,7 @@ const recommendation = {
   action_title: "Maak de SEO-title specifieker",
   explanation: "De huidige title mist zoekintentie.",
   recommendation: "Herschrijf de SEO-title.",
+  priority_score: 73,
   provider: "rules",
   model: null,
   generation_status: "rules",

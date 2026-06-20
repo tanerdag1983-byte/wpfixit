@@ -216,6 +216,7 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
     assert recommendation["provider"] == "gemini"
     assert recommendation["model"] == "gemini-2.5-flash"
     assert recommendation["approval_state"] == "proposed"
+    assert recommendation["priority_score"] == 18
     assert recommendation["action_title"] == "Verbeter de inhoud van de servicepagina"
     assert (
         recommendation["explanation"]

@@ -17,6 +17,7 @@ type Recommendation = {
   model?: string | null;
   generation_status?: "ai" | "rules" | "fallback";
   fallback_reason?: string | null;
+  priority_score?: number | null;
   approval_state: string;
 };
 
@@ -107,6 +108,18 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
           {busy ? "Genereren..." : "Aanbevelingen genereren"}
         </button>
       </div>
+      <p className="score-help">
+        De rode getallen zijn prioriteitsscores van 0 tot 100. Hoe hoger de
+        score, hoe eerder deze pagina aandacht verdient. Genereren maakt per
+        klik maximaal 10 voorstellen voor de pagina&apos;s met de hoogste
+        prioriteit.
+      </p>
+      {busy && (
+        <p className="settings-message">
+          We genereren nu maximaal 10 pagina&apos;s met de hoogste prioriteit.
+          Met AI kan dit even duren.
+        </p>
+      )}
       {message && <p className="settings-message">{message}</p>}
       <div className="action-workspace-list">
         {items.length === 0 && (
@@ -122,7 +135,7 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
             onClick={() => createProposal(item)}
             type="button"
           >
-            <span className="priority-number">{100 - index * 8}</span>
+            <span className="priority-number">{priorityScore(item, index)}</span>
             <span>
               <strong>{recommendationTitle(item)}</strong>
               {item.explanation && (
@@ -151,6 +164,12 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
       </div>
     </section>
   );
+}
+
+function priorityScore(item: Recommendation, index: number) {
+  return typeof item.priority_score === "number"
+    ? item.priority_score
+    : 100 - index * 8;
 }
 
 function providerLabel(item: Recommendation) {

@@ -110,6 +110,7 @@ def persist_recommendation(
         evidence={
             "ids": generated.evidence,
             "rationale": generated.rationale,
+            "priority_score": facts.priority_score,
             "facts": [item.model_dump() for item in facts.evidence],
             "presentation": _presentation(generated),
             **({"fallback_reason": fallback_reason[:500]} if fallback_reason else {}),

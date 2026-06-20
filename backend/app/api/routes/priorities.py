@@ -240,6 +240,7 @@ def _recommendation_payload(
         "action_title": presentation["action_title"],
         "explanation": presentation["explanation"],
         "recommendation": recommendation.recommendation,
+        "priority_score": _recommendation_priority_score(recommendation),
         "approval_state": recommendation.approval_state,
         "evidence": recommendation.evidence,
         "provider": recommendation.provider,
@@ -251,6 +252,16 @@ def _recommendation_payload(
     if include_created_at:
         payload["created_at"] = recommendation.created_at
     return payload
+
+
+def _recommendation_priority_score(recommendation: SeoRecommendation) -> int | None:
+    evidence = (
+        recommendation.evidence
+        if isinstance(recommendation.evidence, dict)
+        else {}
+    )
+    score = evidence.get("priority_score")
+    return score if isinstance(score, int) else None
 
 
 def _recommendation_generation(
