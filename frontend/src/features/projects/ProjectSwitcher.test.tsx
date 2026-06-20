@@ -26,6 +26,7 @@ describe("ProjectSwitcher", () => {
         activeProjectId="project-1"
         onSelect={onSelect}
         onCreate={onCreate}
+        onDelete={() => undefined}
       />,
     );
 
@@ -35,9 +36,41 @@ describe("ProjectSwitcher", () => {
         name: "Tweede Sitetweede.example",
       }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Project wijzigen" }));
     fireEvent.click(screen.getByRole("button", { name: "Nieuw project" }));
 
     expect(onSelect).toHaveBeenCalledWith("project-2");
     expect(onCreate).toHaveBeenCalledOnce();
+  });
+
+  it("asks for confirmation before deleting the active project", () => {
+    const onDelete = vi.fn();
+    render(
+      <ProjectSwitcher
+        projects={[
+          {
+            id: "project-1",
+            organizationId: "org-1",
+            name: "SHM Transmissie",
+            domain: "https://shmtransmissie.nl",
+          },
+        ]}
+        activeProjectId="project-1"
+        onSelect={() => undefined}
+        onCreate={() => undefined}
+        onDelete={onDelete}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Project wijzigen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project verwijderen" }));
+
+    expect(
+      screen.getByText("Weet je zeker dat je dit project wilt verwijderen?"),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ja, verwijderen" }));
+
+    expect(onDelete).toHaveBeenCalledWith("project-1");
   });
 });

@@ -117,10 +117,14 @@ input:focus-visible {
 }
 
 .workspace {
+  position: relative;
   min-width: 0;
+  isolation: isolate;
 }
 
 .topbar {
+  position: relative;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -154,11 +158,12 @@ input:focus-visible {
 
 .project-menu {
   position: relative;
+  z-index: 110;
 }
 
 .project-popover {
   position: absolute;
-  z-index: 20;
+  z-index: 1000;
   top: calc(100% + 10px);
   left: 0;
   width: 280px;
@@ -179,7 +184,9 @@ input:focus-visible {
 }
 
 .project-option,
-.project-create {
+.project-create,
+.project-delete,
+.project-cancel {
   display: flex;
   align-items: center;
   width: 100%;
@@ -197,7 +204,8 @@ input:focus-visible {
 }
 
 .project-option:hover,
-.project-create:hover {
+.project-create:hover,
+.project-cancel:hover {
   background: #f0f4f1;
 }
 
@@ -217,6 +225,46 @@ input:focus-visible {
   margin-top: 6px;
   padding: 10px;
   border-top: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-delete-zone {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.project-delete {
+  gap: 8px;
+  padding: 10px;
+  color: #a33a36;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-delete:hover {
+  background: #fff0ef;
+}
+
+.project-delete-confirm p {
+  margin: 4px 8px 8px;
+  color: #7b2c29;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.project-delete-confirm div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.project-cancel {
+  justify-content: center;
+  padding: 10px;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -275,6 +323,24 @@ input:focus-visible {
   color: white;
   font-size: 13px;
   font-weight: 700;
+}
+
+.logout-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.logout-button:hover {
+  background: #f0f4f1;
 }
 
 .content {

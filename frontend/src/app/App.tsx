@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Globe2,
   LayoutDashboard,
+  LogOut,
   Radar,
   Search,
   Settings,
@@ -37,6 +38,7 @@ import { PriorityPage } from "../routes/dashboard/PriorityPage";
 import { SearchConsolePage } from "../routes/dashboard/SearchConsolePage";
 import { ActionWorkspace } from "../routes/dashboard/views/ActionWorkspace";
 import { apiRequest } from "../lib/api";
+import { supabase } from "../lib/supabase";
 
 type ProjectRead = {
   id: string;
@@ -149,6 +151,28 @@ function AppShell({
   const activeProject =
     projects.find((project) => project.id === activeProjectId) ?? projects[0];
 
+  async function deleteProject(projectId: string) {
+    setProjectError(null);
+    try {
+      await apiRequest(`/projects/${projectId}`, { method: "DELETE" });
+      setProjects((current) => {
+        const nextProjects = current.filter((project) => project.id !== projectId);
+        setActiveProjectId((currentProjectId) => {
+          if (currentProjectId !== projectId) return currentProjectId;
+          return nextProjects[0]?.id ?? "";
+        });
+        return nextProjects;
+      });
+    } catch (error) {
+      setProjectError((error as Error).message);
+    }
+  }
+
+  async function signOut() {
+    await supabase?.auth.signOut();
+    window.location.hash = "login";
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Hoofdnavigatie">
@@ -191,6 +215,7 @@ function AppShell({
             activeProjectId={activeProjectId}
             onSelect={setActiveProjectId}
             onCreate={() => setShowCreateProject(true)}
+            onDelete={deleteProject}
           />
           <div className="topbar-actions">
             <label className="search-field">
@@ -200,6 +225,9 @@ function AppShell({
             </label>
             <button className="sync-button" type="button">
               <Activity size={16} /> Synchroniseren
+            </button>
+            <button className="logout-button" type="button" onClick={signOut}>
+              <LogOut size={16} /> Uitloggen
             </button>
           </div>
         </header>

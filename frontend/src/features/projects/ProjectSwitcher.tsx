@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Plus } from "lucide-react";
+import { Check, ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 export type ProjectSummary = {
@@ -13,6 +13,7 @@ type ProjectSwitcherProps = {
   activeProjectId: string;
   onSelect: (projectId: string) => void;
   onCreate: () => void;
+  onDelete: (projectId: string) => void;
 };
 
 export function ProjectSwitcher({
@@ -20,8 +21,10 @@ export function ProjectSwitcher({
   activeProjectId,
   onSelect,
   onCreate,
+  onDelete,
 }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const activeProject =
     projects.find((project) => project.id === activeProjectId) ?? projects[0];
 
@@ -53,7 +56,11 @@ export function ProjectSwitcher({
               type="button"
               role="menuitem"
               key={project.id}
-              onClick={() => onSelect(project.id)}
+              onClick={() => {
+                onSelect(project.id);
+                setConfirmDelete(false);
+                setOpen(false);
+              }}
             >
               <span>
                 <strong>{project.name}</strong>
@@ -65,11 +72,53 @@ export function ProjectSwitcher({
           <button
             className="project-create"
             type="button"
-            onClick={onCreate}
+            onClick={() => {
+              onCreate();
+              setConfirmDelete(false);
+              setOpen(false);
+            }}
           >
             <Plus size={16} />
             Nieuw project
           </button>
+          {activeProject && (
+            <div className="project-delete-zone">
+              {!confirmDelete ? (
+                <button
+                  className="project-delete"
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 size={16} />
+                  Project verwijderen
+                </button>
+              ) : (
+                <div className="project-delete-confirm">
+                  <p>Weet je zeker dat je dit project wilt verwijderen?</p>
+                  <div>
+                    <button
+                      className="project-delete"
+                      type="button"
+                      onClick={() => {
+                        onDelete(activeProject.id);
+                        setConfirmDelete(false);
+                        setOpen(false);
+                      }}
+                    >
+                      Ja, verwijderen
+                    </button>
+                    <button
+                      className="project-cancel"
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                    >
+                      Annuleren
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
