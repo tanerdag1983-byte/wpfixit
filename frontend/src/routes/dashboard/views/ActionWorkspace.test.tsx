@@ -91,6 +91,31 @@ describe("ActionWorkspace", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/<h2>/)).not.toBeInTheDocument();
   });
+
+  it("shows when recommendations fell back from AI to rules", async () => {
+    apiRequest
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            ...recommendation,
+            provider: "rules",
+            generation_status: "fallback",
+            fallback_reason: "OpenAI generation failed",
+          },
+        ],
+      });
+
+    render(<ActionWorkspace projectId="shm" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Aanbevelingen genereren" }),
+    );
+
+    expect(await screen.findByText(/AI viel terug op regels/i)).toBeVisible();
+    expect(screen.getAllByText(/OpenAI generation failed/i)).toHaveLength(2);
+    expect(screen.getByText("Regels-engine · AI fallback")).toBeVisible();
+  });
 });
 
 const recommendation = {
@@ -104,5 +129,7 @@ const recommendation = {
   recommendation: "Herschrijf de SEO-title.",
   provider: "rules",
   model: null,
+  generation_status: "rules",
+  fallback_reason: null,
   approval_state: "proposed",
 };

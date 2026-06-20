@@ -15,6 +15,8 @@ type Recommendation = {
   recommendation: string;
   provider: string;
   model?: string | null;
+  generation_status?: "ai" | "rules" | "fallback";
+  fallback_reason?: string | null;
   approval_state: string;
 };
 
@@ -55,11 +57,7 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
         { method: "POST" },
       );
       setItems(response.items);
-      setMessage(
-        response.items.length
-          ? "Aanbevelingen zijn als voorstel opgeslagen."
-          : "Er zijn nog geen pagina-audits om aanbevelingen voor te maken.",
-      );
+      setMessage(generationMessage(response.items));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Genereren mislukt.");
     } finally {
@@ -138,6 +136,11 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
                   {providerLabel(item)}
                 </span>
               </small>
+              {item.generation_status === "fallback" && item.fallback_reason && (
+                <span className="recommendation-warning">
+                  AI fallback: {item.fallback_reason}
+                </span>
+              )}
             </span>
             <span className={`priority-tag ${item.priority}`}>
               {item.approval_state === "proposed" ? "Voorstel" : item.approval_state}
@@ -151,8 +154,22 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
 }
 
 function providerLabel(item: Recommendation) {
+  if (item.generation_status === "fallback") return "Regels-engine · AI fallback";
   if (item.provider === "rules") return "Regels-engine";
   return item.model ? `${item.provider} · ${item.model}` : item.provider;
+}
+
+function generationMessage(items: Recommendation[]) {
+  if (!items.length) {
+    return "Er zijn nog geen pagina-audits om aanbevelingen voor te maken.";
+  }
+
+  const fallback = items.find((item) => item.generation_status === "fallback");
+  if (fallback?.fallback_reason) {
+    return `Aanbevelingen zijn opgeslagen. Let op: AI viel terug op regels (${fallback.fallback_reason}).`;
+  }
+
+  return "Aanbevelingen zijn als voorstel opgeslagen.";
 }
 
 function recommendationTitle(item: Recommendation) {

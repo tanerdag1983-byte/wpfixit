@@ -1551,6 +1551,14 @@ h2 {
   line-height: 1.45;
 }
 
+.recommendation-warning {
+  display: block;
+  margin-top: 6px;
+  color: #9a4a16;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .action-workspace-list small {
   margin-top: 4px;
   color: var(--muted);

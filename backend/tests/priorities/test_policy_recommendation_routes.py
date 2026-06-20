@@ -244,6 +244,55 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
     )
 
 
+def test_generation_endpoint_exposes_rule_fallback_reason(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="wp-fallback-route",
+        project_id=projects.member_project.id,
+        wordpress_object_id=143,
+        post_type="page",
+        status="publish",
+        title="Fallback pagina",
+        slug="fallback",
+        url="https://member.example/fallback",
+    )
+    session.add(page)
+    session.flush()
+    session.add(
+        PageAudit(
+            id="audit-fallback-route",
+            project_id=projects.member_project.id,
+            wordpress_page_id=page.id,
+            score=40,
+            page_type_label="service",
+            facts={"importance": 0.8},
+        )
+    )
+    session.commit()
+    monkeypatch.setattr(
+        priorities,
+        "_recommendation_generator",
+        lambda *_: Generator("openai", "gpt-test", fail=True),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/recommendations/generate",
+        params={"limit": 1},
+    )
+
+    assert response.status_code == 200
+    recommendation = response.json()["items"][0]
+    assert recommendation["provider"] == "rules"
+    assert recommendation["generation_status"] == "fallback"
+    assert recommendation["fallback_reason"] == "provider unavailable"
+
+
 def test_generation_endpoint_sends_current_wordpress_context_to_generator(
     client: TestClient,
     session: Session,

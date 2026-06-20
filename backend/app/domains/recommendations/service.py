@@ -96,9 +96,11 @@ def persist_recommendation(
     )
     if existing is not None:
         return existing
+    fallback_reason = None
     try:
         generated = generator.generate(facts)
-    except Exception:
+    except Exception as error:
+        fallback_reason = str(error) or error.__class__.__name__
         generated = RuleBasedRecommendationGenerator().generate(facts)
     recommendation = SeoRecommendation(
         id=str(uuid4()),
@@ -113,6 +115,7 @@ def persist_recommendation(
             "rationale": generated.rationale,
             "facts": [item.model_dump() for item in facts.evidence],
             "presentation": _presentation(generated),
+            **({"fallback_reason": fallback_reason[:500]} if fallback_reason else {}),
         },
         provider=generated.provider,
         model=generated.model,

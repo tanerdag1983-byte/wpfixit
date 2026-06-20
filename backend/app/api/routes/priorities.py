@@ -230,6 +230,7 @@ def _recommendation_payload(
     include_created_at: bool = False,
 ) -> dict[str, object]:
     presentation = _recommendation_presentation(recommendation)
+    generation = _recommendation_generation(recommendation)
     payload: dict[str, object] = {
         "id": recommendation.id,
         "wordpress_page_id": page.id,
@@ -243,11 +244,33 @@ def _recommendation_payload(
         "evidence": recommendation.evidence,
         "provider": recommendation.provider,
         "model": recommendation.model,
+        "generation_status": generation["status"],
+        "fallback_reason": generation["fallback_reason"],
         "prompt_version": recommendation.prompt_version,
     }
     if include_created_at:
         payload["created_at"] = recommendation.created_at
     return payload
+
+
+def _recommendation_generation(
+    recommendation: SeoRecommendation,
+) -> dict[str, str | None]:
+    evidence = (
+        recommendation.evidence
+        if isinstance(recommendation.evidence, dict)
+        else {}
+    )
+    fallback_reason = evidence.get("fallback_reason")
+    if isinstance(fallback_reason, str) and fallback_reason.strip():
+        return {
+            "status": "fallback",
+            "fallback_reason": fallback_reason.strip(),
+        }
+    return {
+        "status": "rules" if recommendation.provider == "rules" else "ai",
+        "fallback_reason": None,
+    }
 
 
 def _recommendation_presentation(
