@@ -45,6 +45,7 @@ describe("ActionWorkspace", () => {
     expect(
       await screen.findByText(/maximaal 10 pagina's met de hoogste prioriteit/i),
     ).toBeVisible();
+    expect(screen.getByText(/Met AI kan dit even duren/i)).toBeVisible();
   });
 
   it("generates project recommendations through the API", async () => {
@@ -62,6 +63,11 @@ describe("ActionWorkspace", () => {
     );
 
     expect(await screen.findByText("Maak de SEO-title specifieker")).toBeVisible();
+    expect(
+      screen.getByText(
+        /Aanbevelingen zijn opgeslagen. Volgende stap: open een voorstel/i,
+      ),
+    ).toBeVisible();
     expect(screen.getByText("Regels-engine")).toBeVisible();
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(

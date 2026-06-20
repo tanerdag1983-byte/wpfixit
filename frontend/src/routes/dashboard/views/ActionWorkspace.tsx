@@ -170,13 +170,11 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
       </p>
       {busy && (
         <p className="settings-message">
-          We genereren nu maximaal 10 pagina&apos;s met de hoogste prioriteit.
-          Met AI kan dit even duren. Je kunt de pagina vernieuwen; de job loopt
-          op de server door.
+          {generationProgressMessage(job)}
           {job && ` Voortgang: ${job.completed ?? 0}/${job.total ?? 10}.`}
         </p>
       )}
-      {message && <p className="settings-message">{message}</p>}
+      {message && !busy && <p className="settings-message">{message}</p>}
       <div className="action-workspace-list">
         {items.length === 0 && (
           <p className="settings-empty">
@@ -236,6 +234,14 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function generationProgressMessage(job: GenerationJob | null) {
+  const phase =
+    job?.state === "queued"
+      ? "De job staat klaar op de server."
+      : "We genereren nu maximaal 10 pagina's met de hoogste prioriteit.";
+  return `${phase} Met AI kan dit even duren. Je kunt de pagina vernieuwen; de job loopt op de server door.`;
+}
+
 function providerLabel(item: Recommendation) {
   if (item.generation_status === "fallback") return "Regels-engine · AI fallback";
   if (item.provider === "rules") return "Regels-engine";
@@ -249,10 +255,10 @@ function generationMessage(items: Recommendation[]) {
 
   const fallback = items.find((item) => item.generation_status === "fallback");
   if (fallback?.fallback_reason) {
-    return `Aanbevelingen zijn opgeslagen. Let op: AI viel terug op regels (${fallback.fallback_reason}).`;
+    return `Aanbevelingen zijn opgeslagen. Volgende stap: open een voorstel, controleer de wijziging en publiceer deze naar WordPress. Daarna kun je opnieuw genereren voor de volgende 10 pagina's. Let op: AI viel terug op regels (${fallback.fallback_reason}).`;
   }
 
-  return "Aanbevelingen zijn als voorstel opgeslagen.";
+  return "Aanbevelingen zijn opgeslagen. Volgende stap: open een voorstel, controleer de wijziging en publiceer deze naar WordPress. Daarna kun je opnieuw genereren voor de volgende 10 pagina's.";
 }
 
 function recommendationTitle(item: Recommendation) {
