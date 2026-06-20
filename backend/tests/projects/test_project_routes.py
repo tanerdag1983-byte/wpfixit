@@ -86,3 +86,19 @@ def test_owner_can_create_and_soft_delete_project(
     delete_response = client.delete(f"/projects/{project_id}")
     assert delete_response.status_code == 204
     assert client.get(f"/projects/{project_id}").status_code == 404
+
+
+def test_owner_can_rename_project(
+    client: TestClient,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+
+    response = client.put(
+        f"/projects/{projects.member_project.id}",
+        json={"name": "Nieuwe projectnaam"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Nieuwe projectnaam"

@@ -11,7 +11,7 @@ from app.domains.projects.models import (
     Profile,
     Project,
 )
-from app.domains.projects.schemas import ProjectCreate
+from app.domains.projects.schemas import ProjectCreate, ProjectUpdate
 
 
 def ensure_workspace(session: Session, user: CurrentUser) -> OrganizationMember:
@@ -118,3 +118,22 @@ def soft_delete_project(
     project.deleted_at = datetime.now(UTC)
     session.commit()
     return True
+
+
+def update_project(
+    session: Session,
+    user_id: str,
+    project_id: str,
+    payload: ProjectUpdate,
+) -> Project | None:
+    project = get_project(session, user_id, project_id)
+    if project is None:
+        return None
+    membership = get_membership(session, user_id, project.organization_id)
+    if membership is None or membership.role not in {"owner", "admin"}:
+        return None
+
+    project.name = payload.name
+    session.commit()
+    session.refresh(project)
+    return project

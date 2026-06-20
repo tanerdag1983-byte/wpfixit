@@ -14,6 +14,15 @@ class ProjectCreate(BaseModel):
         return value.strip()
 
 
+class ProjectUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return value.strip()
+
+
 class ProjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

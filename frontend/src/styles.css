@@ -186,10 +186,11 @@ input:focus-visible {
 .project-option,
 .project-create,
 .project-delete,
-.project-cancel {
+.project-cancel,
+.project-save,
+.project-icon-action {
   display: flex;
   align-items: center;
-  width: 100%;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -199,14 +200,63 @@ input:focus-visible {
 }
 
 .project-option {
+  flex: 1;
   justify-content: space-between;
+  min-width: 0;
   padding: 10px;
 }
 
 .project-option:hover,
 .project-create:hover,
-.project-cancel:hover {
+.project-cancel:hover,
+.project-icon-action:hover {
   background: #f0f4f1;
+}
+
+.project-row {
+  border-radius: 10px;
+}
+
+.project-row:hover {
+  background: #f8faf8;
+}
+
+.project-row > .project-option {
+  width: 100%;
+}
+
+.project-row {
+  position: relative;
+}
+
+.project-row-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.project-row:hover .project-row-actions,
+.project-row:focus-within .project-row-actions {
+  opacity: 1;
+}
+
+.project-row .project-option {
+  padding-right: 66px;
+}
+
+.project-icon-action {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+}
+
+.project-icon-action.danger {
+  color: #a33a36;
 }
 
 .project-option strong,
@@ -227,6 +277,7 @@ input:focus-visible {
   border-top: 1px solid var(--line);
   font-size: 12px;
   font-weight: 700;
+  width: 100%;
 }
 
 .project-delete-zone {
@@ -236,7 +287,9 @@ input:focus-visible {
 }
 
 .project-delete {
+  width: 100%;
   gap: 8px;
+  justify-content: center;
   padding: 10px;
   color: #a33a36;
   font-size: 12px;
@@ -253,6 +306,46 @@ input:focus-visible {
   font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.project-manage-panel {
+  margin: 0 8px 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfdfb;
+}
+
+.project-manage-panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project-manage-panel input {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+}
+
+.project-manage-panel div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.project-save {
+  justify-content: center;
+  padding: 10px;
+  background: var(--forest);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .project-delete-confirm div {

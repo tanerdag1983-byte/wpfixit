@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.projects import service
-from app.domains.projects.schemas import ProjectCreate, ProjectList, ProjectRead
+from app.domains.projects.schemas import (
+    ProjectCreate,
+    ProjectList,
+    ProjectRead,
+    ProjectUpdate,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -46,6 +51,19 @@ def get_project(
     user: UserDependency,
 ) -> ProjectRead:
     project = service.get_project(session, user.id, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return ProjectRead.model_validate(project)
+
+
+@router.put("/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: str,
+    payload: ProjectUpdate,
+    session: SessionDependency,
+    user: UserDependency,
+) -> ProjectRead:
+    project = service.update_project(session, user.id, project_id, payload)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectRead.model_validate(project)

@@ -109,7 +109,9 @@ function AppShell({
     () => window.location.hash.slice(1) || "overview",
   );
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState("");
+  const [activeProjectId, setActiveProjectId] = useState(
+    () => preferenceStorage.get("active-project-id") ?? "",
+  );
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -129,7 +131,15 @@ function AppShell({
         if (!mounted) return;
         const nextProjects = response.items.map(toProjectSummary);
         setProjects(nextProjects);
-        setActiveProjectId((current) => current || nextProjects[0]?.id || "");
+        setActiveProjectId((current) => {
+          const nextProjectId = nextProjects.some((project) => project.id === current)
+            ? current
+            : nextProjects[0]?.id ?? "";
+          if (nextProjectId) {
+            preferenceStorage.set("active-project-id", nextProjectId);
+          }
+          return nextProjectId;
+        });
         setProjectError(null);
       })
       .catch((error: Error) => {
@@ -151,6 +161,11 @@ function AppShell({
   const activeProject =
     projects.find((project) => project.id === activeProjectId) ?? projects[0];
 
+  function selectProject(projectId: string) {
+    setActiveProjectId(projectId);
+    preferenceStorage.set("active-project-id", projectId);
+  }
+
   async function deleteProject(projectId: string) {
     setProjectError(null);
     try {
@@ -159,10 +174,28 @@ function AppShell({
         const nextProjects = current.filter((project) => project.id !== projectId);
         setActiveProjectId((currentProjectId) => {
           if (currentProjectId !== projectId) return currentProjectId;
-          return nextProjects[0]?.id ?? "";
+          const nextProjectId = nextProjects[0]?.id ?? "";
+          preferenceStorage.set("active-project-id", nextProjectId);
+          return nextProjectId;
         });
         return nextProjects;
       });
+    } catch (error) {
+      setProjectError((error as Error).message);
+    }
+  }
+
+  async function renameProject(projectId: string, name: string) {
+    setProjectError(null);
+    try {
+      const updated = await apiRequest<ProjectRead>(`/projects/${projectId}`, {
+        method: "PUT",
+        body: JSON.stringify({ name }),
+      });
+      const project = toProjectSummary(updated);
+      setProjects((current) =>
+        current.map((item) => (item.id === project.id ? project : item)),
+      );
     } catch (error) {
       setProjectError((error as Error).message);
     }
@@ -213,9 +246,10 @@ function AppShell({
           <ProjectSwitcher
             projects={projects}
             activeProjectId={activeProjectId}
-            onSelect={setActiveProjectId}
+            onSelect={selectProject}
             onCreate={() => setShowCreateProject(true)}
             onDelete={deleteProject}
+            onRename={renameProject}
           />
           <div className="topbar-actions">
             <label className="search-field">
@@ -258,7 +292,7 @@ function AppShell({
               });
               const project = toProjectSummary(created);
               setProjects((current) => [...current, project]);
-              setActiveProjectId(project.id);
+              selectProject(project.id);
               setShowCreateProject(false);
             } catch (error) {
               setProjectError((error as Error).message);
