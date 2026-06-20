@@ -1,3 +1,5 @@
+import html
+import re
 from typing import Protocol
 
 from app.domains.recommendations.schemas import (
@@ -52,7 +54,10 @@ def system_prompt(company_context: str) -> str:
         "exacte nieuwe waarde zijn die na menselijke goedkeuring naar WordPress "
         "kan worden geschreven, geen algemene instructie. Voor content mag "
         "recommendation veilige HTML bevatten; action_title en explanation nooit. "
-        "Stel nooit voor om een wijziging automatisch te publiceren.\n\n"
+        "Voor andere action_types mag recommendation geen HTML bevatten. Volg de "
+        "projectprompt uit de bedrijfscontext, behalve als die botst met evidence, "
+        "veiligheid of dit publiceerbare-outputcontract. Stel nooit voor om een "
+        "wijziging automatisch te publiceren.\n\n"
         f"Bedrijfscontext:\n{company_context[:10_000] or 'Niet ingesteld.'}"
     )
 
@@ -70,7 +75,12 @@ def validated_result(
     if not set(generated.evidence).issubset(valid_evidence):
         raise ProviderGenerationError("Provider referenced unknown evidence")
     payload = generated.model_dump()
-    payload["action_type"] = publishable_action_type(generated.action_type)
+    action_type = publishable_action_type(generated.action_type)
+    payload["action_type"] = action_type
+    payload["action_title"] = plain_text(generated.action_title)
+    payload["explanation"] = plain_text(generated.explanation)
+    if action_type != "content":
+        payload["recommendation"] = plain_text(generated.recommendation)
     return RecommendationResult(
         **payload,
         approval_state="proposed",
@@ -79,3 +89,8 @@ def validated_result(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
+
+
+def plain_text(value: str) -> str:
+    without_tags = re.sub(r"<[^>]+>", " ", value)
+    return " ".join(html.unescape(without_tags).split())[:500]

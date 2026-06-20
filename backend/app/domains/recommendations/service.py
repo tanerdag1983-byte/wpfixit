@@ -56,11 +56,8 @@ class RuleBasedRecommendationGenerator:
         return RecommendationResult(
             action_type=action_type,
             priority=priority,
-            action_title=_action_title(action_type),
-            explanation=(
-                f"Deze pagina heeft prioriteit door de component '{strongest}' "
-                f"en een score van {facts.priority_score}."
-            ),
+            action_title=_action_title(action_type, facts),
+            explanation=_action_explanation(action_type, facts),
             recommendation=recommendation,
             rationale=(
                 f"De component '{strongest}' heeft de grootste invloed op de "
@@ -158,7 +155,10 @@ def _presentation(generated: RecommendationResult) -> dict[str, str]:
     }
 
 
-def _action_title(action_type: str) -> str:
+def _action_title(action_type: str, facts: PageFacts | None = None) -> str:
+    page_label = _page_label(facts) if facts else ""
+    if action_type == "content" and page_label:
+        return f"Verbeter {page_label}"
     return {
         "seo_title": "Maak de SEO-title specifieker",
         "meta_description": "Verbeter de meta description",
@@ -170,35 +170,36 @@ def _action_title(action_type: str) -> str:
     }.get(action_type, "Verbeter de pagina")
 
 
-def _action_explanation(action_type: str) -> str:
+def _action_explanation(action_type: str, facts: PageFacts | None = None) -> str:
+    page_label = _page_label(facts) if facts else "deze pagina"
     return {
         "seo_title": (
-            "Een specifieke title helpt Google en bezoekers sneller begrijpen "
-            "waar de pagina over gaat."
+            f"Een specifieke title helpt Google en bezoekers sneller begrijpen "
+            f"waar {page_label} over gaat."
         ),
         "meta_description": (
-            "Een concrete meta description kan de klikratio vanuit "
+            f"Een concrete meta description voor {page_label} kan de klikratio vanuit "
             "zoekresultaten verbeteren."
         ),
         "canonical": (
-            "Een correcte canonical voorkomt dat zoekmachines vergelijkbare URL's "
+            f"Een correcte canonical voorkomt dat zoekmachines {page_label} "
             "verkeerd clusteren."
         ),
         "noindex": (
-            "Indexeerbaarheid bepaalt of een belangrijke pagina organisch "
+            f"Indexeerbaarheid bepaalt of {page_label} organisch "
             "vindbaar kan worden."
         ),
         "content": (
-            "Sterkere pagina-inhoud helpt bezoekers sneller kiezen en geeft "
-            "zoekmachines meer context."
+            f"Sterkere inhoud op {page_label} helpt bezoekers sneller kiezen "
+            "en geeft zoekmachines meer context."
         ),
         "internal_links": (
-            "Betere interne links helpen bezoekers en zoekmachines belangrijke "
-            "pagina's vinden."
+            f"Betere interne links helpen bezoekers en zoekmachines {page_label} "
+            "vinden."
         ),
         "redirect": (
-            "Een correcte redirect voorkomt verlies van waarde en slechte "
-            "gebruikerservaring."
+            f"Een correcte redirect voor {page_label} voorkomt verlies van waarde "
+            "en slechte gebruikerservaring."
         ),
     }.get(action_type, "Deze aanbeveling verbetert de SEO-basis van de pagina.")
 
@@ -226,3 +227,19 @@ def _content_recommendation(facts: PageFacts) -> str:
         "<p>Neem contact op voor een gerichte diagnose of plan direct een "
         "afspraak met een specialist.</p>"
     )
+
+
+def _page_label(facts: PageFacts | None) -> str:
+    if facts is None:
+        return ""
+    title = facts.title.strip()
+    for separator in (" - ", " | ", " – ", " — "):
+        if separator in title:
+            title = title.split(separator, 1)[0].strip()
+            break
+    return title or _path_label(facts.url) or "deze pagina"
+
+
+def _path_label(url: str) -> str:
+    path = url.rstrip("/").rsplit("/", 1)[-1]
+    return " ".join(part for part in path.replace("-", " ").split() if part).title()
