@@ -55,6 +55,26 @@ class ChangeProposalUpdate(BaseModel):
     after_value: Any
 
 
+SUPPORTED_CHANGE_TYPES = {
+    "seo_title",
+    "meta_description",
+    "canonical",
+    "noindex",
+    "content",
+    "internal_links",
+    "redirect",
+}
+
+RECOMMENDATION_CHANGE_TYPE_MAP = {
+    "snippet": "seo_title",
+    "technical_seo": "content",
+    "conversion": "content",
+    "investigate_decline": "content",
+    "priority_review": "content",
+    "data_quality": "content",
+}
+
+
 def _project_or_404(
     session: Session,
     user: CurrentUser,
@@ -108,6 +128,46 @@ def _proposal_or_404(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Change proposal not found")
     return proposal
+
+
+def _publishable_change_type(action_type: str) -> str:
+    if action_type in SUPPORTED_CHANGE_TYPES:
+        return action_type
+    return RECOMMENDATION_CHANGE_TYPE_MAP.get(action_type, "content")
+
+
+def _current_wordpress_state(
+    session: Session,
+    project_id: str,
+    page: WordPressPage,
+) -> dict[str, Any]:
+    try:
+        return _connection_client(session, project_id).current_state(
+            page.wordpress_object_id
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=400,
+            detail="Current WordPress state could not be loaded",
+        ) from error
+
+
+def _refresh_proposal_from_wordpress(
+    session: Session,
+    project_id: str,
+    proposal: WordPressChangeProposal,
+    page: WordPressPage,
+) -> None:
+    current = _current_wordpress_state(session, project_id, page)
+    proposal.base_content_hash = current["content_hash"]
+    proposal.current_content_hash = current["content_hash"]
+    proposal.before_value = current.get("values", {}).get(proposal.change_type, "")
+    proposal.approval_state = "proposed"
+    proposal.approved_by = None
+    proposal.approved_at = None
+    page.content_hash = current["content_hash"]
 
 
 @router.post(
@@ -285,6 +345,67 @@ def create_change_proposal(
     return _proposal_payload(proposal, page)
 
 
+@router.post(
+    "/recommendations/{recommendation_id}/change-proposal",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_change_proposal_from_recommendation(
+    project_id: str,
+    recommendation_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, Any]:
+    _project_or_404(session, user, project_id)
+    recommendation = session.scalar(
+        select(SeoRecommendation).where(
+            SeoRecommendation.id == recommendation_id,
+            SeoRecommendation.project_id == project_id,
+        )
+    )
+    if recommendation is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    page = session.scalar(
+        select(WordPressPage).where(
+            WordPressPage.id == recommendation.wordpress_page_id,
+            WordPressPage.project_id == project_id,
+        )
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="WordPress page not found")
+    change_type = _publishable_change_type(recommendation.action_type)
+    existing = session.scalar(
+        select(WordPressChangeProposal)
+        .where(
+            WordPressChangeProposal.project_id == project_id,
+            WordPressChangeProposal.recommendation_id == recommendation.id,
+            WordPressChangeProposal.approval_state.in_(
+                ["proposed", "approved", "conflict"]
+            ),
+        )
+        .order_by(WordPressChangeProposal.created_at.desc())
+    )
+    if existing is None:
+        existing = WordPressChangeProposal(
+            id=str(uuid4()),
+            project_id=project_id,
+            wordpress_page_id=page.id,
+            recommendation_id=recommendation.id,
+            change_type=change_type,
+            before_value="",
+            after_value=recommendation.recommendation,
+            base_content_hash=page.content_hash or "",
+            proposed_by=user.id,
+            approval_state="proposed",
+        )
+        session.add(existing)
+    else:
+        existing.change_type = change_type
+        existing.after_value = recommendation.recommendation
+    _refresh_proposal_from_wordpress(session, project_id, existing, page)
+    session.commit()
+    return _proposal_payload(existing, page)
+
+
 @router.get("/change-proposals")
 def list_change_proposals(
     project_id: str,
@@ -333,6 +454,27 @@ def update_change_proposal(
     session.commit()
     page = session.get(WordPressPage, proposal.wordpress_page_id)
     assert page is not None
+    return _proposal_payload(proposal, page)
+
+
+@router.post("/change-proposals/{proposal_id}/refresh")
+def refresh_change_proposal(
+    project_id: str,
+    proposal_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, Any]:
+    _project_or_404(session, user, project_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id)
+    page = session.get(WordPressPage, proposal.wordpress_page_id)
+    assert page is not None
+    if proposal.approval_state not in {"proposed", "approved", "conflict"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Only active proposals can be refreshed",
+        )
+    _refresh_proposal_from_wordpress(session, project_id, proposal, page)
+    session.commit()
     return _proposal_payload(proposal, page)
 
 

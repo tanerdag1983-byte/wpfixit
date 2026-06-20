@@ -111,6 +111,15 @@ def test_priority_endpoint_combines_wordpress_gsc_and_ga4(
     assert first.json()["items"][0]["prompt_version"] is None
     assert session.scalar(select(func.count(SeoRecommendation.id))) == 1
 
+    saved = client.get(
+        f"/projects/{projects.member_project.id}/recommendations",
+        params={"limit": 10},
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["items"][0]["id"] == first.json()["items"][0]["id"]
+    assert saved.json()["items"][0]["url"] == page.url
+
 
 def test_changed_company_prompt_creates_a_new_recommendation_version(
     session: Session,

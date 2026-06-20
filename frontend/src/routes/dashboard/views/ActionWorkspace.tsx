@@ -1,5 +1,5 @@
 import { ArrowUpRight, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiRequest } from "../../../lib/api";
 import { useI18n } from "../../../features/preferences/useI18n";
@@ -21,6 +21,28 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<Recommendation[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ items: Recommendation[] }>(
+      `/projects/${projectId}/recommendations?limit=10`,
+    )
+      .then((response) => {
+        if (active) setItems(response.items);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "Aanbevelingen laden mislukt.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
 
   async function generate() {
     setBusy(true);
@@ -47,16 +69,12 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
     setBusy(true);
     setMessage("");
     try {
-      await apiRequest(`/projects/${projectId}/change-proposals`, {
-        method: "POST",
-        body: JSON.stringify({
-          wordpress_page_id: item.wordpress_page_id,
-          recommendation_id: item.id,
-          change_type: item.action_type,
-          before_value: "",
-          after_value: item.recommendation,
-        }),
-      });
+      await apiRequest(
+        `/projects/${projectId}/recommendations/${item.id}/change-proposal`,
+        {
+          method: "POST",
+        },
+      );
       window.location.hash = "publishing";
     } catch (error) {
       setMessage(
@@ -93,7 +111,8 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
       <div className="action-workspace-list">
         {items.length === 0 && (
           <p className="settings-empty">
-            Genereer aanbevelingen om de echte projectresultaten te bekijken.
+            Nog geen opgeslagen aanbevelingen. Genereer ze eenmalig uit je
+            WordPress-audit en verkeersdata.
           </p>
         )}
         {items.map((item, index) => (

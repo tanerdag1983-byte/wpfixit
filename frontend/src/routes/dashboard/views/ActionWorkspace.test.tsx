@@ -12,24 +12,24 @@ vi.mock("../../../lib/api", () => ({
 describe("ActionWorkspace", () => {
   beforeEach(() => {
     apiRequest.mockReset();
-    apiRequest.mockResolvedValue({
-      items: [
-        {
-          id: "recommendation-1",
-          wordpress_page_id: "wp-page-1",
-          url: "https://shmtransmissie.nl/revisie",
-          action_type: "seo_title",
-          priority: "high",
-          recommendation: "Herschrijf de SEO-title.",
-          provider: "rules",
-          model: null,
-          approval_state: "proposed",
-        },
-      ],
-    });
+  });
+
+  it("loads saved recommendations after a refresh", async () => {
+    apiRequest.mockResolvedValueOnce({ items: [recommendation] });
+
+    render(<ActionWorkspace projectId="shm" />);
+
+    expect(await screen.findByText("Herschrijf de SEO-title.")).toBeVisible();
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/shm/recommendations?limit=10",
+    );
   });
 
   it("generates project recommendations through the API", async () => {
+    apiRequest
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [recommendation] });
+
     render(<ActionWorkspace projectId="shm" />);
 
     fireEvent.click(
@@ -47,27 +47,29 @@ describe("ActionWorkspace", () => {
   });
 
   it("creates a change proposal from a recommendation", async () => {
+    apiRequest.mockResolvedValueOnce({ items: [recommendation] }).mockResolvedValueOnce({});
+
     render(<ActionWorkspace projectId="shm" />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Aanbevelingen genereren" }),
-    );
     fireEvent.click(await screen.findByText("Herschrijf de SEO-title."));
 
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
-        "/projects/shm/change-proposals",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            wordpress_page_id: "wp-page-1",
-            recommendation_id: "recommendation-1",
-            change_type: "seo_title",
-            before_value: "",
-            after_value: "Herschrijf de SEO-title.",
-          }),
-        },
+        "/projects/shm/recommendations/recommendation-1/change-proposal",
+        { method: "POST" },
       ),
     );
   });
 });
+
+const recommendation = {
+  id: "recommendation-1",
+  wordpress_page_id: "wp-page-1",
+  url: "https://shmtransmissie.nl/revisie",
+  action_type: "seo_title",
+  priority: "high",
+  recommendation: "Herschrijf de SEO-title.",
+  provider: "rules",
+  model: null,
+  approval_state: "proposed",
+};

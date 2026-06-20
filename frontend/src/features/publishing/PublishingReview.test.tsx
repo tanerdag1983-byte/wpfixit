@@ -64,4 +64,29 @@ describe("PublishingReview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Publiceren" }));
     expect(await screen.findByText("Gepubliceerd")).toBeVisible();
   });
+
+  it("refreshes a conflicted proposal from WordPress", async () => {
+    apiRequest.mockReset();
+    apiRequest
+      .mockResolvedValueOnce({
+        items: [{ ...proposal, approval_state: "conflict" }],
+      })
+      .mockResolvedValueOnce({
+        ...proposal,
+        before_value: "Actuele WordPress title",
+        approval_state: "proposed",
+      });
+
+    render(<PublishingReview projectId="shm" />);
+
+    fireEvent.click(await screen.findByText("Voorstel vernieuwen"));
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/shm/change-proposals/proposal-1/refresh",
+        { method: "POST" },
+      ),
+    );
+    expect(await screen.findByText("Actuele WordPress title")).toBeVisible();
+  });
 });

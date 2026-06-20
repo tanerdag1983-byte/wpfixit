@@ -1,4 +1,10 @@
-import { AlertTriangle, CheckCircle2, RotateCcw, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  RefreshCw,
+  RotateCcw,
+  Upload,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
@@ -94,6 +100,23 @@ export function PublishingReview({ projectId }: { projectId: string }) {
     }
   }
 
+  async function refreshProposal() {
+    if (!proposal) return;
+    try {
+      const updated = await apiRequest<Proposal>(
+        `/projects/${projectId}/change-proposals/${proposal.id}/refresh`,
+        { method: "POST" },
+      );
+      setProposal(updated);
+      setAfterValue(stringValue(updated.after_value));
+      setMessage("Voorstel vernieuwd met de huidige WordPress-versie.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Voorstel vernieuwen mislukt.",
+      );
+    }
+  }
+
   async function rollback() {
     if (!proposal) return;
     try {
@@ -140,7 +163,17 @@ export function PublishingReview({ projectId }: { projectId: string }) {
       {state === "conflict" && (
         <div className="conflict-notice" role="alert">
           <AlertTriangle size={18} />
-          WordPress is gewijzigd. Vernieuw het voorstel voordat je publiceert.
+          <span>
+            WordPress is gewijzigd. Vernieuw het voorstel voordat je publiceert.
+          </span>
+          <button
+            className="secondary-button"
+            onClick={refreshProposal}
+            type="button"
+          >
+            <RefreshCw size={15} />
+            Voorstel vernieuwen
+          </button>
         </div>
       )}
 

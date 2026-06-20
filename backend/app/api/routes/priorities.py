@@ -3,10 +3,12 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
+from app.domains.audits.models import SeoRecommendation
 from app.domains.priorities.service import project_priorities
 from app.domains.projects.service import get_project
 from app.domains.recommendations.models import (
@@ -21,6 +23,7 @@ from app.domains.recommendations.service import (
     RuleBasedRecommendationGenerator,
     persist_recommendation,
 )
+from app.domains.wordpress.models import WordPressPage
 
 router = APIRouter(tags=["priorities"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -146,6 +149,48 @@ def generate_recommendations(
             }
         )
     return {"items": items}
+
+
+@router.get("/projects/{project_id}/recommendations")
+def list_recommendations(
+    project_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> dict[str, list[dict]]:
+    if get_project(session, user.id, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    rows = list(
+        session.execute(
+            select(SeoRecommendation, WordPressPage)
+            .join(
+                WordPressPage,
+                SeoRecommendation.wordpress_page_id == WordPressPage.id,
+            )
+            .where(SeoRecommendation.project_id == project_id)
+            .order_by(SeoRecommendation.created_at.desc())
+            .limit(limit)
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": recommendation.id,
+                "wordpress_page_id": page.id,
+                "url": page.url,
+                "action_type": recommendation.action_type,
+                "priority": recommendation.priority,
+                "recommendation": recommendation.recommendation,
+                "approval_state": recommendation.approval_state,
+                "evidence": recommendation.evidence,
+                "provider": recommendation.provider,
+                "model": recommendation.model,
+                "prompt_version": recommendation.prompt_version,
+                "created_at": recommendation.created_at,
+            }
+            for recommendation, page in rows
+        ]
+    }
 
 
 def _company_context(profile: CompanyProfile | None) -> str:
