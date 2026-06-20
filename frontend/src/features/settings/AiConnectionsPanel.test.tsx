@@ -92,6 +92,47 @@ describe("AiConnectionsPanel", () => {
     );
   });
 
+  it("reloads and shows the stored provider message after a failed test", async () => {
+    apiRequest
+      .mockRejectedValueOnce(
+        new Error("AI provider connection failed: insufficient quota"),
+      )
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "connection-1",
+            name: "Claude productie",
+            provider: "anthropic",
+            base_url: "https://api.anthropic.com/v1",
+            default_model: "claude-sonnet-4-5",
+            enabled: true,
+            configured: true,
+            last_test_status: "failed",
+            last_test_message:
+              "AI provider connection failed: insufficient quota",
+          },
+        ],
+      });
+    render(<AiConnectionsPanel organizationId="org-1" />);
+    await screen.findByText("Claude productie");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Claude productie testen" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "AI provider connection failed: insufficient quota",
+      ),
+    ).toBeVisible();
+    expect(
+      await screen.findByText(
+        "Laatste test: AI provider connection failed: insufficient quota",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Mislukt")).toBeVisible();
+  });
+
   it("updates a connection without resending the stored API key", async () => {
     apiRequest.mockResolvedValueOnce({
       id: "connection-1",

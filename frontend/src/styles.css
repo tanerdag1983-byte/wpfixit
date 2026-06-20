@@ -1819,6 +1819,10 @@ h2 {
   font-size: 12px;
 }
 
+.connection-test-message {
+  max-width: 680px;
+}
+
 .connection-status {
   padding: 5px 9px;
   border-radius: 999px;
@@ -1830,6 +1834,11 @@ h2 {
 .connection-status.connected {
   background: #e0f5e8;
   color: #147a50 !important;
+}
+
+.connection-status.failed {
+  background: #fff0e8;
+  color: #9b3d1f !important;
 }
 
 .connection-actions {

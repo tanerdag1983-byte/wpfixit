@@ -503,6 +503,13 @@ def test_failed_connection_test_is_safe_and_persisted(
         status_code = 401
         text = "provider-secret-body secret-key"
 
+        def json(self) -> dict:
+            return {
+                "error": {
+                    "message": "Invalid API key: secret-key",
+                }
+            }
+
     monkeypatch.setattr(
         "app.api.routes.ai_settings.requests.post",
         lambda *args, **kwargs: ProviderResponse(),
@@ -517,7 +524,9 @@ def test_failed_connection_test_is_safe_and_persisted(
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "AI provider connection failed"}
+    assert response.json() == {
+        "detail": "AI provider connection failed: Invalid API key: [redacted]"
+    }
     assert "provider-secret-body" not in response.text
     assert "secret-key" not in response.text
     stored = session.scalar(
@@ -525,5 +534,56 @@ def test_failed_connection_test_is_safe_and_persisted(
     )
     assert stored is not None
     assert stored.last_test_status == "failed"
-    assert stored.last_test_message == "Connection failed"
+    assert stored.last_test_message == (
+        "AI provider connection failed: Invalid API key: [redacted]"
+    )
     assert stored.last_tested_at is not None
+
+
+def test_failed_connection_test_reports_safe_provider_message(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    connection = create_connection(client, projects)
+
+    class ProviderResponse:
+        status_code = 404
+        text = "raw-provider-body"
+
+        def json(self) -> dict:
+            return {
+                "error": {
+                    "message": "The model `missing-model` does not exist.",
+                }
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.ai_settings.requests.post",
+        lambda *args, **kwargs: ProviderResponse(),
+    )
+
+    response = client.post(
+        (
+            f"/organizations/{projects.organization.id}/ai-connections/"
+            f"{connection['id']}/test"
+        ),
+        json={"model": "missing-model"},
+    )
+
+    expected = (
+        "AI provider connection failed: "
+        "The model `missing-model` does not exist."
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": expected}
+    assert "raw-provider-body" not in response.text
+    stored = session.scalar(
+        select(AiConnection).where(AiConnection.id == connection["id"])
+    )
+    assert stored is not None
+    assert stored.last_test_status == "failed"
+    assert stored.last_test_message == expected

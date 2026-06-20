@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 import requests
@@ -215,22 +215,24 @@ def test_ai_connection(
         raise HTTPException(status_code=422, detail="Model is required")
 
     tested_at = datetime.now(UTC)
+    api_key = decrypt_text(connection.encrypted_api_key)
     try:
         response = _provider_test_request(
             connection,
             model,
-            decrypt_text(connection.encrypted_api_key),
+            api_key,
         )
         if not 200 <= response.status_code < 300:
-            raise RuntimeError("Provider returned an unsuccessful status")
+            raise RuntimeError(_provider_failure_message(response, api_key))
     except Exception as error:
+        failure_message = _safe_provider_exception_message(error, api_key)
         connection.last_tested_at = tested_at
         connection.last_test_status = "failed"
-        connection.last_test_message = "Connection failed"
+        connection.last_test_message = failure_message
         session.commit()
         raise HTTPException(
             status_code=400,
-            detail="AI provider connection failed",
+            detail=failure_message,
         ) from error
 
     connection.last_tested_at = tested_at
@@ -455,6 +457,72 @@ def _provider_test_request(
         timeout=15,
         allow_redirects=False,
     )
+
+
+def _provider_failure_message(response: requests.Response, api_key: str) -> str:
+    message = _response_error_message(response)
+    message = _redact_secret(message, api_key)
+    return _prefix_provider_failure(message)
+
+
+def _response_error_message(response: requests.Response) -> str:
+    body = _safe_response_json(response)
+    message = _nested_message(body)
+    if message:
+        return message
+    return f"Provider returned HTTP {response.status_code}"
+
+
+def _safe_response_json(response: requests.Response) -> Any:
+    try:
+        return response.json()
+    except Exception:
+        return None
+
+
+def _nested_message(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key in ("message", "detail", "error_description"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        error = value.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        if isinstance(error, dict):
+            return _nested_message(error)
+    return None
+
+
+def _safe_provider_exception_message(error: Exception, api_key: str) -> str:
+    if isinstance(error, RuntimeError) and str(error).startswith(
+        "AI provider connection failed:"
+    ):
+        return _truncate_message(_redact_secret(str(error), api_key))
+    if isinstance(error, requests.RequestException):
+        return _prefix_provider_failure(
+            _redact_secret(f"Network error: {error}", api_key)
+        )
+    return _prefix_provider_failure("Connection failed")
+
+
+def _prefix_provider_failure(message: str) -> str:
+    message = _truncate_message(message.strip())
+    if not message:
+        message = "Connection failed"
+    return f"AI provider connection failed: {message}"
+
+
+def _redact_secret(message: str, api_key: str) -> str:
+    if api_key:
+        message = message.replace(api_key, "[redacted]")
+    return message
+
+
+def _truncate_message(message: str, limit: int = 300) -> str:
+    if len(message) <= limit:
+        return message
+    return f"{message[: limit - 1]}…"
 
 
 def _connection_payload(connection: AiConnection) -> dict:

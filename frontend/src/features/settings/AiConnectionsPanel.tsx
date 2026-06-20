@@ -162,6 +162,7 @@ export function AiConnectionsPanel({
       );
       setMessage(`${connection.name} is bereikbaar.`);
     } catch (error) {
+      await loadConnections();
       setMessage(
         error instanceof Error ? error.message : "Verbinding testen mislukt.",
       );
@@ -205,12 +206,19 @@ export function AiConnectionsPanel({
                   ? ` · ${connection.default_model}`
                   : ""}
               </span>
+              {connection.last_test_message && (
+                <span className="connection-test-message">
+                  Laatste test: {connection.last_test_message}
+                </span>
+              )}
             </div>
             <span
               className={`connection-status ${connection.last_test_status ?? ""}`}
             >
               {connection.last_test_status === "connected"
                 ? "Verbonden"
+                : connection.last_test_status === "failed"
+                  ? "Mislukt"
                 : connection.enabled
                   ? "Actief"
                   : "Uitgeschakeld"}
