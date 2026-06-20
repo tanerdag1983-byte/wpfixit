@@ -1,17 +1,21 @@
 import hashlib
 import json
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.crypto import decrypt_text
-from app.core.database import get_session
+from app.core.database import SessionLocal, get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
+from app.domains.jobs.models import Job
 from app.domains.priorities.service import project_priorities
+from app.domains.projects.models import Project
 from app.domains.projects.service import get_project
 from app.domains.recommendations.models import (
     AiConnection,
@@ -109,24 +113,128 @@ def _recommendation_generator(session: Session, project):
     )
 
 
-@router.post("/projects/{project_id}/recommendations/generate")
+@router.post(
+    "/projects/{project_id}/recommendations/generate",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def generate_recommendations(
     project_id: str,
+    background_tasks: BackgroundTasks,
     session: SessionDependency,
     user: UserDependency,
     limit: Annotated[int, Query(ge=1, le=25)] = 10,
-) -> dict[str, list[dict]]:
+) -> dict[str, dict]:
     project = get_project(session, user.id, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    job = Job(
+        id=str(uuid4()),
+        project_id=project.id,
+        job_type="recommendation_generation",
+        state="queued",
+        checkpoint={
+            "limit": limit,
+            "total": 0,
+            "completed": 0,
+            "recommendation_ids": [],
+        },
+    )
+    session.add(job)
+    session.commit()
+    background_tasks.add_task(_run_recommendation_job, job.id, project.id, limit)
+    return {"job": _job_payload(job)}
+
+
+@router.get("/projects/{project_id}/recommendations/generation-jobs/latest")
+def latest_recommendation_generation_job(
+    project_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, dict | None]:
+    if get_project(session, user.id, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    job = session.scalar(
+        select(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.job_type == "recommendation_generation",
+        )
+        .order_by(Job.created_at.desc())
+    )
+    return {"job": _job_payload(job) if job else None}
+
+
+@router.get("/projects/{project_id}/recommendations/generation-jobs/{job_id}")
+def recommendation_generation_job(
+    project_id: str,
+    job_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, dict]:
+    if get_project(session, user.id, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    job = session.scalar(
+        select(Job).where(
+            Job.id == job_id,
+            Job.project_id == project_id,
+            Job.job_type == "recommendation_generation",
+        )
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": _job_payload(job)}
+
+
+def _run_recommendation_job(job_id: str, project_id: str, limit: int) -> None:
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        project = session.get(Project, project_id)
+        if job is None or project is None:
+            return
+        try:
+            _generate_recommendations_for_job(session, job, project, limit)
+        except Exception as error:
+            job.state = "failed"
+            job.error_code = error.__class__.__name__
+            job.error_message = str(error)[:2_000]
+            job.completed_at = datetime.now(UTC)
+            session.commit()
+
+
+def _generate_recommendations_for_job(
+    session: Session,
+    job: Job,
+    project: Project,
+    limit: int,
+) -> None:
+    job.state = "running"
+    job.started_at = datetime.now(UTC)
+    job.progress = 1
+    session.commit()
     generator = _recommendation_generator(session, project)
     prompt_version = _prompt_version(
         session.get(CompanyProfile, project.id),
         session.get(ProjectAiPolicy, project.id),
     )
-    items = []
-    for page, result, evidence in project_priorities(session, project_id)[:limit]:
-        wordpress_context = _wordpress_context(session, project_id, page)
+    priorities = project_priorities(session, project.id)[:limit]
+    checkpoint = dict(job.checkpoint or {})
+    checkpoint.update(
+        {
+            "limit": limit,
+            "total": len(priorities),
+            "completed": 0,
+            "recommendation_ids": [],
+        }
+    )
+    job.checkpoint = checkpoint
+    if not priorities:
+        job.state = "completed"
+        job.progress = 100
+        job.completed_at = datetime.now(UTC)
+        session.commit()
+        return
+    for index, (page, result, evidence) in enumerate(priorities, start=1):
+        wordpress_context = _wordpress_context(session, project.id, page)
         recommendation = persist_recommendation(
             session,
             project,
@@ -146,10 +254,43 @@ def generate_recommendations(
             generator,
             prompt_version=prompt_version,
         )
-        items.append(
-            _recommendation_payload(recommendation, page)
+        checkpoint = dict(job.checkpoint or {})
+        recommendation_ids = list(checkpoint.get("recommendation_ids") or [])
+        if recommendation.id not in recommendation_ids:
+            recommendation_ids.append(recommendation.id)
+        checkpoint.update(
+            {
+                "completed": index,
+                "recommendation_ids": recommendation_ids,
+            }
         )
-    return {"items": items}
+        job.checkpoint = checkpoint
+        job.progress = int(index / len(priorities) * 100)
+        session.commit()
+    job.state = "completed"
+    job.progress = 100
+    job.completed_at = datetime.now(UTC)
+    session.commit()
+
+
+def _job_payload(job: Job) -> dict[str, object]:
+    checkpoint = job.checkpoint if isinstance(job.checkpoint, dict) else {}
+    return {
+        "id": job.id,
+        "project_id": job.project_id,
+        "job_type": job.job_type,
+        "state": job.state,
+        "progress": job.progress,
+        "limit": checkpoint.get("limit"),
+        "total": checkpoint.get("total", 0),
+        "completed": checkpoint.get("completed", 0),
+        "recommendation_ids": checkpoint.get("recommendation_ids", []),
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "completed_at": job.completed_at,
+    }
 
 
 def _wordpress_context(

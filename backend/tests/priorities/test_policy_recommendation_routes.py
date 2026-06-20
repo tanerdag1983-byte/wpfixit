@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import priorities
 from app.domains.audits.models import PageAudit
+from app.domains.jobs.models import Job
 from app.domains.recommendations.models import (
     AiConnection,
     CompanyProfile,
@@ -210,8 +211,35 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
         params={"limit": 1},
     )
 
-    assert response.status_code == 200
-    recommendation = response.json()["items"][0]
+    assert response.status_code == 202
+    job = response.json()["job"]
+    assert job["state"] == "queued"
+
+    stored_job = session.get(Job, job["id"])
+    assert stored_job is not None
+    priorities._generate_recommendations_for_job(
+        session,
+        stored_job,
+        projects.member_project,
+        1,
+    )
+    job_response = client.get(
+        f"/projects/{projects.member_project.id}/recommendations/generation-jobs/{job['id']}"
+    )
+    assert job_response.status_code == 200
+    completed_job = job_response.json()["job"]
+    assert completed_job["state"] == "completed"
+    assert completed_job["progress"] == 100
+    assert completed_job["total"] == 1
+    assert completed_job["completed"] == 1
+
+    listed = client.get(
+        f"/projects/{projects.member_project.id}/recommendations",
+        params={"limit": 1},
+    )
+
+    assert listed.status_code == 200
+    recommendation = listed.json()["items"][0]
     assert recommendation["wordpress_page_id"] == page.id
     assert recommendation["provider"] == "gemini"
     assert recommendation["model"] == "gemini-2.5-flash"
@@ -228,13 +256,13 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
     )
     assert len(recommendation["prompt_version"]) == 64
 
-    listed = client.get(
-        f"/projects/{projects.member_project.id}/recommendations",
-        params={"limit": 1},
+    latest = client.get(
+        f"/projects/{projects.member_project.id}/recommendations/generation-jobs/latest"
     )
 
-    assert listed.status_code == 200
-    listed_recommendation = listed.json()["items"][0]
+    assert latest.status_code == 200
+    assert latest.json()["job"]["id"] == job["id"]
+    listed_recommendation = recommendation
     assert (
         listed_recommendation["action_title"]
         == "Verbeter de inhoud van de servicepagina"
@@ -287,8 +315,20 @@ def test_generation_endpoint_exposes_rule_fallback_reason(
         params={"limit": 1},
     )
 
-    assert response.status_code == 200
-    recommendation = response.json()["items"][0]
+    assert response.status_code == 202
+    stored_job = session.get(Job, response.json()["job"]["id"])
+    assert stored_job is not None
+    priorities._generate_recommendations_for_job(
+        session,
+        stored_job,
+        projects.member_project,
+        1,
+    )
+    listed = client.get(
+        f"/projects/{projects.member_project.id}/recommendations",
+        params={"limit": 1},
+    )
+    recommendation = listed.json()["items"][0]
     assert recommendation["provider"] == "rules"
     assert recommendation["generation_status"] == "fallback"
     assert recommendation["fallback_reason"] == "provider unavailable"
@@ -345,7 +385,15 @@ def test_generation_endpoint_sends_current_wordpress_context_to_generator(
         params={"limit": 1},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
+    stored_job = session.get(Job, response.json()["job"]["id"])
+    assert stored_job is not None
+    priorities._generate_recommendations_for_job(
+        session,
+        stored_job,
+        projects.member_project,
+        1,
+    )
     assert generator.facts is not None
     assert generator.facts.wordpress_object_id == 188
     assert generator.facts.post_type == "page"

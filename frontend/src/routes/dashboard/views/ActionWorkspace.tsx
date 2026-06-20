@@ -1,5 +1,5 @@
 import { ArrowUpRight, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { apiRequest } from "../../../lib/api";
 import { useI18n } from "../../../features/preferences/useI18n";
@@ -21,19 +21,73 @@ type Recommendation = {
   approval_state: string;
 };
 
+type GenerationJob = {
+  id: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled";
+  progress: number;
+  total?: number | null;
+  completed?: number | null;
+  error_message?: string | null;
+};
+
 export function ActionWorkspace({ projectId }: { projectId: string }) {
   const { t } = useI18n();
   const [items, setItems] = useState<Recommendation[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [job, setJob] = useState<GenerationJob | null>(null);
+
+  const loadItems = useCallback(async () => {
+    const response = await apiRequest<{ items: Recommendation[] }>(
+      `/projects/${projectId}/recommendations?limit=10`,
+    );
+    setItems(response.items);
+    return response.items;
+  }, [projectId]);
+
+  const monitorJob = useCallback(
+    async (jobId: string) => {
+      setBusy(true);
+      setMessage("Aanbevelingen worden op de achtergrond gegenereerd.");
+      while (true) {
+        const response = await apiRequest<{ job: GenerationJob }>(
+          `/projects/${projectId}/recommendations/generation-jobs/${jobId}`,
+        );
+        setJob(response.job);
+        if (response.job.state === "completed") {
+          const nextItems = await loadItems();
+          setMessage(generationMessage(nextItems));
+          setBusy(false);
+          return;
+        }
+        if (
+          response.job.state === "failed" ||
+          response.job.state === "cancelled"
+        ) {
+          setMessage(
+            response.job.error_message ?? "Aanbevelingen genereren is gestopt.",
+          );
+          setBusy(false);
+          return;
+        }
+        await delay(2_000);
+      }
+    },
+    [loadItems, projectId],
+  );
 
   useEffect(() => {
     let active = true;
-    apiRequest<{ items: Recommendation[] }>(
-      `/projects/${projectId}/recommendations?limit=10`,
-    )
-      .then((response) => {
-        if (active) setItems(response.items);
+    loadItems()
+      .then(async () => {
+        const response = await apiRequest<{ job: GenerationJob | null }>(
+          `/projects/${projectId}/recommendations/generation-jobs/latest`,
+        );
+        if (!active || !response.job) return;
+        setJob(response.job);
+        if (isActiveJob(response.job)) {
+          void monitorJob(response.job.id);
+        }
       })
       .catch((error: unknown) => {
         if (active) {
@@ -47,22 +101,22 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
     return () => {
       active = false;
     };
-  }, [projectId]);
+  }, [loadItems, monitorJob, projectId]);
 
   async function generate() {
     setBusy(true);
     setMessage("");
     try {
-      const response = await apiRequest<{ items: Recommendation[] }>(
+      const response = await apiRequest<{ job: GenerationJob }>(
         `/projects/${projectId}/recommendations/generate?limit=10`,
         { method: "POST" },
       );
-      setItems(response.items);
-      setMessage(generationMessage(response.items));
+      setJob(response.job);
+      await monitorJob(response.job.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Genereren mislukt.");
-    } finally {
       setBusy(false);
+    } finally {
     }
   }
 
@@ -117,7 +171,9 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
       {busy && (
         <p className="settings-message">
           We genereren nu maximaal 10 pagina&apos;s met de hoogste prioriteit.
-          Met AI kan dit even duren.
+          Met AI kan dit even duren. Je kunt de pagina vernieuwen; de job loopt
+          op de server door.
+          {job && ` Voortgang: ${job.completed ?? 0}/${job.total ?? 10}.`}
         </p>
       )}
       {message && <p className="settings-message">{message}</p>}
@@ -170,6 +226,14 @@ function priorityScore(item: Recommendation, index: number) {
   return typeof item.priority_score === "number"
     ? item.priority_score
     : 100 - index * 8;
+}
+
+function isActiveJob(job: GenerationJob) {
+  return job.state === "queued" || job.state === "running";
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function providerLabel(item: Recommendation) {

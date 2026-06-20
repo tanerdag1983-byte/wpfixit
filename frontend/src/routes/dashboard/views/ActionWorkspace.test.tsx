@@ -15,7 +15,9 @@ describe("ActionWorkspace", () => {
   });
 
   it("loads saved recommendations after a refresh", async () => {
-    apiRequest.mockResolvedValueOnce({ items: [recommendation] });
+    apiRequest
+      .mockResolvedValueOnce({ items: [recommendation] })
+      .mockResolvedValueOnce({ job: null });
 
     render(<ActionWorkspace projectId="shm" />);
 
@@ -28,7 +30,11 @@ describe("ActionWorkspace", () => {
   });
 
   it("explains that generation handles the first ten priority pages", async () => {
-    apiRequest.mockResolvedValueOnce({ items: [] }).mockReturnValueOnce(new Promise(() => {}));
+    apiRequest
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ job: null })
+      .mockResolvedValueOnce({ job: queuedJob })
+      .mockReturnValueOnce(new Promise(() => {}));
 
     render(<ActionWorkspace projectId="shm" />);
 
@@ -44,6 +50,9 @@ describe("ActionWorkspace", () => {
   it("generates project recommendations through the API", async () => {
     apiRequest
       .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ job: null })
+      .mockResolvedValueOnce({ job: queuedJob })
+      .mockResolvedValueOnce({ job: completedJob })
       .mockResolvedValueOnce({ items: [recommendation] });
 
     render(<ActionWorkspace projectId="shm" />);
@@ -60,10 +69,16 @@ describe("ActionWorkspace", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/shm/recommendations/generation-jobs/job-1",
+    );
   });
 
   it("creates a change proposal from a recommendation", async () => {
-    apiRequest.mockResolvedValueOnce({ items: [recommendation] }).mockResolvedValueOnce({});
+    apiRequest
+      .mockResolvedValueOnce({ items: [recommendation] })
+      .mockResolvedValueOnce({ job: null })
+      .mockResolvedValueOnce({});
 
     render(<ActionWorkspace projectId="shm" />);
 
@@ -78,19 +93,21 @@ describe("ActionWorkspace", () => {
   });
 
   it("shows a short action title instead of full publishable HTML", async () => {
-    apiRequest.mockResolvedValueOnce({
-      items: [
-        {
-          ...recommendation,
-          action_type: "content",
-          action_title: "Vul de bedankpagina inhoudelijk aan",
-          explanation:
-            "De pagina krijgt meer context en een duidelijkere vervolgstap.",
-          recommendation:
-            "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina offerte helpt bezoekers snel te begrijpen welke oplossing past bij hun situatie.</p>",
-        },
-      ],
-    });
+    apiRequest
+      .mockResolvedValueOnce({
+        items: [
+          {
+            ...recommendation,
+            action_type: "content",
+            action_title: "Vul de bedankpagina inhoudelijk aan",
+            explanation:
+              "De pagina krijgt meer context en een duidelijkere vervolgstap.",
+            recommendation:
+              "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina offerte helpt bezoekers snel te begrijpen welke oplossing past bij hun situatie.</p>",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ job: null });
 
     render(<ActionWorkspace projectId="shm" />);
 
@@ -111,6 +128,9 @@ describe("ActionWorkspace", () => {
   it("shows when recommendations fell back from AI to rules", async () => {
     apiRequest
       .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ job: null })
+      .mockResolvedValueOnce({ job: queuedJob })
+      .mockResolvedValueOnce({ job: completedJob })
       .mockResolvedValueOnce({
         items: [
           {
@@ -133,6 +153,22 @@ describe("ActionWorkspace", () => {
     expect(screen.getByText("Regels-engine · AI fallback")).toBeVisible();
   });
 });
+
+const queuedJob = {
+  id: "job-1",
+  state: "queued",
+  progress: 0,
+  total: 1,
+  completed: 0,
+  error_message: null,
+};
+
+const completedJob = {
+  ...queuedJob,
+  state: "completed",
+  progress: 100,
+  completed: 1,
+};
 
 const recommendation = {
   id: "recommendation-1",
