@@ -19,7 +19,7 @@ describe("ActionWorkspace", () => {
 
     render(<ActionWorkspace projectId="shm" />);
 
-    expect(await screen.findByText("Herschrijf de SEO-title.")).toBeVisible();
+    expect(await screen.findByText("Maak de SEO-title specifieker")).toBeVisible();
     expect(apiRequest).toHaveBeenCalledWith(
       "/projects/shm/recommendations?limit=10",
     );
@@ -36,7 +36,7 @@ describe("ActionWorkspace", () => {
       screen.getByRole("button", { name: "Aanbevelingen genereren" }),
     );
 
-    expect(await screen.findByText("Herschrijf de SEO-title.")).toBeVisible();
+    expect(await screen.findByText("Maak de SEO-title specifieker")).toBeVisible();
     expect(screen.getByText("Regels-engine")).toBeVisible();
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
@@ -51,7 +51,7 @@ describe("ActionWorkspace", () => {
 
     render(<ActionWorkspace projectId="shm" />);
 
-    fireEvent.click(await screen.findByText("Herschrijf de SEO-title."));
+    fireEvent.click(await screen.findByText("Maak de SEO-title specifieker"));
 
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
@@ -59,6 +59,27 @@ describe("ActionWorkspace", () => {
         { method: "POST" },
       ),
     );
+  });
+
+  it("shows a short action title instead of full publishable HTML", async () => {
+    apiRequest.mockResolvedValueOnce({
+      items: [
+        {
+          ...recommendation,
+          action_type: "content",
+          recommendation:
+            "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina offerte helpt bezoekers snel te begrijpen welke oplossing past bij hun situatie.</p>",
+        },
+      ],
+    });
+
+    render(<ActionWorkspace projectId="shm" />);
+
+    expect(await screen.findByText("Verbeter de pagina-inhoud")).toBeVisible();
+    expect(
+      screen.queryByText(/Waarom deze pagina belangrijk is/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/<h2>/)).not.toBeInTheDocument();
   });
 });
 

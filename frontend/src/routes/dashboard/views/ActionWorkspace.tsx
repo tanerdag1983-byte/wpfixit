@@ -124,7 +124,7 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
           >
             <span className="priority-number">{100 - index * 8}</span>
             <span>
-              <strong>{item.recommendation}</strong>
+              <strong>{recommendationTitle(item)}</strong>
               <small>
                 {new URL(item.url).pathname} ·{" "}
                 <span className="recommendation-provider">
@@ -146,4 +146,25 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
 function providerLabel(item: Recommendation) {
   if (item.provider === "rules") return "Regels-engine";
   return item.model ? `${item.provider} · ${item.model}` : item.provider;
+}
+
+function recommendationTitle(item: Recommendation) {
+  const labels: Record<string, string> = {
+    seo_title: "Maak de SEO-title specifieker",
+    meta_description: "Verbeter de meta description",
+    canonical: "Controleer de canonical URL",
+    noindex: "Controleer de indexeerbaarheid",
+    content: "Verbeter de pagina-inhoud",
+    internal_links: "Verbeter interne links",
+    redirect: "Controleer redirect",
+  };
+  return labels[item.action_type] ?? readableSnippet(item.recommendation);
+}
+
+function readableSnippet(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
 }
