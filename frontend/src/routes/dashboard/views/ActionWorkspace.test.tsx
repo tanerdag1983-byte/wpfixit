@@ -67,6 +67,9 @@ describe("ActionWorkspace", () => {
         {
           ...recommendation,
           action_type: "content",
+          action_title: "Vul de bedankpagina inhoudelijk aan",
+          explanation:
+            "De pagina krijgt meer context en een duidelijkere vervolgstap.",
           recommendation:
             "<h2>Waarom deze pagina belangrijk is</h2><p>Bedankpagina offerte helpt bezoekers snel te begrijpen welke oplossing past bij hun situatie.</p>",
         },
@@ -75,7 +78,14 @@ describe("ActionWorkspace", () => {
 
     render(<ActionWorkspace projectId="shm" />);
 
-    expect(await screen.findByText("Verbeter de pagina-inhoud")).toBeVisible();
+    expect(
+      await screen.findByText("Vul de bedankpagina inhoudelijk aan"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "De pagina krijgt meer context en een duidelijkere vervolgstap.",
+      ),
+    ).toBeVisible();
     expect(
       screen.queryByText(/Waarom deze pagina belangrijk is/),
     ).not.toBeInTheDocument();
@@ -89,6 +99,8 @@ const recommendation = {
   url: "https://shmtransmissie.nl/revisie",
   action_type: "seo_title",
   priority: "high",
+  action_title: "Maak de SEO-title specifieker",
+  explanation: "De huidige title mist zoekintentie.",
   recommendation: "Herschrijf de SEO-title.",
   provider: "rules",
   model: null,

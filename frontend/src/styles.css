@@ -1537,8 +1537,18 @@ h2 {
 }
 
 .action-workspace-list strong,
-.action-workspace-list small {
+.action-workspace-list small,
+.recommendation-explanation {
   display: block;
+}
+
+.recommendation-explanation {
+  max-width: 920px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .action-workspace-list small {

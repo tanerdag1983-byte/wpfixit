@@ -42,9 +42,16 @@ class GeneratedRecommendation(BaseModel):
 
     action_type: str
     priority: str
+    action_title: str = ""
+    explanation: str = ""
     recommendation: str
     rationale: str
     evidence: list[str] = Field(min_length=1)
+
+    @field_validator("action_title", "explanation")
+    @classmethod
+    def bound_presentation_text(cls, value: str) -> str:
+        return " ".join(value.split())[:500]
 
 
 class RecommendationResult(GeneratedRecommendation):

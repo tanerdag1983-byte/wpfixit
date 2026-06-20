@@ -36,6 +36,10 @@ class Generator:
         return RecommendationResult(
             action_type="content",
             priority="high",
+            action_title="Verbeter de inhoud van de servicepagina",
+            explanation=(
+                "De audit toont dat bezoekers meer concrete informatie nodig hebben."
+            ),
             recommendation="Werk de pagina bij met aantoonbare informatie.",
             rationale="De audit toont een inhoudelijke kans.",
             evidence=[facts.evidence[0].id],
@@ -53,6 +57,8 @@ class CaptureGenerator:
         return RecommendationResult(
             action_type="meta_description",
             priority="high",
+            action_title="Maak de meta description concreter",
+            explanation="De huidige snippet mist een duidelijke propositie.",
             recommendation="Specialist in transmissierevisie met snelle diagnose.",
             rationale="De huidige snippet mist concrete propositie.",
             evidence=[facts.evidence[0].id],
@@ -210,7 +216,32 @@ def test_generation_endpoint_records_provider_model_prompt_and_proposal_state(
     assert recommendation["provider"] == "gemini"
     assert recommendation["model"] == "gemini-2.5-flash"
     assert recommendation["approval_state"] == "proposed"
+    assert recommendation["action_title"] == "Verbeter de inhoud van de servicepagina"
+    assert (
+        recommendation["explanation"]
+        == "De audit toont dat bezoekers meer concrete informatie nodig hebben."
+    )
+    assert (
+        recommendation["recommendation"]
+        == "Werk de pagina bij met aantoonbare informatie."
+    )
     assert len(recommendation["prompt_version"]) == 64
+
+    listed = client.get(
+        f"/projects/{projects.member_project.id}/recommendations",
+        params={"limit": 1},
+    )
+
+    assert listed.status_code == 200
+    listed_recommendation = listed.json()["items"][0]
+    assert (
+        listed_recommendation["action_title"]
+        == "Verbeter de inhoud van de servicepagina"
+    )
+    assert (
+        listed_recommendation["explanation"]
+        == "De audit toont dat bezoekers meer concrete informatie nodig hebben."
+    )
 
 
 def test_generation_endpoint_sends_current_wordpress_context_to_generator(

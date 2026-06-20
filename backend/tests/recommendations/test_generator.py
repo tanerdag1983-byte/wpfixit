@@ -94,3 +94,5 @@ def test_rule_based_content_recommendation_is_publishable_copy() -> None:
     assert "benoem bewijs" not in recommendation.recommendation
     assert "duidelijke vervolgstap" not in recommendation.recommendation
     assert "Automaatbak revisie" in recommendation.recommendation
+    assert recommendation.action_title == "Verbeter de pagina-inhoud"
+    assert "score van 88" in recommendation.explanation

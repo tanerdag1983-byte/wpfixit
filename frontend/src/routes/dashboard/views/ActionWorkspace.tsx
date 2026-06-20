@@ -10,6 +10,8 @@ type Recommendation = {
   url: string;
   action_type: string;
   priority: string;
+  action_title?: string;
+  explanation?: string;
   recommendation: string;
   provider: string;
   model?: string | null;
@@ -125,6 +127,11 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
             <span className="priority-number">{100 - index * 8}</span>
             <span>
               <strong>{recommendationTitle(item)}</strong>
+              {item.explanation && (
+                <span className="recommendation-explanation">
+                  {item.explanation}
+                </span>
+              )}
               <small>
                 {new URL(item.url).pathname} ·{" "}
                 <span className="recommendation-provider">
@@ -149,6 +156,7 @@ function providerLabel(item: Recommendation) {
 }
 
 function recommendationTitle(item: Recommendation) {
+  if (item.action_title?.trim()) return item.action_title.trim();
   const labels: Record<string, string> = {
     seo_title: "Maak de SEO-title specifieker",
     meta_description: "Verbeter de meta description",

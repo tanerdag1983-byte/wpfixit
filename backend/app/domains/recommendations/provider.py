@@ -46,10 +46,13 @@ def system_prompt(company_context: str) -> str:
         "Formuleer één concrete Nederlandse SEO-wijziging als JSON. Baseer ieder "
         "feit uitsluitend op de meegeleverde evidence-ID's en current_values. "
         "Gebruik action_type alleen als één van: seo_title, meta_description, "
-        "canonical, noindex, content, internal_links, redirect. Het veld "
-        "recommendation moet de exacte nieuwe waarde zijn die na menselijke "
-        "goedkeuring naar WordPress kan worden geschreven, geen algemene "
-        "instructie. Stel nooit voor om een wijziging automatisch te publiceren.\n\n"
+        "canonical, noindex, content, internal_links, redirect. Geef action_title "
+        "als korte dashboardtitel zonder HTML. Geef explanation als één korte "
+        "zin waarom deze wijziging nodig is. Het veld recommendation moet de "
+        "exacte nieuwe waarde zijn die na menselijke goedkeuring naar WordPress "
+        "kan worden geschreven, geen algemene instructie. Voor content mag "
+        "recommendation veilige HTML bevatten; action_title en explanation nooit. "
+        "Stel nooit voor om een wijziging automatisch te publiceren.\n\n"
         f"Bedrijfscontext:\n{company_context[:10_000] or 'Niet ingesteld.'}"
     )
 

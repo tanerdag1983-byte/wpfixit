@@ -147,19 +147,7 @@ def generate_recommendations(
             prompt_version=prompt_version,
         )
         items.append(
-            {
-                "id": recommendation.id,
-                "wordpress_page_id": page.id,
-                "url": page.url,
-                "action_type": recommendation.action_type,
-                "priority": recommendation.priority,
-                "recommendation": recommendation.recommendation,
-                "approval_state": recommendation.approval_state,
-                "evidence": recommendation.evidence,
-                "provider": recommendation.provider,
-                "model": recommendation.model,
-                "prompt_version": recommendation.prompt_version,
-            }
+            _recommendation_payload(recommendation, page)
         )
     return {"items": items}
 
@@ -229,23 +217,94 @@ def list_recommendations(
     )
     return {
         "items": [
-            {
-                "id": recommendation.id,
-                "wordpress_page_id": page.id,
-                "url": page.url,
-                "action_type": recommendation.action_type,
-                "priority": recommendation.priority,
-                "recommendation": recommendation.recommendation,
-                "approval_state": recommendation.approval_state,
-                "evidence": recommendation.evidence,
-                "provider": recommendation.provider,
-                "model": recommendation.model,
-                "prompt_version": recommendation.prompt_version,
-                "created_at": recommendation.created_at,
-            }
+            _recommendation_payload(recommendation, page, include_created_at=True)
             for recommendation, page in rows
         ]
     }
+
+
+def _recommendation_payload(
+    recommendation: SeoRecommendation,
+    page: WordPressPage,
+    *,
+    include_created_at: bool = False,
+) -> dict[str, object]:
+    presentation = _recommendation_presentation(recommendation)
+    payload: dict[str, object] = {
+        "id": recommendation.id,
+        "wordpress_page_id": page.id,
+        "url": page.url,
+        "action_type": recommendation.action_type,
+        "priority": recommendation.priority,
+        "action_title": presentation["action_title"],
+        "explanation": presentation["explanation"],
+        "recommendation": recommendation.recommendation,
+        "approval_state": recommendation.approval_state,
+        "evidence": recommendation.evidence,
+        "provider": recommendation.provider,
+        "model": recommendation.model,
+        "prompt_version": recommendation.prompt_version,
+    }
+    if include_created_at:
+        payload["created_at"] = recommendation.created_at
+    return payload
+
+
+def _recommendation_presentation(
+    recommendation: SeoRecommendation,
+) -> dict[str, str]:
+    evidence = (
+        recommendation.evidence
+        if isinstance(recommendation.evidence, dict)
+        else {}
+    )
+    presentation = evidence.get("presentation")
+    if isinstance(presentation, dict):
+        action_title = str(presentation.get("action_title") or "").strip()
+        explanation = str(presentation.get("explanation") or "").strip()
+        if action_title and explanation:
+            return {
+                "action_title": action_title,
+                "explanation": explanation,
+            }
+    return {
+        "action_title": _fallback_action_title(recommendation.action_type),
+        "explanation": str(evidence.get("rationale") or "").strip()
+        or _fallback_action_explanation(recommendation.action_type),
+    }
+
+
+def _fallback_action_title(action_type: str) -> str:
+    return {
+        "seo_title": "Maak de SEO-title specifieker",
+        "meta_description": "Verbeter de meta description",
+        "canonical": "Controleer de canonical URL",
+        "noindex": "Controleer de indexeerbaarheid",
+        "content": "Verbeter de pagina-inhoud",
+        "internal_links": "Verbeter interne links",
+        "redirect": "Controleer redirect",
+    }.get(action_type, "Verbeter de pagina")
+
+
+def _fallback_action_explanation(action_type: str) -> str:
+    return {
+        "seo_title": (
+            "Maak de titel concreter zodat zoekmachine en bezoeker de pagina "
+            "sneller begrijpen."
+        ),
+        "meta_description": (
+            "Verbeter de snippet zodat bezoekers sneller zien waarom deze pagina "
+            "relevant is."
+        ),
+        "content": (
+            "Verbeter de inhoud zodat de pagina meer context, bewijs en een "
+            "duidelijke vervolgstap bevat."
+        ),
+        "internal_links": (
+            "Verbeter interne links zodat belangrijke pagina's beter vindbaar "
+            "worden."
+        ),
+    }.get(action_type, "Bekijk deze aanbeveling voordat je publiceert.")
 
 
 def _company_context(profile: CompanyProfile | None) -> str:
