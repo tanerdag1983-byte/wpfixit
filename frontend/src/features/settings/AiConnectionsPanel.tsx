@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
 
-type Provider = "openai" | "anthropic" | "gemini" | "openai_compatible";
+type Provider =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "openai_compatible"
+  | "openrouter";
 
 export type AiConnection = {
   id: string;
@@ -39,6 +44,11 @@ const providers: Record<
     label: "OpenAI-compatible",
     baseUrl: "https://",
     model: "",
+  },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-4o-mini",
   },
 };
 

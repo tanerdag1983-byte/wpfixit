@@ -22,11 +22,13 @@ class OpenAICompatibleRecommendationGenerator:
         model: str,
         *,
         company_context: str = "",
+        provider: str = "openai_compatible",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.company_context = company_context
+        self.provider = provider
 
     def generate(self, facts: PageFacts) -> RecommendationResult:
         try:
@@ -61,7 +63,7 @@ class OpenAICompatibleRecommendationGenerator:
             return validated_result(
                 generated,
                 facts,
-                provider="openai_compatible",
+                provider=self.provider,
                 model=self.model,
                 input_tokens=int(usage.get("prompt_tokens", 0)),
                 output_tokens=int(usage.get("completion_tokens", 0)),

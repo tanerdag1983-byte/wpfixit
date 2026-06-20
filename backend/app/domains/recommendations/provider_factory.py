@@ -49,11 +49,12 @@ def build_generator(
             model,
             company_context=company_context,
         )
-    if connection.provider == "openai_compatible":
+    if connection.provider in {"openai_compatible", "openrouter"}:
         return OpenAICompatibleRecommendationGenerator(
             connection.base_url,
             api_key,
             model,
             company_context=company_context,
+            provider=connection.provider,
         )
     raise ProviderGenerationError("Unsupported AI provider")

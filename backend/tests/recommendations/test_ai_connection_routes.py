@@ -363,6 +363,17 @@ def test_connection_in_project_policy_cannot_be_deleted(
                 "max_tokens": 8,
             },
         ),
+        (
+            "openrouter",
+            "https://openrouter.ai/api/v1",
+            "https://openrouter.ai/api/v1/chat/completions",
+            {"Authorization": "Bearer secret-key"},
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "Reply with OK"}],
+                "max_tokens": 16,
+            },
+        ),
     ],
 )
 def test_connection_uses_provider_specific_test_request(

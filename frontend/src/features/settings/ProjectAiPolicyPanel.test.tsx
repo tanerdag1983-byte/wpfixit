@@ -29,6 +29,13 @@ describe("ProjectAiPolicyPanel", () => {
             default_model: "claude-sonnet-4-5",
             enabled: true,
           },
+          {
+            id: "openrouter-1",
+            name: "OpenRouter",
+            provider: "openrouter",
+            default_model: "anthropic/claude-3.5-sonnet",
+            enabled: true,
+          },
         ],
       })
       .mockResolvedValueOnce({
@@ -81,5 +88,37 @@ describe("ProjectAiPolicyPanel", () => {
     expect(
       screen.getByText(/Deze keuze geldt alleen voor dit project/i),
     ).toBeVisible();
+  });
+
+  it("lets a logged-in user choose an OpenRouter model for this project", async () => {
+    apiRequest.mockResolvedValueOnce({ configured: true });
+    render(
+      <ProjectAiPolicyPanel
+        organizationId="org-1"
+        projectId="project-1"
+      />,
+    );
+
+    await screen.findByDisplayValue("gpt-5.4-mini");
+    fireEvent.change(screen.getByLabelText("Primaire verbinding"), {
+      target: { value: "openrouter-1" },
+    });
+    expect(screen.getByLabelText("Primair model")).toHaveValue(
+      "anthropic/claude-3.5-sonnet",
+    );
+    fireEvent.change(screen.getByLabelText("Primair model"), {
+      target: { value: "google/gemini-2.0-flash" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Modelbeleid opslaan" }));
+
+    await waitFor(() => {
+      const [, init] = apiRequest.mock.calls.find(
+        ([path, init]) => path === "/projects/project-1/ai-policy" && init,
+      ) as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        primary_connection_id: "openrouter-1",
+        primary_model: "google/gemini-2.0-flash",
+      });
+    });
   });
 });

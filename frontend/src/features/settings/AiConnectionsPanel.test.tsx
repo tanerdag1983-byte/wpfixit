@@ -92,6 +92,23 @@ describe("AiConnectionsPanel", () => {
     );
   });
 
+  it("offers OpenRouter as its own provider with OpenRouter defaults", async () => {
+    render(<AiConnectionsPanel organizationId="org-1" />);
+    await screen.findByText("Claude productie");
+
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "openrouter" },
+    });
+
+    expect(screen.getByRole("option", { name: "OpenRouter" })).toBeVisible();
+    expect(screen.getByLabelText("API base URL")).toHaveValue(
+      "https://openrouter.ai/api/v1",
+    );
+    expect(screen.getByLabelText("Standaardmodel")).toHaveValue(
+      "openai/gpt-4o-mini",
+    );
+  });
+
   it("reloads and shows the stored provider message after a failed test", async () => {
     apiRequest
       .mockRejectedValueOnce(

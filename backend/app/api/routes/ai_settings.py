@@ -21,7 +21,13 @@ from app.domains.recommendations.models import (
 router = APIRouter(tags=["ai-settings"])
 SessionDependency = Annotated[Session, Depends(get_session)]
 UserDependency = Annotated[CurrentUser, Depends(get_current_user)]
-AiProvider = Literal["openai", "anthropic", "gemini", "openai_compatible"]
+AiProvider = Literal[
+    "openai",
+    "anthropic",
+    "gemini",
+    "openai_compatible",
+    "openrouter",
+]
 
 
 class AiConnectionWrite(BaseModel):
@@ -446,13 +452,14 @@ def _provider_test_request(
             timeout=15,
             allow_redirects=False,
         )
+    max_tokens = 16 if connection.provider == "openrouter" else 8
     return requests.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json={
             "model": model,
             "messages": [{"role": "user", "content": "Reply with OK"}],
-            "max_tokens": 8,
+            "max_tokens": max_tokens,
         },
         timeout=15,
         allow_redirects=False,

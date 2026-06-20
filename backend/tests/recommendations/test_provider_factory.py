@@ -26,6 +26,7 @@ from app.domains.recommendations.provider_factory import build_generator
         ("anthropic", AnthropicRecommendationGenerator),
         ("gemini", GeminiRecommendationGenerator),
         ("openai_compatible", OpenAICompatibleRecommendationGenerator),
+        ("openrouter", OpenAICompatibleRecommendationGenerator),
     ],
 )
 def test_factory_builds_explicit_provider(
@@ -50,3 +51,5 @@ def test_factory_builds_explicit_provider(
 
     assert isinstance(generator, expected_type)
     assert generator.model == "model-id"
+    if provider == "openrouter":
+        assert generator.provider == "openrouter"
