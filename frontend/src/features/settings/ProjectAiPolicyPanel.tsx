@@ -95,10 +95,11 @@ export function ProjectAiPolicyPanel({
   return (
     <section>
       <p className="eyebrow">Projectinstelling</p>
-      <h2>Modelbeleid voor dit project</h2>
+      <h2>AI-model voor dit project</h2>
       <p className="settings-intro">
-        Kies het standaardmodel voor aanbevelingen en optioneel een fallback als
-        de eerste provider tijdelijk niet beschikbaar is.
+        Deze keuze geldt alleen voor dit project. Kies welke AI-verbinding en
+        welk model aanbevelingen maakt, met optioneel een fallback als de eerste
+        provider tijdelijk niet beschikbaar is.
       </p>
       {connections.length === 0 ? (
         <p className="settings-empty">

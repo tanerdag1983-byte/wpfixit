@@ -64,4 +64,22 @@ describe("ProjectAiPolicyPanel", () => {
       ),
     );
   });
+
+  it("explains that model selection is project-specific", async () => {
+    render(
+      <ProjectAiPolicyPanel
+        organizationId="org-1"
+        projectId="project-1"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "AI-model voor dit project",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Deze keuze geldt alleen voor dit project/i),
+    ).toBeVisible();
+  });
 });

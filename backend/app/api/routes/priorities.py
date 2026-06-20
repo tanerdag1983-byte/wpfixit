@@ -120,7 +120,10 @@ def generate_recommendations(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     generator = _recommendation_generator(session, project)
-    prompt_version = _prompt_version(session.get(CompanyProfile, project.id))
+    prompt_version = _prompt_version(
+        session.get(CompanyProfile, project.id),
+        session.get(ProjectAiPolicy, project.id),
+    )
     items = []
     for page, result, evidence in project_priorities(session, project_id)[:limit]:
         wordpress_context = _wordpress_context(session, project_id, page)
@@ -260,16 +263,29 @@ def _company_context(profile: CompanyProfile | None) -> str:
     )[:10_000]
 
 
-def _prompt_version(profile: CompanyProfile | None) -> str | None:
-    if profile is None:
+def _prompt_version(
+    profile: CompanyProfile | None,
+    policy: ProjectAiPolicy | None = None,
+) -> str | None:
+    if profile is None and policy is None:
         return None
     payload = {
-        "company_name": profile.company_name,
-        "description": profile.description,
-        "audience": profile.audience,
-        "services": profile.services,
-        "tone_of_voice": profile.tone_of_voice,
-        "custom_prompt": profile.custom_prompt,
+        "company_profile": {
+            "company_name": profile.company_name if profile else "",
+            "description": profile.description if profile else "",
+            "audience": profile.audience if profile else "",
+            "services": profile.services if profile else [],
+            "tone_of_voice": profile.tone_of_voice if profile else "",
+            "custom_prompt": profile.custom_prompt if profile else "",
+        },
+        "ai_policy": {
+            "primary_connection_id": policy.primary_connection_id if policy else None,
+            "primary_model": policy.primary_model if policy else None,
+            "fallback_connection_id": policy.fallback_connection_id
+            if policy
+            else None,
+            "fallback_model": policy.fallback_model if policy else None,
+        },
     }
     return hashlib.sha256(
         json.dumps(

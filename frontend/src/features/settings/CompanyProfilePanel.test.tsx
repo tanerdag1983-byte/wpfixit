@@ -28,7 +28,7 @@ describe("CompanyProfilePanel", () => {
     render(<CompanyProfilePanel projectId="project-1" />);
 
     expect(await screen.findByDisplayValue("SHM Transmissie")).toBeVisible();
-    const prompt = screen.getByLabelText("Projectprompt");
+    const prompt = screen.getByLabelText(/Projectprompt voor dit project/i);
     fireEvent.change(prompt, {
       target: { value: "Schrijf concreet en verwijs naar bewijs." },
     });
@@ -43,5 +43,16 @@ describe("CompanyProfilePanel", () => {
         }),
       ),
     );
+  });
+
+  it("labels the company profile prompt as project-specific", async () => {
+    render(<CompanyProfilePanel projectId="project-1" />);
+
+    expect(
+      await screen.findByText(/Projectprompt voor dit project/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Deze prompt wordt alleen gebruikt voor dit project/i),
+    ).toBeVisible();
   });
 });

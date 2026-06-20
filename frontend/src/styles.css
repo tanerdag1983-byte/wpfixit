@@ -1914,6 +1914,13 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
 .settings-message {
   margin: 14px 0 0;
   color: #147a50;

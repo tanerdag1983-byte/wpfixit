@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.domains.audits.models import PageAudit, SeoRecommendation
 from app.domains.ga4.models import Ga4PagePerformance
 from app.domains.gsc.models import GscPagePerformance
-from app.domains.recommendations.models import CompanyProfile
+from app.domains.recommendations.models import CompanyProfile, ProjectAiPolicy
 from app.domains.recommendations.schemas import EvidenceItem, PageFacts
 from app.domains.recommendations.service import (
     RuleBasedRecommendationGenerator,
@@ -185,10 +185,49 @@ def test_company_profile_prompt_version_is_stable_and_content_sensitive() -> Non
         tone_of_voice="Deskundig",
         custom_prompt="Gebruik alleen aantoonbare claims.",
     )
+    policy = ProjectAiPolicy(
+        project_id="project-prompt",
+        organization_id="org-prompt",
+        primary_connection_id="openai-main",
+        primary_model="gpt-5.4-mini",
+        fallback_connection_id=None,
+        fallback_model=None,
+    )
 
-    first = _prompt_version(profile)
-    second = _prompt_version(profile)
+    first = _prompt_version(profile, policy)
+    second = _prompt_version(profile, policy)
     profile.custom_prompt = "Leg iedere aanbeveling kort uit."
 
     assert first == second
-    assert first != _prompt_version(profile)
+    assert first != _prompt_version(profile, policy)
+
+
+def test_ai_policy_is_part_of_prompt_version() -> None:
+    from app.api.routes.priorities import _prompt_version
+
+    profile = CompanyProfile(
+        project_id="project-policy-version",
+        company_name="SHM Transmissie",
+        description="Specialist",
+        audience="Autobezitters",
+        services=["Diagnose"],
+        tone_of_voice="Deskundig",
+        custom_prompt="Gebruik bewijs.",
+    )
+    policy = ProjectAiPolicy(
+        project_id="project-policy-version",
+        organization_id="org-policy-version",
+        primary_connection_id="openai-main",
+        primary_model="gpt-5.4-mini",
+        fallback_connection_id=None,
+        fallback_model=None,
+    )
+
+    first = _prompt_version(profile, policy)
+    policy.primary_model = "gpt-5.5"
+    changed_model = _prompt_version(profile, policy)
+    policy.primary_connection_id = "gemini-main"
+    changed_connection = _prompt_version(profile, policy)
+
+    assert first != changed_model
+    assert changed_model != changed_connection

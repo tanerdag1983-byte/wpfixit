@@ -38,7 +38,7 @@ describe("AiSettingsPanel", () => {
       screen.getByRole("heading", { name: "AI-verbindingen" }),
     ).toBeVisible();
     expect(
-      await screen.findByRole("heading", { name: "Modelbeleid voor dit project" }),
+      await screen.findByRole("heading", { name: "AI-model voor dit project" }),
     ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Bedrijf- en websiteprofiel" }),

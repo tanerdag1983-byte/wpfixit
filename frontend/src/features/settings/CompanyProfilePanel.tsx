@@ -73,7 +73,8 @@ export function CompanyProfilePanel({ projectId }: { projectId: string }) {
       <h2>Bedrijf- en websiteprofiel</h2>
       <p className="settings-intro">
         Deze informatie wordt alleen voor dit project aan AI-aanbevelingen
-        toegevoegd. Een gewijzigde prompt maakt een nieuwe aanbevelingsversie.
+        toegevoegd. Een gewijzigde prompt of AI-modelkeuze maakt een nieuwe
+        aanbevelingsversie.
       </p>
       <div className="settings-field-grid">
         <label>
@@ -110,12 +111,16 @@ export function CompanyProfilePanel({ projectId }: { projectId: string }) {
           <input value={tone} onChange={(event) => setTone(event.target.value)} />
         </label>
         <label className="wide-field">
-          Projectprompt
+          Projectprompt voor dit project
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Bijvoorbeeld: benadruk vakmanschap en gebruik alleen aantoonbare claims."
           />
+          <span className="field-help">
+            Deze prompt wordt alleen gebruikt voor dit project en niet gedeeld
+            met andere projecten.
+          </span>
         </label>
       </div>
       <button
