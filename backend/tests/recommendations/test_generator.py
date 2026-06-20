@@ -68,3 +68,29 @@ def test_provider_output_is_normalized_to_publishable_action_type() -> None:
     )
 
     assert result.action_type == "meta_description"
+
+
+def test_rule_based_content_recommendation_is_publishable_copy() -> None:
+    generator = RuleBasedRecommendationGenerator()
+
+    recommendation = generator.generate(
+        PageFacts(
+            url="https://example.com/automaatbak-revisie",
+            title="Automaatbak revisie",
+            priority_score=88,
+            components={"audit": 16, "conversion": 18},
+            evidence=[
+                EvidenceItem(
+                    id="audit:content",
+                    source="audit",
+                    excerpt="De pagina mist duidelijke service-informatie.",
+                )
+            ],
+        )
+    )
+
+    assert recommendation.action_type == "content"
+    assert "Leg de dienst" not in recommendation.recommendation
+    assert "benoem bewijs" not in recommendation.recommendation
+    assert "duidelijke vervolgstap" not in recommendation.recommendation
+    assert "Automaatbak revisie" in recommendation.recommendation

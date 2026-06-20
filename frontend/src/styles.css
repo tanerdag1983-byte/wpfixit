@@ -1242,6 +1242,19 @@ h2 {
   padding: 44px 42px 60px;
 }
 
+.back-link {
+  display: inline-flex;
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--ink);
+}
+
 .publish-state {
   padding: 7px 10px;
   border-radius: 999px;

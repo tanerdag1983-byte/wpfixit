@@ -138,6 +138,9 @@ export function PublishingReview({ projectId }: { projectId: string }) {
   if (!proposal) {
     return (
       <section className="publishing-review">
+        <a className="back-link" href="#actions">
+          Terug naar acties
+        </a>
         <p className="eyebrow">Handmatige publicatie</p>
         <h1>Wijziging beoordelen</h1>
         <p className="settings-empty">Nog geen wijzigingsvoorstel beschikbaar.</p>
@@ -149,6 +152,9 @@ export function PublishingReview({ projectId }: { projectId: string }) {
   const state = proposal.approval_state;
   return (
     <section className="publishing-review">
+      <a className="back-link" href="#actions">
+        Terug naar acties
+      </a>
       <div className="page-heading">
         <div>
           <p className="eyebrow">Handmatige publicatie</p>

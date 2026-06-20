@@ -138,15 +138,24 @@ def _meta_description_recommendation(facts: PageFacts) -> str:
 
 def _content_recommendation(facts: PageFacts) -> str:
     current = str(facts.current_values.get("content") or "").strip()
+    service_name = facts.title.strip() or "deze dienst"
     addition = (
         "\n\n<h2>Waarom deze pagina belangrijk is</h2>\n"
-        "<p>Deze pagina verdient concretere uitleg, duidelijke vervolgstappen "
-        "en interne links naar relevante diensten.</p>"
+        f"<p>{service_name} helpt bezoekers snel te begrijpen welke oplossing "
+        "past bij hun situatie. Onze specialisten beoordelen de klacht, leggen "
+        "de mogelijke vervolgstappen helder uit en adviseren welke aanpak het "
+        "beste aansluit.</p>\n"
+        "<p>Neem contact op voor een gerichte diagnose of plan direct een "
+        "afspraak met een specialist.</p>"
     )
     if current:
         return f"{current}{addition}"
     return (
         "<h2>Waarom deze pagina belangrijk is</h2>\n"
-        "<p>Leg de dienst concreet uit, benoem bewijs uit de audit en voeg een "
-        "duidelijke vervolgstap toe.</p>"
+        f"<p>{service_name} helpt bezoekers snel te begrijpen welke oplossing "
+        "past bij hun situatie. Onze specialisten beoordelen de klacht, leggen "
+        "de mogelijke vervolgstappen helder uit en adviseren welke aanpak het "
+        "beste aansluit.</p>\n"
+        "<p>Neem contact op voor een gerichte diagnose of plan direct een "
+        "afspraak met een specialist.</p>"
     )

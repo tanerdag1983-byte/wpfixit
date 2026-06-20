@@ -89,4 +89,14 @@ describe("PublishingReview", () => {
     );
     expect(await screen.findByText("Actuele WordPress title")).toBeVisible();
   });
+
+  it("offers a way back to the actions overview", async () => {
+    render(<PublishingReview projectId="shm" />);
+
+    const backLink = await screen.findByRole("link", {
+      name: "Terug naar acties",
+    });
+
+    expect(backLink).toHaveAttribute("href", "#actions");
+  });
 });
