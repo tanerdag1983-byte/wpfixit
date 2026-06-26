@@ -14,6 +14,7 @@ BUSINESS_STOP_TOKENS = frozenset(
     {
         "aan",
         "auto",
+        "automatische",
         "bedrijf",
         "bij",
         "contact",
@@ -36,10 +37,12 @@ BUSINESS_STOP_TOKENS = frozenset(
         "reviseren",
         "revisie",
         "service",
+        "site",
         "specialist",
         "voor",
         "vervangen",
         "wat",
+        "website",
     }
 )
 
@@ -98,6 +101,10 @@ def build_keyword_context(
         .where(WordPressPage.project_id == project.id)
         .order_by(WordPressPage.url)
     ).all()
+    page_topics = tuple(_page_topic(page) for page in pages)
+    all_page_phrases = [
+        phrase for page in page_topics for phrase in page.phrases
+    ]
 
     service_phrases = _normalized_values(profile.services if profile else [])
     company_phrase = _normalize_phrase(
@@ -106,7 +113,12 @@ def build_keyword_context(
     fallback_phrases = _normalized_values(
         [profile.description, profile.audience] if profile else [project.name]
     )
-    anchor_sources = service_phrases or fallback_phrases
+    if service_phrases:
+        anchor_sources = list(service_phrases)
+    elif profile:
+        anchor_sources = fallback_phrases + all_page_phrases
+    else:
+        anchor_sources = all_page_phrases + fallback_phrases
     if company_phrase:
         anchor_sources.append(company_phrase)
     business_tokens = frozenset(
@@ -116,7 +128,6 @@ def build_keyword_context(
         if token not in BUSINESS_STOP_TOKENS and len(token) >= 3
     )
 
-    page_topics = tuple(_page_topic(page) for page in pages)
     relevant_page_phrases = [
         phrase
         for page in page_topics

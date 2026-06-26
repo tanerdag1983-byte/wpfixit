@@ -92,3 +92,28 @@ def test_relevance_rejects_other_automotive_topics_and_matches_service_pages(
     assert target_url("dsg automaat reviseren", context).endswith(
         "/dsg-automaat-reviseren/"
     )
+
+
+def test_wordpress_pages_provide_fallback_context_without_company_profile(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    project = projects.member_project
+    session.add(
+        WordPressPage(
+            id="page-transmission",
+            project_id=project.id,
+            wordpress_object_id=103,
+            post_type="page",
+            status="publish",
+            title="Automatische transmissie revisie",
+            slug="automatische-transmissie-revisie",
+            url=f"{project.domain}/automatische-transmissie-revisie/",
+        )
+    )
+    session.commit()
+
+    context = build_keyword_context(session, project)
+
+    assert "automatische transmissie revisie" in context.seeds
+    assert is_relevant("transmissie laten reviseren", context)
