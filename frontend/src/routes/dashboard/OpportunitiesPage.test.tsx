@@ -1,14 +1,64 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OpportunitiesPage } from "./OpportunitiesPage";
 
+const apiRequest = vi.fn();
+
+vi.mock("../../lib/api", () => ({
+  apiRequest: (...args: unknown[]) => apiRequest(...args),
+}));
+
 describe("OpportunitiesPage", () => {
-  it("shows evidence-backed opportunities", () => {
-    render(<OpportunitiesPage />);
+  beforeEach(() => {
+    apiRequest.mockReset();
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [
+            {
+              id: "keyword-1",
+              keyword: "automatische transmissie revisie",
+              search_volume: 320,
+              cpc: 4.25,
+              competition_level: "medium",
+              keyword_difficulty: 38,
+              intent: "commercial",
+              target_url: null,
+              recommended_action:
+                "Maak een nieuwe landingspagina voor dit zoekwoord.",
+              source: "dataforseo",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ synced: 1 });
+    });
+  });
+
+  it("shows live keyword opportunities", async () => {
+    render(<OpportunitiesPage projectId="project-1" />);
 
     expect(screen.getByRole("heading", { name: "Kansen" })).toBeVisible();
-    expect(screen.getByText(/12\.400 impressies/)).toBeVisible();
-    expect(screen.getAllByText("Voorstel")).toHaveLength(3);
+    expect(
+      await screen.findByText("automatische transmissie revisie"),
+    ).toBeVisible();
+    expect(screen.getByText(/320 zoekopdrachten/)).toBeVisible();
+    expect(screen.getByText("DataForSEO")).toBeVisible();
+  });
+
+  it("syncs and reloads keyword opportunities", async () => {
+    render(<OpportunitiesPage projectId="project-1" />);
+    await screen.findByText("automatische transmissie revisie");
+
+    fireEvent.click(screen.getByRole("button", { name: "Nieuwe kansen ophalen" }));
+
+    expect(
+      await screen.findByText("1 zoekwoordkans bijgewerkt."),
+    ).toBeVisible();
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/sync-keyword-opportunities",
+      { method: "POST" },
+    );
   });
 });

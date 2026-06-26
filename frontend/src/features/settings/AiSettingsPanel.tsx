@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { AiConnectionsPanel } from "./AiConnectionsPanel";
 import { CompanyProfilePanel } from "./CompanyProfilePanel";
+import { DataForSeoPanel } from "./DataForSeoPanel";
 import { ProjectAiPolicyPanel } from "./ProjectAiPolicyPanel";
 import { WordPressBridgePanel } from "./WordPressBridgePanel";
 
@@ -17,6 +18,7 @@ export function AiSettingsPanel({
   return (
     <div className="ai-settings">
       <WordPressBridgePanel projectId={projectId} />
+      <DataForSeoPanel organizationId={organizationId} />
       <AiConnectionsPanel
         organizationId={organizationId}
         onConnectionsChange={() =>

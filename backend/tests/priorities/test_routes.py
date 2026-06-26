@@ -4,9 +4,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.routes import priorities
 from app.domains.audits.models import PageAudit, SeoRecommendation
 from app.domains.ga4.models import Ga4PagePerformance
 from app.domains.gsc.models import GscPagePerformance
+from app.domains.jobs.models import Job
 from app.domains.recommendations.models import CompanyProfile, ProjectAiPolicy
 from app.domains.recommendations.schemas import EvidenceItem, PageFacts
 from app.domains.recommendations.service import (
@@ -104,11 +106,17 @@ def test_priority_endpoint_combines_wordpress_gsc_and_ga4(
         params={"limit": 1},
     )
 
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["items"][0]["approval_state"] == "proposed"
-    assert first.json()["items"][0]["provider"] == "rules"
-    assert first.json()["items"][0]["prompt_version"] is None
+    assert first.status_code == 202
+    assert second.status_code == 202
+    for response in (first, second):
+        job = session.get(Job, response.json()["job"]["id"])
+        assert job is not None
+        priorities._generate_recommendations_for_job(
+            session,
+            job,
+            projects.member_project,
+            1,
+        )
     assert session.scalar(select(func.count(SeoRecommendation.id))) == 1
 
     saved = client.get(
@@ -117,8 +125,11 @@ def test_priority_endpoint_combines_wordpress_gsc_and_ga4(
     )
 
     assert saved.status_code == 200
-    assert saved.json()["items"][0]["id"] == first.json()["items"][0]["id"]
-    assert saved.json()["items"][0]["url"] == page.url
+    recommendation = saved.json()["items"][0]
+    assert recommendation["approval_state"] == "proposed"
+    assert recommendation["provider"] == "rules"
+    assert recommendation["prompt_version"] is None
+    assert recommendation["url"] == page.url
 
 
 def test_changed_company_prompt_creates_a_new_recommendation_version(

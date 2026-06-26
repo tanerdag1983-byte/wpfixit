@@ -357,7 +357,8 @@ function RouteContent({
         <ActionWorkspace projectId={activeProject.id} />
       </div>
     );
-  if (route === "opportunities") return <OpportunitiesPage />;
+  if (route === "opportunities")
+    return <OpportunitiesPage projectId={activeProject.id} />;
   if (route === "priorities") return <PriorityPage />;
   if (route === "publishing")
     return <PublishingReview projectId={activeProject.id} />;

@@ -116,7 +116,6 @@ export function ActionWorkspace({ projectId }: { projectId: string }) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Genereren mislukt.");
       setBusy(false);
-    } finally {
     }
   }
 

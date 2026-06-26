@@ -1,0 +1,1 @@
+"""DataForSEO keyword opportunity domain."""

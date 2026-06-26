@@ -22,6 +22,9 @@ describe("AiSettingsPanel", () => {
       if (path.endsWith("/company-profile")) {
         return Promise.resolve({ configured: false });
       }
+      if (path.endsWith("/dataforseo-connection")) {
+        return Promise.resolve({ configured: false });
+      }
       return Promise.resolve({});
     });
   });
@@ -42,6 +45,9 @@ describe("AiSettingsPanel", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Bedrijf- en websiteprofiel" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "DataForSEO" }),
     ).toBeVisible();
   });
 });

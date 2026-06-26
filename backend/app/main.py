@@ -4,6 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes.ai_settings import router as ai_settings_router
 from app.api.routes.crawls import router as crawls_router
+from app.api.routes.dataforseo import router as dataforseo_router
 from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.ga4 import router as ga4_router
 from app.api.routes.google import router as google_router
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     application.include_router(wordpress_router)
     application.include_router(dashboards_router)
     application.include_router(crawls_router)
+    application.include_router(dataforseo_router)
     application.include_router(ai_settings_router)
     application.include_router(google_router)
     application.include_router(priorities_router)
