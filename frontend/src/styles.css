@@ -1968,6 +1968,11 @@ h2 {
   font-weight: 700;
 }
 
+.settings-field-grid .settings-field {
+  display: grid;
+  gap: 7px;
+}
+
 .settings-field-grid input,
 .settings-field-grid select,
 .settings-field-grid textarea {

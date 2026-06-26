@@ -147,11 +147,13 @@ export function DataForSeoPanel({
             placeholder="account@example.com"
           />
         </label>
-        <label>
-          DataForSEO wachtwoord
+        <div className="settings-field">
+          <label htmlFor="dataforseo-api-password">DataForSEO wachtwoord</label>
           <input
+            id="dataforseo-api-password"
             type="password"
             autoComplete="new-password"
+            aria-describedby="dataforseo-api-password-help"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder={
@@ -160,7 +162,18 @@ export function DataForSeoPanel({
                 : "DataForSEO API-wachtwoord"
             }
           />
-        </label>
+          <span className="field-help" id="dataforseo-api-password-help">
+            Gebruik het automatisch gegenereerde DataForSEO API-wachtwoord,
+            niet je normale accountwachtwoord.{" "}
+            <a
+              href="https://app.dataforseo.com/api-access"
+              rel="noreferrer"
+              target="_blank"
+            >
+              API-wachtwoord bekijken
+            </a>
+          </span>
+        </div>
         <label className="wide-field settings-checkbox">
           <input
             type="checkbox"

@@ -96,4 +96,18 @@ describe("DataForSeoPanel", () => {
     ).toBeVisible();
     expect(screen.getByLabelText("DataForSEO wachtwoord")).toHaveValue("");
   });
+
+  it("explains that the generated API password is required", async () => {
+    render(<DataForSeoPanel organizationId="org-1" />);
+
+    const password = await screen.findByLabelText("DataForSEO wachtwoord");
+    const explanation = screen.getByText(
+      /automatisch gegenereerde DataForSEO API-wachtwoord/i,
+    );
+    expect(explanation).toBeVisible();
+    expect(password).toHaveAttribute("aria-describedby", explanation.id);
+    expect(
+      screen.getByRole("link", { name: "API-wachtwoord bekijken" }),
+    ).toHaveAttribute("href", "https://app.dataforseo.com/api-access");
+  });
 });
