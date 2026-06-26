@@ -1,15 +1,17 @@
-import re
 from datetime import UTC, datetime
 from decimal import Decimal
-from urllib.parse import urlparse
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
+from app.domains.dataforseo.relevance import (
+    build_keyword_context,
+    is_relevant,
+    target_url,
+)
 from app.domains.projects.models import Project
-from app.domains.wordpress.models import WordPressPage
 
 
 def project_seed_terms(
@@ -18,16 +20,7 @@ def project_seed_terms(
     *,
     limit: int = 20,
 ) -> list[str]:
-    host = urlparse(project.domain).hostname or project.domain
-    values = [host, project.name]
-    pages = session.scalars(
-        select(WordPressPage)
-        .where(WordPressPage.project_id == project.id)
-        .order_by(WordPressPage.last_synced_at.desc())
-        .limit(limit)
-    ).all()
-    values.extend(page.title or page.slug for page in pages)
-    return _unique_nonempty(values)[:limit]
+    return list(build_keyword_context(session, project, limit=limit).seeds)
 
 
 def upsert_keyword_opportunities(
@@ -35,25 +28,28 @@ def upsert_keyword_opportunities(
     project: Project,
     rows: list[dict],
 ) -> list[KeywordOpportunity]:
-    pages = session.scalars(
-        select(WordPressPage).where(WordPressPage.project_id == project.id)
-    ).all()
+    context = build_keyword_context(session, project)
+    existing = {
+        (item.keyword, item.location_code, item.language_code): item
+        for item in session.scalars(
+            select(KeywordOpportunity).where(
+                KeywordOpportunity.project_id == project.id,
+                KeywordOpportunity.source == "dataforseo",
+            )
+        ).all()
+    }
     synced: list[KeywordOpportunity] = []
+    accepted: set[tuple[str, int, str]] = set()
     now = datetime.now(UTC)
     for row in rows:
         keyword = str(row.get("keyword") or "").strip()
-        if not keyword:
+        if not keyword or not is_relevant(keyword, context):
             continue
         location_code = int(row.get("location_code") or 2528)
         language_code = str(row.get("language_code") or "nl")
-        opportunity = session.scalar(
-            select(KeywordOpportunity).where(
-                KeywordOpportunity.project_id == project.id,
-                KeywordOpportunity.keyword == keyword,
-                KeywordOpportunity.location_code == location_code,
-                KeywordOpportunity.language_code == language_code,
-            )
-        )
+        identity = (keyword, location_code, language_code)
+        accepted.add(identity)
+        opportunity = existing.get(identity)
         if opportunity is None:
             opportunity = KeywordOpportunity(
                 id=str(uuid4()),
@@ -65,7 +61,7 @@ def upsert_keyword_opportunities(
             )
             session.add(opportunity)
 
-        target_url = _target_url(keyword, pages)
+        matched_url = target_url(keyword, context)
         opportunity.search_volume = _optional_int(row.get("search_volume"))
         opportunity.cpc = _optional_decimal(row.get("cpc"))
         opportunity.competition = _optional_decimal(row.get("competition"))
@@ -74,16 +70,19 @@ def upsert_keyword_opportunities(
             row.get("keyword_difficulty")
         )
         opportunity.intent = row.get("intent")
-        opportunity.target_url = target_url
+        opportunity.target_url = matched_url
         opportunity.recommended_action = (
-            f"Verbeter {target_url} voor het zoekwoord '{keyword}'."
-            if target_url
+            f"Verbeter {matched_url} voor het zoekwoord '{keyword}'."
+            if matched_url
             else f"Maak een nieuwe landingspagina voor het zoekwoord '{keyword}'."
         )
         opportunity.source = "dataforseo"
         opportunity.raw_payload = row.get("raw_payload") or row
         opportunity.discovered_at = now
         synced.append(opportunity)
+    for identity, opportunity in existing.items():
+        if identity not in accepted:
+            session.delete(opportunity)
     session.commit()
     return synced
 
@@ -105,35 +104,6 @@ def opportunity_payload(opportunity: KeywordOpportunity) -> dict:
         "source": opportunity.source,
         "discovered_at": opportunity.discovered_at,
     }
-
-
-def _target_url(keyword: str, pages: list[WordPressPage]) -> str | None:
-    tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", keyword.lower())
-        if len(token) >= 4
-    }
-    best_page = None
-    best_score = 0
-    for page in pages:
-        haystack = f"{page.title} {page.slug} {page.url}".lower()
-        score = sum(token in haystack for token in tokens)
-        if score > best_score:
-            best_page = page
-            best_score = score
-    return best_page.url if best_page is not None and best_score > 0 else None
-
-
-def _unique_nonempty(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        normalized = str(value or "").strip()
-        key = normalized.casefold()
-        if normalized and key not in seen:
-            seen.add(key)
-            result.append(normalized)
-    return result
 
 
 def _optional_int(value) -> int | None:
