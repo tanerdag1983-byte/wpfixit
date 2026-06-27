@@ -1,7 +1,7 @@
 # Managed Page Blueprints Design
 
 **Date:** 2026-06-27
-**Status:** Approved direction
+**Status:** Approved
 
 ## Problem
 
@@ -49,7 +49,7 @@ Creating a blueprint clones the chosen reference page, including:
 - `post_content`, excerpt, parent, menu order, and `page_template`;
 - ACF field values and flexible-content/repeater structure;
 - Elementor, Bricks, and other builder-specific postmeta;
-- featured image and relevant theme metadata;
+- featured image, PHP page template, and adapter-allowlisted builder/theme metadata;
 - a source page ID, builder type, version, and structure hash.
 
 The source page remains untouched. Updating a blueprint creates a new version rather
@@ -74,7 +74,7 @@ Replace the single `ProjectPagePackageSettings` concept with project blueprints:
 - `version`
 - `structure_hash`
 - `content_schema`
-- `state` (`capturing`, `ready`, `stale`, or `invalid`)
+- `state` (`capture_required`, `capturing`, `ready`, `stale`, or `invalid`)
 - `is_default_for_page_type`
 - timestamps
 
@@ -197,6 +197,7 @@ Backend routes:
 - `GET /projects/{id}/page-blueprints`
 - `POST /projects/{id}/page-blueprints`
 - `GET /projects/{id}/page-blueprints/{blueprint_id}`
+- `PUT /projects/{id}/page-blueprints/{blueprint_id}`
 - `POST /projects/{id}/page-blueprints/{blueprint_id}/validate`
 - `POST /projects/{id}/page-blueprints/{blueprint_id}/set-default`
 - `POST /projects/{id}/page-blueprints/{blueprint_id}/new-version`
