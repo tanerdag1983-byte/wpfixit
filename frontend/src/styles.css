@@ -2016,6 +2016,110 @@ h2 {
   margin-top: 20px;
 }
 
+.page-package-review {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 44px 42px 72px;
+}
+
+.page-package-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  gap: 44px;
+  margin-top: 38px;
+}
+
+.page-package-form,
+.package-section {
+  display: grid;
+  gap: 20px;
+}
+
+.package-section {
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--line);
+}
+
+.package-repeat {
+  display: grid;
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbf7;
+}
+
+.package-repeat label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.package-repeat input,
+.package-repeat textarea {
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: 600 13px/1.5 "Manrope", sans-serif;
+}
+
+.package-repeat textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.page-package-sidebar {
+  align-self: start;
+  position: sticky;
+  top: 24px;
+  padding-left: 28px;
+  border-left: 1px solid var(--line);
+}
+
+.page-package-preview {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.page-package-draft-button {
+  width: 100%;
+  margin-top: 22px;
+}
+
+.provider-note {
+  display: block;
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.generation-notice {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 14px;
+  border: 1px solid #b9ddc8;
+  border-radius: 10px;
+  background: #e7f6ed;
+  color: #147a50;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .opportunity-target {
   display: block;
   margin-top: 9px;
@@ -2324,6 +2428,22 @@ h2 {
 
   .publishing-review {
     padding: 32px 20px 110px;
+  }
+
+  .page-package-review {
+    padding: 32px 20px 110px;
+  }
+
+  .page-package-layout,
+  .package-repeat {
+    grid-template-columns: 1fr;
+  }
+
+  .page-package-sidebar {
+    position: static;
+    padding: 24px 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
   .mode-switcher {

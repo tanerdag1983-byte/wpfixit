@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 
 import { defaultBrand, applyBrand, type BrandSettings } from "../config/brand";
 import { PublishingReview } from "../features/publishing/PublishingReview";
+import { PagePackageReview } from "../features/page-packages/PagePackageReview";
 import { GoogleOAuthCallback } from "../features/google/GoogleOAuthCallback";
 import { AiSettingsPanel } from "../features/settings/AiSettingsPanel";
 import {
@@ -362,6 +363,8 @@ function RouteContent({
   if (route === "priorities") return <PriorityPage />;
   if (route === "publishing")
     return <PublishingReview projectId={activeProject.id} />;
+  if (route === "page-proposal")
+    return <PagePackageReview projectId={activeProject.id} />;
   if (route === "settings")
     return (
       <SettingsPanel

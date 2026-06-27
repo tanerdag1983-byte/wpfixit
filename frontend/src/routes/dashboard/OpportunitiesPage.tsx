@@ -91,7 +91,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
         `/projects/${projectId}/keyword-opportunities/${item.id}/page-proposal`,
         { method: "POST" },
       );
-      window.sessionStorage.setItem("page-proposal-id", response.id);
+      window.sessionStorage.setItem(`page-proposal-id:${projectId}`, response.id);
       window.location.hash = "page-proposal";
     } catch (error) {
       setMessage(
