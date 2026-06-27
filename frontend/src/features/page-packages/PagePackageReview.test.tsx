@@ -84,6 +84,22 @@ describe("PagePackageReview", () => {
     expect(screen.getByLabelText("Pagina-voorbeeld").innerHTML).not.toContain("script");
   });
 
+  it("keeps the generation status visible while the persisted job runs", async () => {
+    apiRequest.mockResolvedValue({
+      ...proposal,
+      state: "generating",
+      package: {},
+      job: { state: "running", progress: 35 },
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText(/Dit bericht blijft staan/)).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Paginapakket wordt gemaakt" }),
+    ).toBeVisible();
+  });
+
   it("saves edits and requires approval before draft creation", async () => {
     render(<PagePackageReview projectId="project-1" />);
     const title = await screen.findByLabelText("Paginatitel");

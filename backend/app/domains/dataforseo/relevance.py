@@ -9,7 +9,6 @@ from app.domains.projects.models import Project
 from app.domains.recommendations.models import CompanyProfile
 from app.domains.wordpress.models import WordPressPage
 
-
 BUSINESS_STOP_TOKENS = frozenset(
     {
         "aan",
@@ -132,9 +131,7 @@ def build_keyword_context(
         .order_by(WordPressPage.url)
     ).all()
     page_topics = tuple(_page_topic(page) for page in pages)
-    all_page_phrases = [
-        phrase for page in page_topics for phrase in page.phrases
-    ]
+    all_page_phrases = [phrase for page in page_topics for phrase in page.phrases]
 
     service_phrases = _normalized_values(profile.services if profile else [])
     company_phrase = _normalize_phrase(
@@ -195,9 +192,7 @@ def classify_target(keyword: str, context: KeywordContext) -> PageMatch:
 
     normalized = _normalize_phrase(keyword)
     candidate_tokens = frozenset(_tokens(normalized))
-    candidate_entities = (
-        candidate_tokens - context.business_tokens - MATCH_STOP_TOKENS
-    )
+    candidate_entities = candidate_tokens - context.business_tokens - MATCH_STOP_TOKENS
     candidate_bigrams = _bigrams(normalized)
     ranked: list[tuple[int, int, str, tuple[str, ...]]] = []
 
@@ -243,7 +238,9 @@ def classify_target(keyword: str, context: KeywordContext) -> PageMatch:
                     50 + min(10, len(entity_overlap) * 3),
                     1,
                     page.url,
-                    tuple(f"partial_entity:{value}" for value in sorted(entity_overlap)),
+                    tuple(
+                        f"partial_entity:{value}" for value in sorted(entity_overlap)
+                    ),
                 )
             )
 
@@ -260,9 +257,7 @@ def classify_target(keyword: str, context: KeywordContext) -> PageMatch:
 
 
 def _page_topic(page: WordPressPage) -> PageTopic:
-    phrases = _unique(
-        _normalized_values([page.title, page.slug.replace("-", " ")])
-    )
+    phrases = _unique(_normalized_values([page.title, page.slug.replace("-", " ")]))
     return PageTopic(
         url=page.url,
         phrases=tuple(phrases),
@@ -279,8 +274,7 @@ def _normalized_values(values: Iterable[object]) -> list[str]:
     return _unique(
         phrase
         for value in values
-        if (phrase := _normalize_phrase(value))
-        and len(_tokens(phrase)) >= 2
+        if (phrase := _normalize_phrase(value)) and len(_tokens(phrase)) >= 2
     )
 
 

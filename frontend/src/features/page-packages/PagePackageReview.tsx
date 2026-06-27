@@ -53,23 +53,30 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       return;
     }
     let active = true;
+    let pollTimer: number | undefined;
     setLoading(true);
-    apiRequest<Proposal>(`/projects/${projectId}/page-proposals/${proposalId}`)
-      .then((result) => {
+    const loadProposal = async () => {
+      try {
+        const result = await apiRequest<Proposal>(
+          `/projects/${projectId}/page-proposals/${proposalId}`,
+        );
         if (!active) return;
         setProposal(result);
-        setDraft(result.package);
-      })
-      .catch((error) => {
-        if (active) {
-          setMessage(error instanceof Error ? error.message : "Voorstel laden mislukt.");
+        if (result.package?.title) setDraft(result.package);
+        setLoading(false);
+        if (result.state === "generating") {
+          pollTimer = window.setTimeout(loadProposal, 1500);
         }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      } catch (error) {
+        if (!active) return;
+        setMessage(error instanceof Error ? error.message : "Voorstel laden mislukt.");
+        setLoading(false);
+      }
+    };
+    void loadProposal();
     return () => {
       active = false;
+      if (pollTimer) window.clearTimeout(pollTimer);
     };
   }, [projectId]);
 
@@ -141,12 +148,28 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     );
   }
 
+  if (proposal?.state === "generating") {
+    return (
+      <section className="page-package-review">
+        <a className="back-link" href="#opportunities">Terug naar kansen</a>
+        <p className="eyebrow">Nieuw WordPress-concept</p>
+        <h1>Paginapakket wordt gemaakt</h1>
+        <div className="generation-notice">
+          <LoaderCircle className="spin" size={18} />
+          AI maakt het complete pakket. Dit bericht blijft staan totdat alles klaar is.
+        </div>
+      </section>
+    );
+  }
+
   if (!proposal || !draft) {
     return (
       <section className="page-package-review">
         <a className="back-link" href="#opportunities">Terug naar kansen</a>
         <h1>Nieuw paginaconcept beoordelen</h1>
-        <p className="settings-message">{message}</p>
+        <p className="settings-message">
+          {proposal?.job?.error_message || message}
+        </p>
       </section>
     );
   }
@@ -168,13 +191,6 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           {stateLabel(proposal.state)}
         </span>
       </div>
-
-      {proposal.state === "generating" && (
-        <div className="generation-notice">
-          <LoaderCircle className="spin" size={18} />
-          AI maakt het complete pakket. Dit bericht blijft staan totdat alles klaar is.
-        </div>
-      )}
 
       <div className="page-package-layout">
         <div className="page-package-form">

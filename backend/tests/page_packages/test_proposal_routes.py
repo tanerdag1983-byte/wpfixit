@@ -133,6 +133,8 @@ def test_creates_persistent_reviewable_page_proposal(
     )
 
     assert response.status_code == 202
+    assert response.json()["state"] == "generating"
+    assert response.json()["job"]["state"] == "queued"
     proposal_id = response.json()["id"]
     loaded = client.get(
         f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
@@ -197,9 +199,12 @@ def test_updates_and_approves_proposal_before_wordpress(
         "app.api.routes.page_packages._page_package_generator",
         lambda session, project: Generator(),
     )
-    created = client.post(
+    queued = client.post(
         f"/projects/{projects.member_project.id}/keyword-opportunities/"
         f"{opportunity.id}/page-proposal"
+    ).json()
+    created = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{queued['id']}"
     ).json()
     package = created["package"]
     package["title"] = "Aangepaste DSG revisiepagina"

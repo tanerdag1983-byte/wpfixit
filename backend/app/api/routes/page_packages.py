@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.domains.page_packages.schemas import (
     PagePackageProposalWrite,
     PagePackageSettingsWrite,
 )
+from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership, get_project
 from app.domains.recommendations.models import (
     AiConnection,
@@ -199,6 +200,7 @@ def validate_page_package_settings(
 def create_page_package_proposal(
     project_id: str,
     opportunity_id: str,
+    background_tasks: BackgroundTasks,
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
@@ -235,16 +237,19 @@ def create_page_package_proposal(
     if existing is not None:
         return _proposal_payload(session, existing)
 
-    generator = _page_package_generator(session, project)
     context = _generation_context(session, project, opportunity, settings)
+    policy = session.get(ProjectAiPolicy, project.id)
+    if policy is None:
+        raise HTTPException(
+            status_code=422, detail="Project AI model is not configured"
+        )
     job = Job(
         id=str(uuid4()),
         project_id=project_id,
         job_type="page_package_generation",
-        state="running",
-        progress=5,
+        state="queued",
+        progress=0,
         checkpoint={"opportunity_id": opportunity_id},
-        started_at=datetime.now(UTC),
     )
     proposal = PagePackageProposal(
         id=str(uuid4()),
@@ -261,61 +266,82 @@ def create_page_package_proposal(
             "slot_mapping": settings.slot_mapping,
             "template_content_hash": settings.template_content_hash,
         },
-        provider=getattr(generator, "provider", None),
-        model=getattr(generator, "model", None),
-        prompt_version=prompt_version(context, getattr(generator, "model", "")),
+        model=policy.primary_model,
+        prompt_version=prompt_version(context, policy.primary_model),
         proposed_by=user.id,
     )
     session.add_all([job, proposal])
     session.commit()
-    try:
-        generated = PagePackageGenerationResult.model_validate(
-            generator.generate_page_package(context)
-        )
-        allowed_links = {link.url for link in context.internal_link_candidates}
-        if any(
-            link.url not in allowed_links for link in generated.package.internal_links
-        ):
-            raise ValueError("AI returned an unknown internal link")
-        if generated.package.focus_keyword.casefold() != opportunity.keyword.casefold():
-            raise ValueError("AI changed the focus keyword")
-        proposal.package = generated.package.model_dump()
-        proposal.rendered_html = render_page_package(generated.package)
-        proposal.provider = generated.provider or proposal.provider
-        proposal.model = generated.model or proposal.model
-        proposal.input_tokens = generated.input_tokens
-        proposal.output_tokens = generated.output_tokens
-        proposal.state = "proposed"
-        job.state = "completed"
-        job.progress = 100
-        job.checkpoint = {
-            **job.checkpoint,
-            "proposal_id": proposal.id,
-        }
-        job.completed_at = datetime.now(UTC)
-        token_count = generated.input_tokens + generated.output_tokens
-        if token_count:
-            session.add(
-                UsageEvent(
-                    id=str(uuid4()),
-                    organization_id=project.organization_id,
-                    project_id=project.id,
-                    event_type="ai_tokens",
-                    quantity=token_count,
-                )
-            )
-        session.commit()
-    except Exception as error:
-        proposal.state = "failed"
-        job.state = "failed"
-        job.error_code = error.__class__.__name__
-        job.error_message = str(error)[:2_000]
-        job.completed_at = datetime.now(UTC)
-        session.commit()
-        raise HTTPException(
-            status_code=502, detail="AI page generation failed"
-        ) from error
+    background_tasks.add_task(
+        _run_page_package_generation,
+        session.get_bind(),
+        proposal.id,
+    )
     return _proposal_payload(session, proposal)
+
+
+def _run_page_package_generation(bind, proposal_id: str) -> None:
+    with Session(bind) as session:
+        proposal = session.get(PagePackageProposal, proposal_id)
+        if proposal is None or proposal.state != "generating":
+            return
+        job = session.get(Job, proposal.job_id)
+        opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+        project = session.get(Project, proposal.project_id)
+        settings = session.get(ProjectPagePackageSettings, proposal.project_id)
+        if job is None or opportunity is None or project is None or settings is None:
+            return
+        job.state = "running"
+        job.progress = 5
+        job.started_at = datetime.now(UTC)
+        session.commit()
+        try:
+            generator = _page_package_generator(session, project)
+            context = _generation_context(session, project, opportunity, settings)
+            generated = PagePackageGenerationResult.model_validate(
+                generator.generate_page_package(context)
+            )
+            allowed_links = {link.url for link in context.internal_link_candidates}
+            if any(
+                link.url not in allowed_links
+                for link in generated.package.internal_links
+            ):
+                raise ValueError("AI returned an unknown internal link")
+            if (
+                generated.package.focus_keyword.casefold()
+                != opportunity.keyword.casefold()
+            ):
+                raise ValueError("AI changed the focus keyword")
+            proposal.package = generated.package.model_dump()
+            proposal.rendered_html = render_page_package(generated.package)
+            proposal.provider = generated.provider or proposal.provider
+            proposal.model = generated.model or proposal.model
+            proposal.input_tokens = generated.input_tokens
+            proposal.output_tokens = generated.output_tokens
+            proposal.state = "proposed"
+            job.state = "completed"
+            job.progress = 100
+            job.checkpoint = {**job.checkpoint, "proposal_id": proposal.id}
+            job.completed_at = datetime.now(UTC)
+            token_count = generated.input_tokens + generated.output_tokens
+            if token_count:
+                session.add(
+                    UsageEvent(
+                        id=str(uuid4()),
+                        organization_id=project.organization_id,
+                        project_id=project.id,
+                        event_type="ai_tokens",
+                        quantity=token_count,
+                    )
+                )
+            session.commit()
+        except Exception as error:
+            proposal.state = "failed"
+            job.state = "failed"
+            job.error_code = error.__class__.__name__
+            job.error_message = str(error)[:2_000]
+            job.completed_at = datetime.now(UTC)
+            session.commit()
 
 
 @router.get("/page-proposals/{proposal_id}")
@@ -472,7 +498,7 @@ def _generation_context(
         select(WordPressPage)
         .where(WordPressPage.project_id == project.id)
         .order_by(WordPressPage.title)
-        .limit(40)
+        .limit(500)
     ).all()
     links = [
         InternalLink(anchor=page.title or page.slug, url=page.url)

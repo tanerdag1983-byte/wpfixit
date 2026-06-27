@@ -4,8 +4,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes.ai_settings import router as ai_settings_router
 from app.api.routes.crawls import router as crawls_router
-from app.api.routes.dataforseo import router as dataforseo_router
 from app.api.routes.dashboards import router as dashboards_router
+from app.api.routes.dataforseo import router as dataforseo_router
 from app.api.routes.ga4 import router as ga4_router
 from app.api.routes.google import router as google_router
 from app.api.routes.page_packages import router as page_packages_router
@@ -21,8 +21,7 @@ def create_app() -> FastAPI:
     configuration_errors = settings.production_configuration_errors()
     if configuration_errors:
         raise RuntimeError(
-            "Missing production configuration: "
-            + ", ".join(configuration_errors)
+            "Missing production configuration: " + ", ".join(configuration_errors)
         )
     application = FastAPI(
         title="WP FixPilot API",
