@@ -31,16 +31,19 @@ class DataForSeoProvider:
         language_code: str = "nl",
         limit: int = 50,
     ) -> list[dict]:
+        valid_seeds = self._valid_keyword_seeds(seeds)
+        if not valid_seeds:
+            raise ValueError("No valid keyword seeds are available")
         response = requests.post(
             f"{self.base_url}/dataforseo_labs/google/keyword_ideas/live",
             auth=self.auth,
             json=[
                 {
-                    "keywords": seeds[:20],
+                    "keywords": valid_seeds,
                     "location_code": location_code,
                     "language_code": language_code,
                     "limit": limit,
-                    "include_seed_keyword": True,
+                    "closely_variants": True,
                     "include_serp_info": False,
                 }
             ],
@@ -48,6 +51,28 @@ class DataForSeoProvider:
         )
         self._raise_for_failure(response)
         return self._parse_keyword_items(response.json())
+
+    @staticmethod
+    def _valid_keyword_seeds(seeds: list[str], *, limit: int = 20) -> list[str]:
+        valid: list[str] = []
+        seen: set[str] = set()
+        for seed in seeds:
+            words = str(seed or "").strip().split()
+            limited_words: list[str] = []
+            for word in words[:10]:
+                candidate = " ".join([*limited_words, word])
+                if len(candidate) > 80:
+                    break
+                limited_words.append(word)
+            normalized = " ".join(limited_words)
+            key = normalized.casefold()
+            if len(normalized) < 3 or key in seen:
+                continue
+            seen.add(key)
+            valid.append(normalized)
+            if len(valid) == limit:
+                break
+        return valid
 
     @staticmethod
     def _raise_for_failure(response: requests.Response) -> None:

@@ -68,3 +68,57 @@ def test_provider_parses_keyword_metrics() -> None:
     assert rows[0]["search_volume"] == 320
     assert rows[0]["keyword_difficulty"] == 38
     assert rows[0]["intent"] == "commercial"
+
+
+def test_keyword_ideas_sanitizes_seeds_to_dataforseo_limits(monkeypatch) -> None:
+    captured: dict = {}
+
+    def post(url: str, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response(
+            {
+                "status_code": 20000,
+                "tasks": [
+                    {
+                        "status_code": 20000,
+                        "data": {"location_code": 2528, "language_code": "nl"},
+                        "result": [{"items": []}],
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("app.domains.dataforseo.provider.requests.post", post)
+    long_seed = (
+        "versnellingsbak revisie handgeschakelde automatische transmissies "
+        "diagnose onderhoud reparatie koppeling specialist schiedam extra"
+    )
+
+    DataForSeoProvider("login", "password").keyword_ideas(
+        [long_seed, "ab", "  koppeling vervangen  ", "koppeling vervangen"]
+    )
+
+    task = captured["json"][0]
+    assert task["keywords"] == [
+        "versnellingsbak revisie handgeschakelde automatische transmissies "
+        "diagnose",
+        "koppeling vervangen",
+    ]
+    assert all(len(seed) <= 80 for seed in task["keywords"])
+    assert all(len(seed.split()) <= 10 for seed in task["keywords"])
+    assert task["closely_variants"] is True
+    assert "include_seed_keyword" not in task
+
+
+def test_keyword_ideas_rejects_request_without_valid_seeds(monkeypatch) -> None:
+    def unexpected_post(*args, **kwargs):
+        raise AssertionError("DataForSEO should not be called")
+
+    monkeypatch.setattr(
+        "app.domains.dataforseo.provider.requests.post",
+        unexpected_post,
+    )
+
+    with pytest.raises(ValueError, match="valid keyword seeds"):
+        DataForSeoProvider("login", "password").keyword_ideas(["", "ab"])
