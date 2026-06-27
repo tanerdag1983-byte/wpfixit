@@ -19,6 +19,50 @@ from app.domains.wordpress.models import WordPressPage
 from tests.projects.conftest import ProjectFixtures
 
 
+def test_recommendation_background_job_uses_request_database(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="wp-background-job",
+        project_id=projects.member_project.id,
+        wordpress_object_id=99,
+        post_type="page",
+        status="publish",
+        title="Transmissie onderhoud",
+        slug="transmissie-onderhoud",
+        url="https://member.example/transmissie-onderhoud",
+    )
+    session.add(page)
+    session.flush()
+    session.add(
+        PageAudit(
+            id="audit-background-job",
+            project_id=projects.member_project.id,
+            wordpress_page_id=page.id,
+            score=40,
+            page_type_label="service",
+            facts={"importance": 0.8},
+        )
+    )
+    session.commit()
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/recommendations/generate",
+        params={"limit": 1},
+    )
+
+    assert response.status_code == 202
+    session.expire_all()
+    job = session.get(Job, response.json()["job"]["id"])
+    assert job is not None
+    assert job.state == "completed"
+    assert job.progress == 100
+
+
 def test_priority_endpoint_combines_wordpress_gsc_and_ga4(
     client: TestClient,
     session: Session,

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.crypto import decrypt_text
-from app.core.database import SessionLocal, get_session
+from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
 from app.domains.jobs.models import Job
@@ -141,7 +141,13 @@ def generate_recommendations(
     )
     session.add(job)
     session.commit()
-    background_tasks.add_task(_run_recommendation_job, job.id, project.id, limit)
+    background_tasks.add_task(
+        _run_recommendation_job,
+        session.get_bind(),
+        job.id,
+        project.id,
+        limit,
+    )
     return {"job": _job_payload(job)}
 
 
@@ -185,8 +191,8 @@ def recommendation_generation_job(
     return {"job": _job_payload(job)}
 
 
-def _run_recommendation_job(job_id: str, project_id: str, limit: int) -> None:
-    with SessionLocal() as session:
+def _run_recommendation_job(bind, job_id: str, project_id: str, limit: int) -> None:
+    with Session(bind) as session:
         job = session.get(Job, job_id)
         project = session.get(Project, project_id)
         if job is None or project is None:

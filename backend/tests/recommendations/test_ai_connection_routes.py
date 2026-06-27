@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.routes.ai_settings import router as ai_settings_router
 from app.core.config import get_settings
 from app.core.crypto import decrypt_text
 from app.domains.projects.models import OrganizationMember
@@ -60,9 +61,7 @@ def set_member_role(
     session.commit()
 
 
-def test_connection_routes_have_explicit_credential_free_response_models(
-    auth_as,
-) -> None:
+def test_connection_routes_have_explicit_credential_free_response_models() -> None:
     expected_fields = {
         "id",
         "name",
@@ -76,10 +75,11 @@ def test_connection_routes_have_explicit_credential_free_response_models(
         "configured",
     }
     routes = {
-        (route.path, next(iter(route.methods))): route
-        for route in auth_as.app.routes
+        (route.path, method): route
+        for route in ai_settings_router.routes
         if isinstance(route, APIRoute)
         and route.path.startswith("/organizations/{organization_id}/ai-connections")
+        for method in route.methods
     }
 
     item_routes = [
