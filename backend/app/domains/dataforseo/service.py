@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.dataforseo.relevance import (
     build_keyword_context,
+    classify_target,
     is_relevant,
-    target_url,
 )
 from app.domains.projects.models import Project
 
@@ -61,7 +61,8 @@ def upsert_keyword_opportunities(
             )
             session.add(opportunity)
 
-        matched_url = target_url(keyword, context)
+        match = classify_target(keyword, context)
+        matched_url = match.url
         opportunity.search_volume = _optional_int(row.get("search_volume"))
         opportunity.cpc = _optional_decimal(row.get("cpc"))
         opportunity.competition = _optional_decimal(row.get("competition"))
@@ -71,11 +72,21 @@ def upsert_keyword_opportunities(
         )
         opportunity.intent = row.get("intent")
         opportunity.target_url = matched_url
-        opportunity.recommended_action = (
-            f"Verbeter {matched_url} voor het zoekwoord '{keyword}'."
-            if matched_url
-            else f"Maak een nieuwe landingspagina voor het zoekwoord '{keyword}'."
-        )
+        opportunity.target_classification = match.classification
+        opportunity.target_score = match.score
+        opportunity.target_evidence = list(match.evidence)
+        if match.classification == "existing_page":
+            opportunity.recommended_action = (
+                f"Verbeter {matched_url} voor het zoekwoord '{keyword}'."
+            )
+        elif match.classification == "review":
+            opportunity.recommended_action = (
+                f"Controleer of '{keyword}' bij een bestaande of nieuwe pagina hoort."
+            )
+        else:
+            opportunity.recommended_action = (
+                f"Maak een nieuwe landingspagina voor het zoekwoord '{keyword}'."
+            )
         opportunity.source = "dataforseo"
         opportunity.raw_payload = row.get("raw_payload") or row
         opportunity.discovered_at = now
@@ -100,6 +111,9 @@ def opportunity_payload(opportunity: KeywordOpportunity) -> dict:
         "keyword_difficulty": opportunity.keyword_difficulty,
         "intent": opportunity.intent,
         "target_url": opportunity.target_url,
+        "target_classification": opportunity.target_classification,
+        "target_score": opportunity.target_score,
+        "target_evidence": opportunity.target_evidence,
         "recommended_action": opportunity.recommended_action,
         "source": opportunity.source,
         "discovered_at": opportunity.discovered_at,

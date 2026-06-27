@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.relevance import (
     build_keyword_context,
+    classify_target,
     is_relevant,
     target_url,
 )
@@ -55,6 +56,28 @@ def _transmission_context(
                 slug="dsg-automaat-reviseren",
                 url=f"{project.domain}/dsg-automaat-reviseren/",
             ),
+            WordPressPage(
+                id="page-alfa",
+                project_id=project.id,
+                wordpress_object_id=103,
+                post_type="page",
+                status="publish",
+                title="Alfa Romeo reviseren versnellingsbak",
+                slug="alfa-romeo-reviseren-versnellingsbak",
+                url=f"{project.domain}/alfa-romeo-reviseren-versnellingsbak/",
+            ),
+            WordPressPage(
+                id="page-cupra",
+                project_id=project.id,
+                wordpress_object_id=104,
+                post_type="page",
+                status="publish",
+                title="Cupra versnellingsbak problemen oplossingen",
+                slug="cupra-versnellingsbak-problemen-oplossingen",
+                url=(
+                    f"{project.domain}/cupra-versnellingsbak-problemen-oplossingen/"
+                ),
+            ),
         ]
     )
     session.commit()
@@ -92,6 +115,39 @@ def test_relevance_rejects_other_automotive_topics_and_matches_service_pages(
     assert target_url("dsg automaat reviseren", context).endswith(
         "/dsg-automaat-reviseren/"
     )
+
+
+def test_target_classification_does_not_cross_brand_or_force_generic_query(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    context = _transmission_context(session, projects)
+
+    vw = classify_target("vw dsg versnellingsbak reviseren", context)
+    generic = classify_target("problemen automatische versnellingsbak", context)
+
+    assert vw.classification == "new_page"
+    assert vw.url is None
+    assert generic.classification == "new_page"
+    assert generic.url is None
+
+
+def test_target_classification_uses_distinctive_entity_or_shared_phrase(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    context = _transmission_context(session, projects)
+
+    cupra = classify_target("cupra automatische versnellingsbak problemen", context)
+    alfa = classify_target("alfa romeo versnellingsbak revisie", context)
+    clutch = classify_target("koppeling vervangen prijs", context)
+
+    assert cupra.classification == "existing_page"
+    assert cupra.url.endswith("/cupra-versnellingsbak-problemen-oplossingen/")
+    assert alfa.classification == "existing_page"
+    assert alfa.url.endswith("/alfa-romeo-reviseren-versnellingsbak/")
+    assert clutch.classification == "existing_page"
+    assert clutch.url.endswith("/koppeling-vervangen-kosten/")
 
 
 def test_wordpress_pages_provide_fallback_context_without_company_profile(

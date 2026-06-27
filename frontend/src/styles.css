@@ -2015,6 +2015,25 @@ h2 {
   color: var(--muted);
 }
 
+.target-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.target-tag.new_page {
+  color: #147a50;
+}
+
+.target-tag.review {
+  color: #9b5b18;
+}
+
+.opportunity-create-button {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .field-help {
   color: var(--muted);
   font-size: 12px;

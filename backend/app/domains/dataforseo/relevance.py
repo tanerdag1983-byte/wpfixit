@@ -73,6 +73,28 @@ PAGE_STOP_TOKENS = frozenset(
     }
 )
 
+MATCH_STOP_TOKENS = PAGE_STOP_TOKENS | frozenset(
+    {
+        "automaat",
+        "automatische",
+        "diagnose",
+        "goedkoop",
+        "onderhoud",
+        "oplossing",
+        "oplossingen",
+        "probleem",
+        "problemen",
+        "reparatie",
+        "repareren",
+        "reviseren",
+        "revisie",
+        "specialist",
+        "transmissie",
+        "vervangen",
+        "versnellingsbak",
+    }
+)
+
 
 @dataclass(frozen=True)
 class PageTopic:
@@ -87,6 +109,14 @@ class KeywordContext:
     business_phrases: tuple[str, ...]
     business_tokens: frozenset[str]
     pages: tuple[PageTopic, ...]
+
+
+@dataclass(frozen=True)
+class PageMatch:
+    classification: str
+    url: str | None
+    score: int
+    evidence: tuple[str, ...]
 
 
 def build_keyword_context(
@@ -146,28 +176,87 @@ def build_keyword_context(
 
 def is_relevant(keyword: str, context: KeywordContext) -> bool:
     candidate_tokens = frozenset(_tokens(keyword)) - BUSINESS_STOP_TOKENS
-    return bool(candidate_tokens & context.business_tokens)
+    page_tokens = frozenset(
+        token
+        for page in context.pages
+        for token in page.tokens
+        if token not in BUSINESS_STOP_TOKENS
+    )
+    return bool(candidate_tokens & (context.business_tokens | page_tokens))
 
 
 def target_url(keyword: str, context: KeywordContext) -> str | None:
+    return classify_target(keyword, context).url
+
+
+def classify_target(keyword: str, context: KeywordContext) -> PageMatch:
     if not is_relevant(keyword, context):
-        return None
+        return PageMatch("new_page", None, 0, ("not_business_relevant",))
+
     normalized = _normalize_phrase(keyword)
-    candidate_tokens = frozenset(_tokens(normalized)) - PAGE_STOP_TOKENS
-    ranked: list[tuple[int, float, str]] = []
+    candidate_tokens = frozenset(_tokens(normalized))
+    candidate_entities = (
+        candidate_tokens - context.business_tokens - MATCH_STOP_TOKENS
+    )
+    candidate_bigrams = _bigrams(normalized)
+    ranked: list[tuple[int, int, str, tuple[str, ...]]] = []
+
     for page in context.pages:
-        overlap = candidate_tokens & page.tokens
-        if not overlap:
+        exact_phrase = any(
+            phrase
+            and len(_tokens(phrase)) >= 2
+            and (phrase in normalized or normalized in phrase)
+            for phrase in page.phrases
+        )
+        shared_bigrams = candidate_bigrams & {
+            bigram for phrase in page.phrases for bigram in _bigrams(phrase)
+        }
+        page_entities = page.tokens - context.business_tokens - MATCH_STOP_TOKENS
+        entity_overlap = candidate_entities & page_entities
+
+        if exact_phrase:
+            ranked.append((100, 2, page.url, ("exact_phrase",)))
             continue
-        phrase_score = 0
-        for phrase in page.phrases:
-            if phrase and (phrase in normalized or normalized in phrase):
-                phrase_score = max(phrase_score, 20)
-        coverage = len(overlap) / max(len(candidate_tokens | page.tokens), 1)
-        ranked.append((phrase_score + len(overlap) * 3, coverage, page.url))
+        if shared_bigrams:
+            ranked.append(
+                (
+                    85 + min(10, len(shared_bigrams) * 2),
+                    2,
+                    page.url,
+                    tuple(f"shared_phrase:{value}" for value in sorted(shared_bigrams)),
+                )
+            )
+            continue
+        if candidate_entities and candidate_entities.issubset(page_entities):
+            ranked.append(
+                (
+                    75 + min(15, len(entity_overlap) * 5),
+                    2,
+                    page.url,
+                    tuple(f"entity:{value}" for value in sorted(entity_overlap)),
+                )
+            )
+            continue
+        if entity_overlap:
+            ranked.append(
+                (
+                    50 + min(10, len(entity_overlap) * 3),
+                    1,
+                    page.url,
+                    tuple(f"partial_entity:{value}" for value in sorted(entity_overlap)),
+                )
+            )
+
     if not ranked:
-        return None
-    return max(ranked, key=lambda item: (item[0], item[1], item[2]))[2]
+        return PageMatch("new_page", None, 0, ("no_distinctive_page_match",))
+
+    score, strength, url, evidence = max(
+        ranked,
+        key=lambda item: (item[0], item[1], item[2]),
+    )
+    if strength == 2:
+        return PageMatch("existing_page", url, score, evidence)
+    return PageMatch("review", None, score, evidence)
 
 
 def _page_topic(page: WordPressPage) -> PageTopic:
@@ -201,6 +290,13 @@ def _normalize_phrase(value: object) -> str:
 
 def _tokens(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", value.casefold())
+
+
+def _bigrams(value: str) -> frozenset[str]:
+    words = _tokens(value)
+    return frozenset(
+        f"{left} {right}" for left, right in zip(words, words[1:], strict=False)
+    )
 
 
 def _unique(values: Iterable[str]) -> list[str]:

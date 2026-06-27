@@ -77,6 +77,23 @@ class KeywordOpportunity(Base):
     keyword_difficulty: Mapped[int | None] = mapped_column(Integer)
     intent: Mapped[str | None] = mapped_column(String(64))
     target_url: Mapped[str | None] = mapped_column(String(2048))
+    target_classification: Mapped[str] = mapped_column(
+        String(24),
+        default="new_page",
+        server_default="new_page",
+        nullable=False,
+    )
+    target_score: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    target_evidence: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        nullable=False,
+    )
     recommended_action: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(
         String(64),

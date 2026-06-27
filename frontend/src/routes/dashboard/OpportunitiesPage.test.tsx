@@ -25,6 +25,9 @@ describe("OpportunitiesPage", () => {
               keyword_difficulty: 38,
               intent: "commercial",
               target_url: null,
+              target_classification: "new_page",
+              target_score: 0,
+              target_evidence: ["no_distinctive_page_match"],
               recommended_action:
                 "Maak een nieuwe landingspagina voor dit zoekwoord.",
               source: "dataforseo",
@@ -45,6 +48,10 @@ describe("OpportunitiesPage", () => {
     ).toBeVisible();
     expect(screen.getByText(/320 zoekopdrachten/)).toBeVisible();
     expect(screen.getByText("DataForSEO")).toBeVisible();
+    expect(screen.getByText("Nieuwe pagina aanbevolen")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Pagina laten maken" }),
+    ).toBeVisible();
   });
 
   it("syncs and reloads keyword opportunities", async () => {

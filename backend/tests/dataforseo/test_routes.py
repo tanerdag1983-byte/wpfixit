@@ -233,6 +233,11 @@ def test_project_syncs_keyword_opportunities_idempotently(
     assert by_keyword["dsg automaat reviseren"].target_url.endswith(
         "/dsg-automaat-reviseren/"
     )
+    assert by_keyword["dsg automaat reviseren"].target_classification == (
+        "existing_page"
+    )
+    assert by_keyword["dsg automaat reviseren"].target_score >= 75
+    assert by_keyword["dsg automaat reviseren"].target_evidence
 
     list_response = client.get(
         f"/projects/{projects.member_project.id}/keyword-opportunities"
@@ -240,6 +245,10 @@ def test_project_syncs_keyword_opportunities_idempotently(
     assert list_response.status_code == 200
     assert len(list_response.json()["items"]) == 2
     assert list_response.json()["items"][0]["recommended_action"]
+    assert list_response.json()["items"][0]["target_classification"] == (
+        "existing_page"
+    )
+    assert list_response.json()["items"][0]["target_evidence"]
 
 
 def test_outsider_cannot_read_project_keyword_opportunities(

@@ -12,6 +12,9 @@ type KeywordOpportunity = {
   keyword_difficulty: number | null;
   intent: string | null;
   target_url: string | null;
+  target_classification: "existing_page" | "new_page" | "review";
+  target_score: number;
+  target_evidence: string[];
   recommended_action: string | null;
   source: string;
 };
@@ -24,6 +27,9 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<KeywordOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [creatingProposalId, setCreatingProposalId] = useState<string | null>(
+    null,
+  );
   const [message, setMessage] = useState("");
 
   const loadItems = useCallback(async () => {
@@ -77,6 +83,27 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     }
   }
 
+  async function createPageProposal(item: KeywordOpportunity) {
+    setCreatingProposalId(item.id);
+    setMessage("AI-paginavoorstel wordt voorbereid. Dit kan even duren.");
+    try {
+      const response = await apiRequest<{ id: string }>(
+        `/projects/${projectId}/keyword-opportunities/${item.id}/page-proposal`,
+        { method: "POST" },
+      );
+      window.sessionStorage.setItem("page-proposal-id", response.id);
+      window.location.hash = "page-proposal";
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Paginavoorstel maken mislukt.",
+      );
+    } finally {
+      setCreatingProposalId(null);
+    }
+  }
+
   return (
     <section className="data-page opportunity-page">
       <div className="page-heading">
@@ -121,6 +148,9 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                   {intentLabel(item.intent)}
                 </span>
                 <small>DataForSEO</small>
+                <span className={`target-tag ${item.target_classification}`}>
+                  {targetLabel(item.target_classification)}
+                </span>
               </div>
               <h2>{item.keyword}</h2>
               <p className="opportunity-evidence">{evidence(item)}</p>
@@ -131,7 +161,18 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 </small>
               )}
             </div>
-            {item.target_url ? (
+            {item.target_classification === "new_page" ? (
+              <button
+                className="secondary-button opportunity-create-button"
+                disabled={creatingProposalId === item.id}
+                onClick={() => createPageProposal(item)}
+                type="button"
+              >
+                {creatingProposalId === item.id
+                  ? "Voorstel maken..."
+                  : "Pagina laten maken"}
+              </button>
+            ) : item.target_url ? (
               <a
                 className="icon-button"
                 href={item.target_url}
@@ -188,4 +229,12 @@ function intentLabel(intent: string | null) {
     navigational: "Navigatie",
   };
   return intent ? (labels[intent] ?? intent) : "Zoekwoordkans";
+}
+
+function targetLabel(classification: KeywordOpportunity["target_classification"]) {
+  return {
+    existing_page: "Bestaande pagina verbeteren",
+    new_page: "Nieuwe pagina aanbevolen",
+    review: "Keuze controleren",
+  }[classification];
 }
