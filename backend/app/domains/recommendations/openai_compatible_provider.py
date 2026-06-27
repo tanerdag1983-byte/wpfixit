@@ -2,6 +2,11 @@ import json
 
 import requests
 
+from app.domains.page_packages.generation import (
+    generation_result,
+    page_package_system_prompt,
+)
+from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -29,6 +34,52 @@ class OpenAICompatibleRecommendationGenerator:
         self.model = model
         self.company_context = company_context
         self.provider = provider
+
+    def generate_page_package(self, context: PagePackageContext):
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": page_package_system_prompt(
+                                context.company_context
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                context.model_dump(), ensure_ascii=False
+                            ),
+                        },
+                    ],
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=120,
+                allow_redirects=False,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            package = GeneratedPagePackage.model_validate_json(
+                payload["choices"][0]["message"]["content"]
+            )
+            usage = payload.get("usage", {})
+            return generation_result(
+                package,
+                provider=self.provider,
+                model=self.model,
+                input_tokens=int(usage.get("prompt_tokens", 0)),
+                output_tokens=int(usage.get("completion_tokens", 0)),
+            )
+        except ProviderGenerationError:
+            raise
+        except Exception as error:
+            raise ProviderGenerationError(
+                "OpenAI-compatible page generation failed"
+            ) from error
 
     def generate(self, facts: PageFacts) -> RecommendationResult:
         try:

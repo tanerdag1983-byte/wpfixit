@@ -1,19 +1,43 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.database import get_session
 from app.core.crypto import decrypt_text
+from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
-from app.domains.page_packages.models import ProjectPagePackageSettings
-from app.domains.page_packages.schemas import PagePackageSettingsWrite
+from app.domains.dataforseo.models import KeywordOpportunity
+from app.domains.jobs.models import Job
+from app.domains.page_packages.generation import (
+    PolicyPagePackageGenerator,
+    prompt_version,
+    render_page_package,
+)
+from app.domains.page_packages.models import (
+    PagePackageProposal,
+    ProjectPagePackageSettings,
+)
+from app.domains.page_packages.schemas import (
+    GeneratedPagePackage,
+    InternalLink,
+    PagePackageContext,
+    PagePackageGenerationResult,
+    PagePackageProposalWrite,
+    PagePackageSettingsWrite,
+)
 from app.domains.projects.service import get_membership, get_project
-from app.domains.wordpress.models import WordPressPage
+from app.domains.recommendations.models import (
+    AiConnection,
+    CompanyProfile,
+    ProjectAiPolicy,
+)
+from app.domains.recommendations.provider_factory import build_generator
+from app.domains.subscriptions.models import UsageEvent
 from app.domains.wordpress.client import WordPressClient
-from app.domains.wordpress.models import WordPressConnection
+from app.domains.wordpress.models import WordPressConnection, WordPressPage
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["page-packages"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -123,9 +147,7 @@ def validate_page_package_settings(
     mapped_required = {
         slot for slot in REQUIRED_SLOTS if settings.slot_mapping.get(slot)
     }
-    mapped_paths = {
-        settings.slot_mapping[slot] for slot in mapped_required
-    }
+    mapped_paths = {settings.slot_mapping[slot] for slot in mapped_required}
     valid = (
         inspection.get("builder") == settings.builder
         and inspection.get("seo_plugin") == settings.seo_plugin
@@ -147,6 +169,305 @@ def validate_page_package_settings(
     settings.validated_at = datetime.now(UTC)
     session.commit()
     return _settings_payload(settings)
+
+
+@router.post(
+    "/keyword-opportunities/{opportunity_id}/page-proposal",
+    status_code=202,
+)
+def create_page_package_proposal(
+    project_id: str,
+    opportunity_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    opportunity = session.scalar(
+        select(KeywordOpportunity).where(
+            KeywordOpportunity.id == opportunity_id,
+            KeywordOpportunity.project_id == project_id,
+        )
+    )
+    if opportunity is None:
+        raise HTTPException(status_code=404, detail="Keyword opportunity not found")
+    if opportunity.target_classification != "new_page":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a new-page opportunity can create a page proposal",
+        )
+    settings, _ = _configured_settings(session, project_id)
+    if settings.validation_state != "valid" or not settings.template_content_hash:
+        raise HTTPException(
+            status_code=422,
+            detail="Validate the project page package before generating a page",
+        )
+    existing = session.scalar(
+        select(PagePackageProposal)
+        .where(
+            PagePackageProposal.project_id == project_id,
+            PagePackageProposal.opportunity_id == opportunity_id,
+            PagePackageProposal.state.in_(["generating", "proposed"]),
+        )
+        .order_by(PagePackageProposal.created_at.desc())
+    )
+    if existing is not None:
+        return _proposal_payload(session, existing)
+
+    generator = _page_package_generator(session, project)
+    context = _generation_context(session, project, opportunity, settings)
+    job = Job(
+        id=str(uuid4()),
+        project_id=project_id,
+        job_type="page_package_generation",
+        state="running",
+        progress=5,
+        checkpoint={"opportunity_id": opportunity_id},
+        started_at=datetime.now(UTC),
+    )
+    proposal = PagePackageProposal(
+        id=str(uuid4()),
+        project_id=project_id,
+        opportunity_id=opportunity_id,
+        job_id=job.id,
+        state="generating",
+        package={},
+        rendered_html="",
+        config_snapshot={
+            "builder": settings.builder,
+            "template_wordpress_page_id": settings.template_wordpress_page_id,
+            "seo_plugin": settings.seo_plugin,
+            "slot_mapping": settings.slot_mapping,
+            "template_content_hash": settings.template_content_hash,
+        },
+        provider=getattr(generator, "provider", None),
+        model=getattr(generator, "model", None),
+        prompt_version=prompt_version(context, getattr(generator, "model", "")),
+        proposed_by=user.id,
+    )
+    session.add_all([job, proposal])
+    session.commit()
+    try:
+        generated = PagePackageGenerationResult.model_validate(
+            generator.generate_page_package(context)
+        )
+        proposal.package = generated.package.model_dump()
+        proposal.rendered_html = render_page_package(generated.package)
+        proposal.provider = generated.provider or proposal.provider
+        proposal.model = generated.model or proposal.model
+        proposal.input_tokens = generated.input_tokens
+        proposal.output_tokens = generated.output_tokens
+        proposal.state = "proposed"
+        job.state = "completed"
+        job.progress = 100
+        job.checkpoint = {
+            **job.checkpoint,
+            "proposal_id": proposal.id,
+        }
+        job.completed_at = datetime.now(UTC)
+        token_count = generated.input_tokens + generated.output_tokens
+        if token_count:
+            session.add(
+                UsageEvent(
+                    id=str(uuid4()),
+                    organization_id=project.organization_id,
+                    project_id=project.id,
+                    event_type="ai_tokens",
+                    quantity=token_count,
+                )
+            )
+        session.commit()
+    except Exception as error:
+        proposal.state = "failed"
+        job.state = "failed"
+        job.error_code = error.__class__.__name__
+        job.error_message = str(error)[:2_000]
+        job.completed_at = datetime.now(UTC)
+        session.commit()
+        raise HTTPException(
+            status_code=502, detail="AI page generation failed"
+        ) from error
+    return _proposal_payload(session, proposal)
+
+
+@router.get("/page-proposals/{proposal_id}")
+def get_page_package_proposal(
+    project_id: str,
+    proposal_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    _project_or_404(session, user, project_id)
+    return _proposal_payload(
+        session, _proposal_or_404(session, project_id, proposal_id)
+    )
+
+
+@router.put("/page-proposals/{proposal_id}")
+def update_page_package_proposal(
+    project_id: str,
+    proposal_id: str,
+    payload: PagePackageProposalWrite,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id)
+    if proposal.state != "proposed":
+        raise HTTPException(status_code=409, detail="Only proposed pages can be edited")
+    proposal.package = payload.package.model_dump()
+    proposal.rendered_html = render_page_package(payload.package)
+    session.commit()
+    return _proposal_payload(session, proposal)
+
+
+@router.post("/page-proposals/{proposal_id}/approve")
+def approve_page_package_proposal(
+    project_id: str,
+    proposal_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id)
+    if proposal.state != "proposed":
+        raise HTTPException(
+            status_code=409, detail="Only proposed pages can be approved"
+        )
+    GeneratedPagePackage.model_validate(proposal.package)
+    proposal.state = "approved"
+    proposal.approved_by = user.id
+    proposal.approved_at = datetime.now(UTC)
+    session.commit()
+    return _proposal_payload(session, proposal)
+
+
+def _page_package_generator(session: Session, project):
+    profile = session.get(CompanyProfile, project.id)
+    company_context = _company_context(profile)
+    policy = session.get(ProjectAiPolicy, project.id)
+    if policy is None:
+        raise HTTPException(
+            status_code=422, detail="Project AI model is not configured"
+        )
+    primary = session.get(AiConnection, policy.primary_connection_id)
+    if (
+        primary is None
+        or primary.organization_id != project.organization_id
+        or not primary.enabled
+    ):
+        raise HTTPException(
+            status_code=422, detail="Project AI connection is unavailable"
+        )
+    primary_generator = build_generator(primary, policy.primary_model, company_context)
+    fallback_generator = None
+    if policy.fallback_connection_id and policy.fallback_model:
+        fallback = session.get(AiConnection, policy.fallback_connection_id)
+        if (
+            fallback is not None
+            and fallback.organization_id == project.organization_id
+            and fallback.enabled
+        ):
+            fallback_generator = build_generator(
+                fallback, policy.fallback_model, company_context
+            )
+    return PolicyPagePackageGenerator(primary_generator, fallback_generator)
+
+
+def _generation_context(
+    session: Session,
+    project,
+    opportunity: KeywordOpportunity,
+    settings: ProjectPagePackageSettings,
+) -> PagePackageContext:
+    profile = session.get(CompanyProfile, project.id)
+    pages = session.scalars(
+        select(WordPressPage)
+        .where(WordPressPage.project_id == project.id)
+        .order_by(WordPressPage.title)
+        .limit(40)
+    ).all()
+    links = [
+        InternalLink(anchor=page.title or page.slug, url=page.url)
+        for page in pages
+        if page.title or page.slug
+    ]
+    if not links:
+        links = [InternalLink(anchor=project.name, url=project.domain)]
+    return PagePackageContext(
+        keyword=opportunity.keyword,
+        search_volume=opportunity.search_volume,
+        intent=opportunity.intent,
+        company_context=_company_context(profile),
+        project_domain=project.domain,
+        internal_link_candidates=links,
+        template_slots=settings.slot_mapping,
+    )
+
+
+def _company_context(profile: CompanyProfile | None) -> str:
+    if profile is None:
+        return ""
+    return "\n".join(
+        [
+            f"Bedrijf: {profile.company_name}",
+            f"Omschrijving: {profile.description}",
+            f"Doelgroep: {profile.audience}",
+            f"Diensten: {', '.join(profile.services)}",
+            f"Tone of voice: {profile.tone_of_voice}",
+            f"Projectprompt: {profile.custom_prompt}",
+        ]
+    )[:10_000]
+
+
+def _proposal_or_404(
+    session: Session,
+    project_id: str,
+    proposal_id: str,
+) -> PagePackageProposal:
+    proposal = session.scalar(
+        select(PagePackageProposal).where(
+            PagePackageProposal.id == proposal_id,
+            PagePackageProposal.project_id == project_id,
+        )
+    )
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Page proposal not found")
+    return proposal
+
+
+def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
+    job = session.get(Job, proposal.job_id)
+    return {
+        "id": proposal.id,
+        "project_id": proposal.project_id,
+        "opportunity_id": proposal.opportunity_id,
+        "state": proposal.state,
+        "package": proposal.package,
+        "rendered_html": proposal.rendered_html,
+        "config_snapshot": proposal.config_snapshot,
+        "provider": proposal.provider,
+        "model": proposal.model,
+        "prompt_version": proposal.prompt_version,
+        "input_tokens": proposal.input_tokens,
+        "output_tokens": proposal.output_tokens,
+        "approved_by": proposal.approved_by,
+        "approved_at": proposal.approved_at,
+        "wordpress_object_id": proposal.wordpress_object_id,
+        "wordpress_edit_url": proposal.wordpress_edit_url,
+        "created_at": proposal.created_at,
+        "updated_at": proposal.updated_at,
+        "job": {
+            "id": job.id,
+            "state": job.state,
+            "progress": job.progress,
+            "error_message": job.error_message,
+        }
+        if job
+        else None,
+    }
 
 
 def _project_or_404(
@@ -190,9 +511,7 @@ def _configured_settings(
 
 def _page_package_client(session: Session, project_id: str) -> WordPressClient:
     connection = session.scalar(
-        select(WordPressConnection).where(
-            WordPressConnection.project_id == project_id
-        )
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
     )
     if connection is None:
         raise HTTPException(status_code=404, detail="WordPress connection not found")

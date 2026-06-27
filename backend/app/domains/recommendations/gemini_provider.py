@@ -2,6 +2,11 @@ import json
 
 import requests
 
+from app.domains.page_packages.generation import (
+    generation_result,
+    page_package_system_prompt,
+)
+from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -15,6 +20,8 @@ from app.domains.recommendations.schemas import (
 
 
 class GeminiRecommendationGenerator:
+    provider = "gemini"
+
     def __init__(
         self,
         base_url: str,
@@ -75,3 +82,56 @@ class GeminiRecommendationGenerator:
             raise
         except Exception as error:
             raise ProviderGenerationError("Gemini generation failed") from error
+
+    def generate_page_package(self, context: PagePackageContext):
+        try:
+            response = requests.post(
+                f"{self.base_url}/models/{self.model}:generateContent",
+                headers={"x-goog-api-key": self.api_key},
+                json={
+                    "systemInstruction": {
+                        "parts": [
+                            {
+                                "text": page_package_system_prompt(
+                                    context.company_context
+                                )
+                            }
+                        ]
+                    },
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "text": json.dumps(
+                                        context.model_dump(), ensure_ascii=False
+                                    )
+                                }
+                            ],
+                        }
+                    ],
+                    "generationConfig": {
+                        "responseMimeType": "application/json",
+                        "responseSchema": GeneratedPagePackage.model_json_schema(),
+                    },
+                },
+                timeout=120,
+                allow_redirects=False,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            package = GeneratedPagePackage.model_validate_json(
+                payload["candidates"][0]["content"]["parts"][0]["text"]
+            )
+            usage = payload.get("usageMetadata", {})
+            return generation_result(
+                package,
+                provider=self.provider,
+                model=self.model,
+                input_tokens=int(usage.get("promptTokenCount", 0)),
+                output_tokens=int(usage.get("candidatesTokenCount", 0)),
+            )
+        except ProviderGenerationError:
+            raise
+        except Exception as error:
+            raise ProviderGenerationError("Gemini page generation failed") from error
