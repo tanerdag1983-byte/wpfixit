@@ -87,7 +87,7 @@ final class WPFixPilot_REST_Controller
             'status' => 'ok',
             'site_url' => get_site_url(),
             'wordpress_version' => get_bloginfo('version'),
-            'plugin_version' => '0.2.0',
+            'plugin_version' => '0.2.1',
             'seo_plugin' => $this->detect_seo_plugin(),
         ]);
     }

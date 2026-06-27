@@ -22,6 +22,8 @@ define('WPSEO_VERSION', 'test');
 $GLOBALS['wpfixpilot_posts'] = [];
 $GLOBALS['wpfixpilot_meta'] = [];
 $GLOBALS['wpfixpilot_insert_count'] = 0;
+$GLOBALS['wpfixpilot_acf_fields'] = [];
+$GLOBALS['wpfixpilot_updated_fields'] = [];
 
 function sanitize_text_field(string $value): string { return trim($value); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
@@ -76,6 +78,14 @@ function get_post_meta(int $postId, string $key = '', bool $single = false): mix
 }
 function update_post_meta(int $postId, string $key, mixed $value): void { $GLOBALS['wpfixpilot_meta'][$postId][$key] = $value; }
 function add_post_meta(int $postId, string $key, mixed $value): void { $GLOBALS['wpfixpilot_meta'][$postId][$key] = $value; }
+function get_field_objects(int $postId): array { return $GLOBALS['wpfixpilot_acf_fields'][$postId] ?? []; }
+function update_field(string $fieldKey, mixed $value, int $postId): bool
+{
+    $GLOBALS['wpfixpilot_updated_fields'][$postId][$fieldKey] = $value;
+    return true;
+}
+function wp_json_encode(mixed $value): string { return (string) json_encode($value); }
+function wp_strip_all_tags(string $value): string { return strip_tags($value); }
 
 require_once __DIR__ . '/../includes/builder-adapters/interface-builder-adapter.php';
 require_once __DIR__ . '/../includes/builder-adapters/class-gutenberg-adapter.php';
@@ -105,6 +115,58 @@ $keys = array_map(
 
 assert($keys === ['gutenberg', 'elementor', 'bricks', 'wpbakery', 'acf']);
 assert(count(array_unique($keys)) === 5);
+
+$GLOBALS['wpfixpilot_acf_fields'][10] = [
+    'page_blocks' => [
+        'key' => 'field_page_blocks',
+        'name' => 'page_blocks',
+        'label' => 'Paginablokken',
+        'type' => 'flexible_content',
+        'value' => [
+            [
+                'acf_fc_layout' => 'hero',
+                'title' => 'Transmissie onderhoud Schiedam',
+                'description' => '<p>Voorkom dure reparaties met tijdig onderhoud.</p>',
+            ],
+            [
+                'acf_fc_layout' => 'content',
+                'heading' => 'Zo werkt transmissie onderhoud',
+                'body' => '<p>Onze specialisten controleren olie en slijtage.</p>',
+            ],
+            [
+                'acf_fc_layout' => 'faq',
+                'heading' => 'Veelgestelde vragen',
+                'body' => '<p>Lees de antwoorden over onderhoud.</p>',
+            ],
+        ],
+    ],
+];
+$acfAdapter = new WPFixPilot_ACF_Adapter();
+$acfSlots = $acfAdapter->inspect(10);
+assert(count($acfSlots) === 6);
+assert($acfSlots[0]['path'] === 'acf-value:field_page_blocks:0/title');
+assert($acfSlots[0]['label'] === 'Paginablokken · Transmissie onderhoud Schiedam');
+assert($acfSlots[1]['value_type'] === 'html');
+$acfWrite = $acfAdapter->write(
+    10,
+    [
+        'hero_title' => 'acf-value:field_page_blocks:0/title',
+        'introduction' => 'acf-value:field_page_blocks:0/description',
+    ],
+    [
+        'hero_title' => 'Nieuwe hero',
+        'introduction' => '<p>Nieuwe introductie.</p>',
+    ]
+);
+assert($acfWrite === true);
+assert(
+    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['title']
+    === 'Nieuwe hero'
+);
+assert(
+    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['description']
+    === '<p>Nieuwe introductie.</p>'
+);
 
 final class Test_Page_Package_Adapter implements WPFixPilot_Builder_Adapter
 {

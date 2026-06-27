@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import wordpress as wordpress_routes
 from app.domains.audits.models import SeoRecommendation
+from app.domains.wordpress.client import WordPressHealth
 from app.domains.wordpress.models import (
     WordPressChangeEvent,
     WordPressChangeProposal,
@@ -31,6 +32,55 @@ class FakePublishingClient:
             "content_hash": self.content_hash,
             "values": {"seo_title": self.value},
         }
+
+
+def test_sync_pages_refreshes_bridge_metadata(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    connection = WordPressConnection(
+        id="wp-sync-connection",
+        project_id=projects.member_project.id,
+        site_url="https://member.example",
+        encrypted_secret="encrypted",
+        plugin_version="0.1.0",
+        seo_plugin="yoast",
+        health_state="connected",
+    )
+    session.add(connection)
+    session.commit()
+
+    class FakeSyncClient:
+        def __init__(self, site_url: str, secret: str) -> None:
+            assert site_url == "https://member.example"
+            assert secret == "secret"
+
+        def health(self) -> WordPressHealth:
+            return WordPressHealth(
+                site_url="https://member.example",
+                wordpress_version="6.8",
+                plugin_version="0.2.1",
+                seo_plugin="yoast",
+            )
+
+        def inventory(self) -> list[dict]:
+            return []
+
+    monkeypatch.setattr(wordpress_routes, "decrypt_text", lambda _: "secret")
+    monkeypatch.setattr(wordpress_routes, "WordPressClient", FakeSyncClient)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/sync-pages"
+    )
+
+    assert response.status_code == 200
+    session.refresh(connection)
+    assert connection.plugin_version == "0.2.1"
+    assert connection.last_checked_at is not None
 
 
 def test_wordpress_connection_status_returns_existing_connection(

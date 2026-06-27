@@ -235,6 +235,12 @@ def sync_pages(
         connection.site_url,
         decrypt_text(connection.encrypted_secret),
     )
+    health = client.health()
+    connection.site_url = health.site_url.rstrip("/")
+    connection.plugin_version = health.plugin_version
+    connection.seo_plugin = health.seo_plugin
+    connection.health_state = "connected"
+    connection.last_checked_at = datetime.now(UTC)
     saved_count = sync_inventory(session, project_id, client.inventory())
     return {"status": "ok", "saved_count": saved_count}
 
