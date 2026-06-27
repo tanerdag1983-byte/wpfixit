@@ -47,11 +47,12 @@ class WordPressClient:
             "x-wp-fixpilot-signature": signature,
         }
 
-    def _get(self, endpoint: str) -> dict:
+    def _get(self, endpoint: str, *, params: dict | None = None) -> dict:
         route = f"/wpfixpilot/v1/{endpoint}"
         response = requests.get(
             f"{self.site_url}/wp-json{route}",
             headers=self._headers("GET", route),
+            params=params,
             timeout=30,
             verify=self.verify_ssl,
         )
@@ -91,3 +92,12 @@ class WordPressClient:
 
     def apply_change(self, object_id: int, payload: dict) -> dict:
         return self._post(f"changes/{object_id}", payload)
+
+    def builders(self) -> dict:
+        return self._get("builders")
+
+    def template_slots(self, object_id: int, builder: str) -> dict:
+        return self._get(
+            f"templates/{object_id}/slots",
+            params={"builder": builder},
+        )

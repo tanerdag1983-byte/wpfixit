@@ -75,3 +75,4 @@ jobs:
           php-version: "8.2"
       - run: php tests/auth-test.php
       - run: php tests/change-controller-test.php
+      - run: php tests/page-package-test.php

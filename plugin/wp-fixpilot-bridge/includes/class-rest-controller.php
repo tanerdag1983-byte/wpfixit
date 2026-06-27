@@ -28,6 +28,16 @@ final class WPFixPilot_REST_Controller
             'callback' => [$this, 'apply_change'],
             'permission_callback' => [$this, 'authorize'],
         ]);
+        register_rest_route(self::NAMESPACE, '/builders', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'builders'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
+        register_rest_route(self::NAMESPACE, '/templates/(?P<id>\d+)/slots', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'template_slots'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
     }
 
     public function authorize(WP_REST_Request $request): bool|WP_Error
@@ -126,6 +136,23 @@ final class WPFixPilot_REST_Controller
         $result = (new WPFixPilot_Change_Controller())->apply(
             (int) $request->get_param('id'),
             (array) $request->get_json_params()
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
+    }
+
+    public function builders(): WP_REST_Response
+    {
+        return new WP_REST_Response(
+            (new WPFixPilot_Page_Package_Controller())->builders()
+        );
+    }
+
+    public function template_slots(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = (new WPFixPilot_Page_Package_Controller())->inspect(
+            (int) $request->get_param('id'),
+            sanitize_key((string) $request->get_param('builder'))
         );
         return is_wp_error($result) ? $result : new WP_REST_Response($result);
     }

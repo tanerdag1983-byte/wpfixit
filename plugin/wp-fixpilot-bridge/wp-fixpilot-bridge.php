@@ -21,6 +21,13 @@ require_once __DIR__ . '/includes/seo-adapters/class-yoast-adapter.php';
 require_once __DIR__ . '/includes/seo-adapters/class-rank-math-adapter.php';
 require_once __DIR__ . '/includes/seo-adapters/class-aioseo-adapter.php';
 require_once __DIR__ . '/includes/class-change-controller.php';
+require_once __DIR__ . '/includes/builder-adapters/interface-builder-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-gutenberg-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-elementor-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-bricks-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-wpbakery-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-acf-adapter.php';
+require_once __DIR__ . '/includes/class-page-package-controller.php';
 require_once __DIR__ . '/includes/class-rest-controller.php';
 
 register_activation_hook(__FILE__, static function (): void {
