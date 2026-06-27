@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AiConnectionsPanel } from "./AiConnectionsPanel";
 import { CompanyProfilePanel } from "./CompanyProfilePanel";
 import { DataForSeoPanel } from "./DataForSeoPanel";
+import { PagePackageSettingsPanel } from "./PagePackageSettingsPanel";
 import { ProjectAiPolicyPanel } from "./ProjectAiPolicyPanel";
 import { WordPressBridgePanel } from "./WordPressBridgePanel";
 
@@ -18,6 +19,7 @@ export function AiSettingsPanel({
   return (
     <div className="ai-settings">
       <WordPressBridgePanel projectId={projectId} />
+      <PagePackageSettingsPanel projectId={projectId} />
       <DataForSeoPanel organizationId={organizationId} />
       <AiConnectionsPanel
         organizationId={organizationId}

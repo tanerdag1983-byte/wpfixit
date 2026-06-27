@@ -2009,6 +2009,13 @@ h2 {
   height: 16px;
 }
 
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .opportunity-target {
   display: block;
   margin-top: 9px;
