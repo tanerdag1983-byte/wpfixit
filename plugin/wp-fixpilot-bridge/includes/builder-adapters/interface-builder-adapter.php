@@ -12,4 +12,10 @@ interface WPFixPilot_Builder_Adapter
     public function inspect(int $postId): array;
 
     public function template_hash(int $postId): string;
+
+    /**
+     * @param array<string, string> $mapping
+     * @param array<string, string> $values
+     */
+    public function write(int $postId, array $mapping, array $values): bool|WP_Error;
 }

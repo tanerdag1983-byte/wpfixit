@@ -111,6 +111,27 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     }
   }
 
+  async function createDraft() {
+    if (!proposal) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await apiRequest<Proposal>(
+        `/projects/${projectId}/page-proposals/${proposal.id}/create-draft`,
+        { method: "POST" },
+      );
+      setProposal(result);
+      setDraft(result.package);
+      setMessage("Het WordPress-concept is aangemaakt en nog niet gepubliceerd.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "WordPress-concept maken mislukt.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <section className="page-package-review">
@@ -197,11 +218,22 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           </ol>
           <button
             className="primary-button page-package-draft-button"
-            disabled={proposal.state !== "approved"}
+            disabled={proposal.state !== "approved" || busy}
+            onClick={createDraft}
             type="button"
           >
             WordPress-concept aanmaken
           </button>
+          {proposal.wordpress_edit_url && (
+            <a
+              className="secondary-button wordpress-edit-link"
+              href={proposal.wordpress_edit_url}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Concept openen in WordPress
+            </a>
+          )}
           {proposal.provider && (
             <small className="provider-note">
               Gegenereerd met {proposal.provider} · {proposal.model}

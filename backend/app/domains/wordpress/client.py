@@ -101,3 +101,6 @@ class WordPressClient:
             f"templates/{object_id}/slots",
             params={"builder": builder},
         )
+
+    def create_draft(self, payload: dict) -> dict:
+        return self._post("draft-pages", payload)

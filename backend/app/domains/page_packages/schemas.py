@@ -29,11 +29,20 @@ def safe_html(value: str) -> str:
     return value
 
 
+def plain_text(value: str) -> str:
+    value = value.strip()
+    if "<" in value or ">" in value:
+        raise ValueError("HTML is not allowed in plain text fields")
+    return value
+
+
 class InternalLink(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     anchor: str = Field(min_length=2, max_length=160)
     url: str = Field(min_length=1, max_length=2048)
+
+    _plain_anchor = field_validator("anchor")(plain_text)
 
     @field_validator("url")
     @classmethod
@@ -51,6 +60,7 @@ class PageSection(BaseModel):
     heading: str = Field(min_length=3, max_length=180)
     body_html: str = Field(min_length=10, max_length=12_000)
 
+    _plain_heading = field_validator("heading")(plain_text)
     _safe_body = field_validator("body_html")(safe_html)
 
 
@@ -60,6 +70,7 @@ class FaqItem(BaseModel):
     question: str = Field(min_length=5, max_length=240)
     answer_html: str = Field(min_length=10, max_length=4_000)
 
+    _plain_question = field_validator("question")(plain_text)
     _safe_answer = field_validator("answer_html")(safe_html)
 
 
@@ -71,6 +82,7 @@ class PageCta(BaseModel):
     button_label: str = Field(min_length=2, max_length=80)
     button_url: str = Field(min_length=1, max_length=2048)
 
+    _plain_fields = field_validator("title", "button_label")(plain_text)
     _safe_body = field_validator("body_html")(safe_html)
 
     @field_validator("button_url")
@@ -100,6 +112,13 @@ class GeneratedPagePackage(BaseModel):
     cta: PageCta
     internal_links: list[InternalLink] = Field(min_length=1, max_length=12)
 
+    _plain_fields = field_validator(
+        "title",
+        "seo_title",
+        "meta_description",
+        "focus_keyword",
+        "hero_title",
+    )(plain_text)
     _safe_introduction = field_validator("introduction_html")(safe_html)
 
 

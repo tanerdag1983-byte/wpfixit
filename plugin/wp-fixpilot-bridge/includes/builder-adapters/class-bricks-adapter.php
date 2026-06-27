@@ -47,4 +47,31 @@ final class WPFixPilot_Bricks_Adapter implements WPFixPilot_Builder_Adapter
     {
         return hash('sha256', (string) wp_json_encode(get_post_meta($postId, '_bricks_page_content_2', true)));
     }
+
+    public function write(int $postId, array $mapping, array $values): bool|WP_Error
+    {
+        $elements = get_post_meta($postId, '_bricks_page_content_2', true);
+        if (!is_array($elements)) {
+            return new WP_Error('wp_fixpilot_builder_data_missing', 'Bricks-data ontbreekt.');
+        }
+        foreach ($mapping as $semantic => $path) {
+            $parts = explode(':', $path);
+            if (count($parts) !== 4 || $parts[0] !== 'element' || $parts[2] !== 'settings' || !isset($values[$semantic])) {
+                return new WP_Error('wp_fixpilot_slot_invalid', 'Ongeldige Bricks-mapping.');
+            }
+            $found = false;
+            foreach ($elements as &$element) {
+                if ((string) ($element['id'] ?? '') === $parts[1] && isset($element['settings'][$parts[3]])) {
+                    $element['settings'][$parts[3]] = (string) $values[$semantic];
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found) {
+                return new WP_Error('wp_fixpilot_slot_missing', 'Bricks-element niet gevonden.');
+            }
+        }
+        update_post_meta($postId, '_bricks_page_content_2', $elements);
+        return true;
+    }
 }

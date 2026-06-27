@@ -13,6 +13,17 @@ from tests.page_packages.test_generation import valid_package
 from tests.recommendations.conftest import ProjectFixtures
 
 
+def proposal_package() -> dict:
+    package = valid_package()
+    package["internal_links"] = [
+        {
+            "anchor": "Dienst template",
+            "url": "https://member.example/dienst-template/",
+        }
+    ]
+    return package
+
+
 def prepare_project(session: Session, projects: ProjectFixtures) -> KeywordOpportunity:
     page = WordPressPage(
         id="template-page",
@@ -106,7 +117,7 @@ def test_creates_persistent_reviewable_page_proposal(
             assert context.keyword == opportunity.keyword
             assert "SHM Transmissie" in context.company_context
             return {
-                "package": valid_package(),
+                "package": proposal_package(),
                 "input_tokens": 100,
                 "output_tokens": 200,
             }
@@ -176,7 +187,11 @@ def test_updates_and_approves_proposal_before_wordpress(
         model = "model-1"
 
         def generate_page_package(self, context):
-            return {"package": valid_package(), "input_tokens": 0, "output_tokens": 0}
+            return {
+                "package": proposal_package(),
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
 
     monkeypatch.setattr(
         "app.api.routes.page_packages._page_package_generator",
@@ -202,3 +217,66 @@ def test_updates_and_approves_proposal_before_wordpress(
     assert approved.status_code == 200
     assert approved.json()["state"] == "approved"
     assert approved.json()["approved_by"] == projects.member.id
+
+
+def test_creates_one_wordpress_draft_only_after_approval(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": proposal_package()}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda session, project: Generator(),
+    )
+    proposal = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal"
+    ).json()
+    endpoint = (
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{proposal['id']}/create-draft"
+    )
+    assert client.post(endpoint).status_code == 409
+
+    calls = []
+
+    class Bridge:
+        def create_draft(self, payload):
+            calls.append(payload)
+            assert payload["idempotency_key"] == proposal["id"]
+            assert payload["expected_template_hash"] == "template-hash"
+            return {
+                "wordpress_object_id": 987,
+                "edit_url": "https://member.example/wp-admin/post.php?post=987",
+                "status": "draft",
+                "content_hash": "draft-hash",
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda session, project_id: Bridge(),
+    )
+    client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{proposal['id']}/approve"
+    )
+    created = client.post(endpoint)
+    repeated = client.post(endpoint)
+
+    assert created.status_code == 200
+    assert created.json()["state"] == "draft_created"
+    assert created.json()["wordpress_object_id"] == 987
+    assert repeated.status_code == 200
+    assert len(calls) == 1

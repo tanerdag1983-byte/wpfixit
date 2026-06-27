@@ -65,6 +65,26 @@ def get_page_package_settings(
     return _settings_payload(settings)
 
 
+@router.get("/page-package-settings/options")
+def get_page_package_options(
+    project_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    _project_or_404(session, user, project_id)
+    try:
+        detected = _page_package_client(session, project_id).builders()
+    except Exception as error:
+        raise HTTPException(
+            status_code=400,
+            detail="WordPress builders could not be detected",
+        ) from error
+    return {
+        "builders": list(detected.get("builders") or []),
+        "seo_plugin": detected.get("seo_plugin"),
+    }
+
+
 @router.put("/page-package-settings")
 def put_page_package_settings(
     project_id: str,
@@ -152,6 +172,7 @@ def validate_page_package_settings(
         inspection.get("builder") == settings.builder
         and inspection.get("seo_plugin") == settings.seo_plugin
         and mapped_required == REQUIRED_SLOTS
+        and len(mapped_paths) == len(REQUIRED_SLOTS)
         and mapped_paths.issubset(available_paths)
         and bool(inspection.get("template_hash"))
     )
@@ -251,6 +272,13 @@ def create_page_package_proposal(
         generated = PagePackageGenerationResult.model_validate(
             generator.generate_page_package(context)
         )
+        allowed_links = {link.url for link in context.internal_link_candidates}
+        if any(
+            link.url not in allowed_links for link in generated.package.internal_links
+        ):
+            raise ValueError("AI returned an unknown internal link")
+        if generated.package.focus_keyword.casefold() != opportunity.keyword.casefold():
+            raise ValueError("AI changed the focus keyword")
         proposal.package = generated.package.model_dump()
         proposal.rendered_html = render_page_package(generated.package)
         proposal.provider = generated.provider or proposal.provider
@@ -313,7 +341,7 @@ def update_page_package_proposal(
 ) -> dict:
     project = _project_or_404(session, user, project_id)
     _require_manager(session, user, project.organization_id)
-    proposal = _proposal_or_404(session, project_id, proposal_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
     if proposal.state != "proposed":
         raise HTTPException(status_code=409, detail="Only proposed pages can be edited")
     proposal.package = payload.package.model_dump()
@@ -331,7 +359,7 @@ def approve_page_package_proposal(
 ) -> dict:
     project = _project_or_404(session, user, project_id)
     _require_manager(session, user, project.organization_id)
-    proposal = _proposal_or_404(session, project_id, proposal_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
     if proposal.state != "proposed":
         raise HTTPException(
             status_code=409, detail="Only proposed pages can be approved"
@@ -340,6 +368,63 @@ def approve_page_package_proposal(
     proposal.state = "approved"
     proposal.approved_by = user.id
     proposal.approved_at = datetime.now(UTC)
+    session.commit()
+    return _proposal_payload(session, proposal)
+
+
+@router.post("/page-proposals/{proposal_id}/create-draft")
+def create_wordpress_draft(
+    project_id: str,
+    proposal_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
+    if proposal.state == "draft_created" and proposal.wordpress_object_id:
+        return _proposal_payload(session, proposal)
+    if proposal.state != "approved" or not proposal.approved_by:
+        raise HTTPException(
+            status_code=409,
+            detail="Approve the page proposal before creating a WordPress draft",
+        )
+    settings, template = _configured_settings(session, project_id)
+    snapshot = proposal.config_snapshot
+    current = {
+        "builder": settings.builder,
+        "template_wordpress_page_id": settings.template_wordpress_page_id,
+        "seo_plugin": settings.seo_plugin,
+        "slot_mapping": settings.slot_mapping,
+        "template_content_hash": settings.template_content_hash,
+    }
+    if settings.validation_state != "valid" or snapshot != current:
+        raise HTTPException(
+            status_code=409,
+            detail="Page package settings changed; generate a new proposal",
+        )
+    try:
+        result = _page_package_client(session, project_id).create_draft(
+            {
+                "template_id": template.wordpress_object_id,
+                "expected_template_hash": settings.template_content_hash,
+                "builder": settings.builder,
+                "mapping": settings.slot_mapping,
+                "seo_plugin": settings.seo_plugin,
+                "idempotency_key": proposal.id,
+                "package": proposal.package,
+            }
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="WordPress draft creation failed",
+        ) from error
+    if result.get("status") != "draft" or not result.get("wordpress_object_id"):
+        raise HTTPException(status_code=502, detail="WordPress did not return a draft")
+    proposal.state = "draft_created"
+    proposal.wordpress_object_id = int(result["wordpress_object_id"])
+    proposal.wordpress_edit_url = str(result.get("edit_url") or "") or None
     session.commit()
     return _proposal_payload(session, proposal)
 
@@ -426,13 +511,16 @@ def _proposal_or_404(
     session: Session,
     project_id: str,
     proposal_id: str,
+    *,
+    lock: bool = False,
 ) -> PagePackageProposal:
-    proposal = session.scalar(
-        select(PagePackageProposal).where(
-            PagePackageProposal.id == proposal_id,
-            PagePackageProposal.project_id == project_id,
-        )
+    statement = select(PagePackageProposal).where(
+        PagePackageProposal.id == proposal_id,
+        PagePackageProposal.project_id == project_id,
     )
+    if lock:
+        statement = statement.with_for_update()
+    proposal = session.scalar(statement)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Page proposal not found")
     return proposal

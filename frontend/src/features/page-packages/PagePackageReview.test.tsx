@@ -57,6 +57,13 @@ describe("PagePackageReview", () => {
       if (path.endsWith("/approve")) {
         return Promise.resolve({ ...proposal, state: "approved" });
       }
+      if (path.endsWith("/create-draft")) {
+        return Promise.resolve({
+          ...proposal,
+          state: "draft_created",
+          wordpress_edit_url: "https://example.com/wp-admin/post.php?post=987",
+        });
+      }
       return Promise.resolve(proposal);
     });
   });
@@ -95,5 +102,14 @@ describe("PagePackageReview", () => {
     expect(
       await screen.findByRole("button", { name: "WordPress-concept aanmaken" }),
     ).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "WordPress-concept aanmaken" }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Concept openen in WordPress" }),
+    ).toHaveAttribute(
+      "href",
+      "https://example.com/wp-admin/post.php?post=987",
+    );
   });
 });

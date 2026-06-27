@@ -9,6 +9,7 @@ final class WPFixPilot_Yoast_Adapter implements WPFixPilot_SEO_Adapter
         $meta = [
             'seo_title' => '_yoast_wpseo_title',
             'meta_description' => '_yoast_wpseo_metadesc',
+            'focus_keyword' => '_yoast_wpseo_focuskw',
             'canonical' => '_yoast_wpseo_canonical',
             'noindex' => '_yoast_wpseo_meta-robots-noindex',
         ];

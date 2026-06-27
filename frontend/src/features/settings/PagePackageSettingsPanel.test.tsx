@@ -32,6 +32,9 @@ describe("PagePackageSettingsPanel", () => {
           ],
         });
       }
+      if (!init && path.endsWith("/page-package-settings/options")) {
+        return Promise.resolve({ builders: ["gutenberg", "elementor"], seo_plugin: "yoast" });
+      }
       if (path.endsWith("/inspect-template")) {
         return Promise.resolve({
           builder: "elementor",

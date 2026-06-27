@@ -39,6 +39,7 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
   const [seoPlugin, setSeoPlugin] = useState("yoast");
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pages, setPages] = useState<WordPressPage[]>([]);
+  const [detectedBuilders, setDetectedBuilders] = useState<string[]>([]);
   const [slots, setSlots] = useState<TemplateSlot[]>([]);
   const [configured, setConfigured] = useState(false);
   const [validationState, setValidationState] = useState("unconfigured");
@@ -50,10 +51,14 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
     Promise.all([
       apiRequest<Settings>(`/projects/${projectId}/page-package-settings`),
       apiRequest<{ items: WordPressPage[] }>(`/projects/${projectId}/wordpress-pages`),
+      apiRequest<{ builders: string[]; seo_plugin: string | null }>(
+        `/projects/${projectId}/page-package-settings/options`,
+      ),
     ])
-      .then(([settings, inventory]) => {
+      .then(([settings, inventory, options]) => {
         if (!active) return;
         setPages(inventory.items ?? []);
+        setDetectedBuilders(options.builders ?? []);
         setConfigured(Boolean(settings.configured));
         setValidationState(settings.validation_state ?? "unconfigured");
         if (settings.configured) {
@@ -61,6 +66,9 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
           setTemplateId(settings.template_wordpress_page_id ?? "");
           setSeoPlugin(settings.seo_plugin ?? "yoast");
           setMapping(settings.slot_mapping ?? {});
+        } else {
+          setBuilder(options.builders?.[0] ?? "gutenberg");
+          setSeoPlugin(options.seo_plugin ?? "yoast");
         }
       })
       .catch((error) => {
@@ -136,7 +144,12 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
     }
   }
 
-  const completeMapping = semanticSlots.every(([key]) => Boolean(mapping[key]));
+  const mappedRequiredPaths = semanticSlots
+    .map(([key]) => mapping[key])
+    .filter(Boolean);
+  const completeMapping =
+    mappedRequiredPaths.length === semanticSlots.length &&
+    new Set(mappedRequiredPaths).size === semanticSlots.length;
 
   return (
     <section>
@@ -150,11 +163,12 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
         <label>
           Page builder
           <select value={builder} onChange={(event) => setBuilder(event.target.value)}>
-            <option value="gutenberg">Gutenberg</option>
-            <option value="elementor">Elementor</option>
-            <option value="bricks">Bricks</option>
-            <option value="wpbakery">WPBakery</option>
-            <option value="acf">ACF</option>
+            {(detectedBuilders.length
+              ? detectedBuilders
+              : ["gutenberg", "elementor", "bricks", "wpbakery", "acf"]
+            ).map((value) => (
+              <option key={value} value={value}>{builderLabel(value)}</option>
+            ))}
           </select>
         </label>
         <label>
@@ -237,4 +251,14 @@ function validationLabel(state: string) {
     valid: "klaar voor conceptpagina's",
     invalid: "opnieuw instellen",
   }[state] ?? state;
+}
+
+function builderLabel(builder: string) {
+  return {
+    gutenberg: "Gutenberg",
+    elementor: "Elementor",
+    bricks: "Bricks",
+    wpbakery: "WPBakery",
+    acf: "ACF",
+  }[builder] ?? builder;
 }

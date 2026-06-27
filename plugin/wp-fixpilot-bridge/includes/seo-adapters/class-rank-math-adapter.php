@@ -9,6 +9,7 @@ final class WPFixPilot_Rank_Math_Adapter implements WPFixPilot_SEO_Adapter
         $meta = [
             'seo_title' => 'rank_math_title',
             'meta_description' => 'rank_math_description',
+            'focus_keyword' => 'rank_math_focus_keyword',
             'canonical' => 'rank_math_canonical_url',
             'noindex' => 'rank_math_robots',
         ];

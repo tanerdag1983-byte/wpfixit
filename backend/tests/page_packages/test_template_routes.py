@@ -55,6 +55,9 @@ def test_inspects_and_validates_template_mapping(
     _save_settings(client, session, projects)
 
     class Bridge:
+        def builders(self) -> dict:
+            return {"builders": ["gutenberg", "elementor"], "seo_plugin": "yoast"}
+
         def template_slots(self, object_id: int, builder: str) -> dict:
             assert object_id == 701
             assert builder == "elementor"
@@ -79,12 +82,19 @@ def test_inspects_and_validates_template_mapping(
     validated = client.post(
         f"/projects/{projects.member_project.id}/page-package-settings/validate"
     )
+    options = client.get(
+        f"/projects/{projects.member_project.id}/page-package-settings/options"
+    )
 
     assert inspected.status_code == 200
     assert len(inspected.json()["slots"]) == 6
     assert validated.status_code == 200
     assert validated.json()["validation_state"] == "valid"
     assert validated.json()["template_content_hash"] == "live-template-hash"
+    assert options.json() == {
+        "builders": ["gutenberg", "elementor"],
+        "seo_plugin": "yoast",
+    }
 
 
 def test_validation_rejects_stale_or_missing_slot_mapping(

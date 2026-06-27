@@ -2092,6 +2092,13 @@ h2 {
   margin-top: 22px;
 }
 
+.wordpress-edit-link {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+  text-decoration: none;
+}
+
 .provider-note {
   display: block;
   margin-top: 12px;

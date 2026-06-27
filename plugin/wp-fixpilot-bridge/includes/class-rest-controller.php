@@ -38,6 +38,11 @@ final class WPFixPilot_REST_Controller
             'callback' => [$this, 'template_slots'],
             'permission_callback' => [$this, 'authorize'],
         ]);
+        register_rest_route(self::NAMESPACE, '/draft-pages', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'create_draft_page'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
     }
 
     public function authorize(WP_REST_Request $request): bool|WP_Error
@@ -82,7 +87,7 @@ final class WPFixPilot_REST_Controller
             'status' => 'ok',
             'site_url' => get_site_url(),
             'wordpress_version' => get_bloginfo('version'),
-            'plugin_version' => '0.1.0',
+            'plugin_version' => '0.2.0',
             'seo_plugin' => $this->detect_seo_plugin(),
         ]);
     }
@@ -153,6 +158,15 @@ final class WPFixPilot_REST_Controller
         $result = (new WPFixPilot_Page_Package_Controller())->inspect(
             (int) $request->get_param('id'),
             sanitize_key((string) $request->get_param('builder'))
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
+    }
+
+    public function create_draft_page(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = (new WPFixPilot_Page_Package_Controller())->create_draft(
+            (array) $request->get_json_params()
         );
         return is_wp_error($result) ? $result : new WP_REST_Response($result);
     }

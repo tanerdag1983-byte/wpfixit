@@ -39,4 +39,22 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
         $fields = function_exists('get_field_objects') ? (get_field_objects($postId) ?: []) : [];
         return hash('sha256', (string) wp_json_encode($fields));
     }
+
+    public function write(int $postId, array $mapping, array $values): bool|WP_Error
+    {
+        if (!function_exists('update_field')) {
+            return new WP_Error('wp_fixpilot_builder_inactive', 'ACF is niet actief.');
+        }
+        foreach ($mapping as $semantic => $path) {
+            if (!isset($values[$semantic]) || !str_starts_with($path, 'acf:')) {
+                return new WP_Error('wp_fixpilot_slot_invalid', 'Ongeldige ACF-mapping.');
+            }
+            $fieldKey = substr($path, 4);
+            if ($fieldKey === '') {
+                return new WP_Error('wp_fixpilot_slot_missing', 'ACF-veld kon niet worden bijgewerkt.');
+            }
+            update_field($fieldKey, (string) $values[$semantic], $postId);
+        }
+        return true;
+    }
 }
