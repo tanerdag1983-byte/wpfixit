@@ -8,6 +8,7 @@ from app.api.routes.dataforseo import router as dataforseo_router
 from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.ga4 import router as ga4_router
 from app.api.routes.google import router as google_router
+from app.api.routes.page_packages import router as page_packages_router
 from app.api.routes.preferences import router as preferences_router
 from app.api.routes.priorities import router as priorities_router
 from app.api.routes.projects import router as projects_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     application.include_router(dashboards_router)
     application.include_router(crawls_router)
     application.include_router(dataforseo_router)
+    application.include_router(page_packages_router)
     application.include_router(ai_settings_router)
     application.include_router(google_router)
     application.include_router(priorities_router)
