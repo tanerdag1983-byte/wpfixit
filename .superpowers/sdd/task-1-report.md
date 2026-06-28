@@ -386,3 +386,31 @@ INFO  [alembic.runtime.migration] Will assume transactional DDL.
 ### Concerns
 
 None beyond the normal migration/application parity checks already exercised by the focused and full backend suites.
+
+## Final review adjudication
+- Accepted: a proposal must be linked to a blueprint in the same project and its stored version/hash must match the referenced immutable blueprint. Enforce with one composite database relationship while keeping legacy rows with all blueprint fields NULL valid.
+
+## Persistence Follow-up
+
+Completed the Task 1 persistence correction for blueprint references on page package proposals:
+
+- Added a composite unique key on `page_blueprints(project_id, id, version, structure_hash)`.
+- Replaced the single-column proposal blueprint FK with a four-column composite FK to the matching immutable blueprint row.
+- Kept the all-or-none blueprint identity check so legacy all-NULL proposals still persist.
+- Added focused negative tests for mismatched project, version, and structure hash, plus a matching positive case and legacy-null coverage.
+
+### Verification
+
+- Focused model tests: `9 passed`
+- Page blueprint tests: `13 passed`
+- Ruff: `All checks passed!`
+- Alembic upgrade head: `Context impl PostgresqlImpl.`
+- Full backend pytest: `156 passed`
+
+### Commit
+
+`0db411c0ae86664c449ee2e92686a129873cd8de` (`Enforce page blueprint proposal identity`)
+
+### Concerns
+
+None beyond the usual SQLite/PostgreSQL migration parity checks already exercised by the model metadata and migration definitions.
