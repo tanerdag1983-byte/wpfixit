@@ -491,3 +491,19 @@ Implemented the two accepted Task 1 database invariants for managed page bluepri
 ### Commit
 
 `ed39af3f15840c30bf0c4f8aa9082f3eb468dcee`
+
+## Mechanical migration freeze
+
+Adjusted `backend/alembic/versions/0017_managed_page_blueprints.py` so historical replay no longer depends on runtime app code:
+
+- Removed the import from `app.domains.page_blueprints.lifecycle`.
+- Froze the lifecycle state tuple locally in the migration.
+- Froze the exact `state IN (...)` check text locally in the migration.
+- Kept the generated DDL unchanged.
+
+### Verification
+
+- Ruff: `All checks passed!`
+- Focused page blueprint tests: `27 passed`
+- Full backend pytest: `170 passed`
+- Alembic upgrade head: exited cleanly under `PostgresqlImpl`

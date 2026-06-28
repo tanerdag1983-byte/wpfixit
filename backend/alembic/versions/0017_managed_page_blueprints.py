@@ -10,7 +10,18 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 
 from alembic import op
-from app.domains.page_blueprints.lifecycle import blueprint_lifecycle_state_check
+
+BLUEPRINT_LIFECYCLE_STATES = (
+    "capture_required",
+    "capturing",
+    "ready",
+    "stale",
+    "invalid",
+)
+
+BLUEPRINT_LIFECYCLE_STATE_CHECK = (
+    "state IN ('capture_required', 'capturing', 'ready', 'stale', 'invalid')"
+)
 
 revision: str = "0017_managed_page_blueprints"
 down_revision: str | None = "0016_page_pkg_proposals"
@@ -58,7 +69,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint(
-            blueprint_lifecycle_state_check(),
+            BLUEPRINT_LIFECYCLE_STATE_CHECK,
             name="ck_page_blueprints_state",
         ),
         sa.CheckConstraint(
