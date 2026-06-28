@@ -113,7 +113,12 @@ def valid_schema() -> dict:
     }
 
 
-def blueprint(project_id: str, page_type: str, version: int) -> PageBlueprint:
+def blueprint(
+    project_id: str,
+    page_type: str,
+    version: int,
+    supersedes_id: str | None = None,
+) -> PageBlueprint:
     return PageBlueprint(
         id=f"blueprint-{page_type}-{version}",
         project_id=project_id,
@@ -128,6 +133,7 @@ def blueprint(project_id: str, page_type: str, version: int) -> PageBlueprint:
         content_schema=valid_schema(),
         state="ready",
         is_default_for_page_type=False,
+        supersedes_id=supersedes_id,
     )
 
 
@@ -163,6 +169,34 @@ def test_one_default_blueprint_per_project_page_type(
     session.commit()
 
     second.is_default_for_page_type = True
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_second_successor_for_same_blueprint_fails(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    original = blueprint(projects.member_project.id, "brand", version=1)
+    first_successor = blueprint(
+        projects.member_project.id,
+        "brand",
+        version=2,
+        supersedes_id=original.id,
+    )
+    session.add_all([original, first_successor])
+    session.commit()
+
+    second_successor = blueprint(
+        projects.member_project.id,
+        "brand",
+        version=3,
+        supersedes_id=original.id,
+    )
+    session.add(second_successor)
 
     with pytest.raises(IntegrityError):
         session.commit()

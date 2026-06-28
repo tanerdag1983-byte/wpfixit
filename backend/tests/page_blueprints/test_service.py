@@ -2,7 +2,8 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import create_engine, event
+from pydantic import ValidationError
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -116,7 +117,12 @@ def valid_schema() -> dict:
     }
 
 
-def blueprint(project_id: str, page_type: str, version: int) -> PageBlueprint:
+def blueprint(
+    project_id: str,
+    page_type: str,
+    version: int,
+    supersedes_id: str | None = None,
+) -> PageBlueprint:
     return PageBlueprint(
         id=f"blueprint-{page_type}-{version}",
         project_id=project_id,
@@ -131,6 +137,7 @@ def blueprint(project_id: str, page_type: str, version: int) -> PageBlueprint:
         content_schema=valid_schema(),
         state="ready",
         is_default_for_page_type=False,
+        supersedes_id=supersedes_id,
     )
 
 
@@ -189,3 +196,27 @@ def test_new_version_is_immutable_and_supersedes_previous(
     assert replacement.version == 2
     assert replacement.supersedes_id == original.id
     assert original.structure_hash == "hash-v1"
+
+
+def test_create_blueprint_version_rejects_invalid_schema_before_persisting(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    source_page(session, projects)
+    original = blueprint(projects.member_project.id, "service", version=1)
+    session.add(original)
+    session.commit()
+
+    invalid_schema = valid_schema()
+    invalid_schema["blocks"][0]["fields"][0]["max_length"] = 0
+
+    with pytest.raises(ValidationError):
+        create_blueprint_version(
+            session,
+            original,
+            wordpress_blueprint_id=903,
+            structure_hash="hash-v2",
+            content_schema=invalid_schema,
+        )
+
+    assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1

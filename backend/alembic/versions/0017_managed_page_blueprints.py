@@ -56,6 +56,7 @@ def upgrade() -> None:
             "wordpress_blueprint_id",
             name="uq_page_blueprint_wordpress_identity",
         ),
+        sa.UniqueConstraint("supersedes_id", name="uq_page_blueprints_supersedes_id"),
     )
     op.create_index(
         "ix_page_blueprints_project_id",

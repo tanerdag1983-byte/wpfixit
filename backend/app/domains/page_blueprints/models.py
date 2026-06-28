@@ -21,6 +21,10 @@ class PageBlueprint(Base):
             "wordpress_blueprint_id",
             name="uq_page_blueprint_wordpress_identity",
         ),
+        UniqueConstraint(
+            "supersedes_id",
+            name="uq_page_blueprints_supersedes_id",
+        ),
         Index(
             "uq_page_blueprint_default_per_type",
             "project_id",
