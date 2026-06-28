@@ -6,6 +6,20 @@ final class WPFixPilot_REST_Controller
 {
     private const NAMESPACE = 'wpfixpilot/v1';
 
+    private WPFixPilot_Page_Package_Controller $pagePackageController;
+
+    private WPFixPilot_Blueprint_Controller $blueprintController;
+
+    public function __construct(
+        ?WPFixPilot_Page_Package_Controller $pagePackageController = null,
+        ?WPFixPilot_Blueprint_Controller $blueprintController = null
+    ) {
+        $this->pagePackageController = $pagePackageController
+            ?? new WPFixPilot_Page_Package_Controller();
+        $this->blueprintController = $blueprintController
+            ?? new WPFixPilot_Blueprint_Controller();
+    }
+
     public function register_routes(): void
     {
         register_rest_route(self::NAMESPACE, '/health', [
@@ -41,6 +55,28 @@ final class WPFixPilot_REST_Controller
         register_rest_route(self::NAMESPACE, '/draft-pages', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [$this, 'create_draft_page'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
+        register_rest_route(self::NAMESPACE, '/blueprints', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'capture_blueprint'],
+            'permission_callback' => [$this, 'authorize'],
+        ]);
+        register_rest_route(self::NAMESPACE, '/blueprints/(?P<id>\d+)', [
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [$this, 'read_blueprint'],
+                'permission_callback' => [$this, 'authorize'],
+            ],
+            [
+                'methods' => WP_REST_Server::DELETABLE,
+                'callback' => [$this, 'delete_blueprint'],
+                'permission_callback' => [$this, 'authorize'],
+            ],
+        ]);
+        register_rest_route(self::NAMESPACE, '/blueprints/(?P<id>\d+)/drafts', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'create_blueprint_draft'],
             'permission_callback' => [$this, 'authorize'],
         ]);
     }
@@ -87,7 +123,9 @@ final class WPFixPilot_REST_Controller
             'status' => 'ok',
             'site_url' => get_site_url(),
             'wordpress_version' => get_bloginfo('version'),
-            'plugin_version' => '0.2.1',
+            'plugin_version' => defined('WPFIXPILOT_BRIDGE_VERSION')
+                ? WPFIXPILOT_BRIDGE_VERSION
+                : '0.3.0',
             'seo_plugin' => $this->detect_seo_plugin(),
         ]);
     }
@@ -103,6 +141,9 @@ final class WPFixPilot_REST_Controller
         ]);
         $items = [];
         foreach ($query->posts as $post) {
+            if (get_post_meta((int) $post->ID, '_wp_fixpilot_blueprint', true) === '1') {
+                continue;
+            }
             $content = (string) $post->post_content;
             $items[] = [
                 'id' => (int) $post->ID,
@@ -147,15 +188,13 @@ final class WPFixPilot_REST_Controller
 
     public function builders(): WP_REST_Response
     {
-        return new WP_REST_Response(
-            (new WPFixPilot_Page_Package_Controller())->builders()
-        );
+        return new WP_REST_Response($this->pagePackageController->builders());
     }
 
     public function template_slots(
         WP_REST_Request $request
     ): WP_REST_Response|WP_Error {
-        $result = (new WPFixPilot_Page_Package_Controller())->inspect(
+        $result = $this->pagePackageController->inspect(
             (int) $request->get_param('id'),
             sanitize_key((string) $request->get_param('builder'))
         );
@@ -165,9 +204,42 @@ final class WPFixPilot_REST_Controller
     public function create_draft_page(
         WP_REST_Request $request
     ): WP_REST_Response|WP_Error {
-        $result = (new WPFixPilot_Page_Package_Controller())->create_draft(
+        $result = $this->pagePackageController->create_draft(
             (array) $request->get_json_params()
         );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
+    }
+
+    public function capture_blueprint(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = $this->blueprintController->capture(
+            (array) $request->get_json_params()
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result, 201);
+    }
+
+    public function read_blueprint(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = $this->blueprintController->read((int) $request->get_param('id'));
+        return is_wp_error($result) ? $result : new WP_REST_Response($result);
+    }
+
+    public function create_blueprint_draft(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = $this->blueprintController->create_draft(
+            (int) $request->get_param('id'),
+            (array) $request->get_json_params()
+        );
+        return is_wp_error($result) ? $result : new WP_REST_Response($result, 201);
+    }
+
+    public function delete_blueprint(
+        WP_REST_Request $request
+    ): WP_REST_Response|WP_Error {
+        $result = $this->blueprintController->delete((int) $request->get_param('id'));
         return is_wp_error($result) ? $result : new WP_REST_Response($result);
     }
 

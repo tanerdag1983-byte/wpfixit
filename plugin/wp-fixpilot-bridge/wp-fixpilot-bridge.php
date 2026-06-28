@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP FixPilot Bridge
  * Description: Secure inventory and publishing bridge for WP FixPilot.
- * Version: 0.2.1
+ * Version: 0.3.0
  * Requires at least: 6.5
  * Requires PHP: 8.1
  */
@@ -13,6 +13,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.0');
+
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';
 require_once __DIR__ . '/includes/seo-adapters/interface-seo-adapter.php';
@@ -22,12 +24,15 @@ require_once __DIR__ . '/includes/seo-adapters/class-rank-math-adapter.php';
 require_once __DIR__ . '/includes/seo-adapters/class-aioseo-adapter.php';
 require_once __DIR__ . '/includes/class-change-controller.php';
 require_once __DIR__ . '/includes/builder-adapters/interface-builder-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/interface-blueprint-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-gutenberg-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-elementor-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-bricks-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-wpbakery-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-acf-adapter.php';
+require_once __DIR__ . '/includes/class-post-cloner.php';
 require_once __DIR__ . '/includes/class-page-package-controller.php';
+require_once __DIR__ . '/includes/class-blueprint-controller.php';
 require_once __DIR__ . '/includes/class-rest-controller.php';
 
 register_activation_hook(__FILE__, static function (): void {
