@@ -59,6 +59,11 @@ class PagePackageProposal(Base):
     state: Mapped[str] = mapped_column(
         String(24), default="generating", server_default="generating", nullable=False
     )
+    blueprint_id: Mapped[str | None] = mapped_column(
+        ForeignKey("page_blueprints.id", ondelete="RESTRICT")
+    )
+    blueprint_version: Mapped[int | None] = mapped_column(Integer)
+    blueprint_structure_hash: Mapped[str | None] = mapped_column(String(128))
     package: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     rendered_html: Mapped[str] = mapped_column(Text, default="", nullable=False)
     config_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
