@@ -414,3 +414,19 @@ Completed the Task 1 persistence correction for blueprint references on page pac
 ### Concerns
 
 None beyond the usual SQLite/PostgreSQL migration parity checks already exercised by the model metadata and migration definitions.
+
+## Lifecycle-helper review adjudication
+- Accepted: create_blueprint_version must take an explicit validated successor state and must not transfer the default itself; the Task 4 route will transfer it only after successful validation.
+- Accepted: successor numbering is lineage-local and therefore uses original.version + 1. Branching is already rejected by the unique supersedes constraint.
+
+## Lifecycle-helper verification
+
+### Verification
+
+- Focused service tests: `6 passed`
+- Ruff: `All checks passed!`
+- Full backend pytest: `158 passed`
+
+### Commit
+
+`b535dc9803ed3e124871e97335c02b6f981c35d0` (`fix: version blueprints by lineage`)
