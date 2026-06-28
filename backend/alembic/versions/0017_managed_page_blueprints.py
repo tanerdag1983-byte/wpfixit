@@ -71,6 +71,13 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "project_id",
+            "id",
+            "version",
+            "structure_hash",
+            name="uq_page_blueprints_project_identity",
+        ),
+        sa.UniqueConstraint(
+            "project_id",
             "wordpress_blueprint_id",
             name="uq_page_blueprint_wordpress_identity",
         ),
@@ -91,52 +98,48 @@ def upgrade() -> None:
         sqlite_where=sa.text("is_default_for_page_type = 1"),
     )
 
-    op.add_column(
-        "page_package_proposals",
-        sa.Column("blueprint_id", sa.String(length=64), nullable=True),
-    )
-    op.add_column(
-        "page_package_proposals",
-        sa.Column("blueprint_version", sa.Integer(), nullable=True),
-    )
-    op.add_column(
-        "page_package_proposals",
-        sa.Column("blueprint_structure_hash", sa.String(length=128), nullable=True),
-    )
-    op.create_check_constraint(
-        "ck_page_package_proposals_blueprint_identity_all_or_none",
-        "page_package_proposals",
-        "("
-        "(blueprint_id IS NULL AND blueprint_version IS NULL AND "
-        "blueprint_structure_hash IS NULL) OR "
-        "(blueprint_id IS NOT NULL AND blueprint_version IS NOT NULL AND "
-        "blueprint_structure_hash IS NOT NULL)"
-        ")",
-    )
-    op.create_foreign_key(
-        "fk_page_package_proposals_blueprint_id",
-        "page_package_proposals",
-        "page_blueprints",
-        ["blueprint_id"],
-        ["id"],
-        ondelete="RESTRICT",
-    )
+    with op.batch_alter_table("page_package_proposals", recreate="always") as batch_op:
+        batch_op.add_column(
+            sa.Column("blueprint_id", sa.String(length=64), nullable=True)
+        )
+        batch_op.add_column(sa.Column("blueprint_version", sa.Integer(), nullable=True))
+        batch_op.add_column(
+            sa.Column("blueprint_structure_hash", sa.String(length=128), nullable=True)
+        )
+        batch_op.create_check_constraint(
+            "ck_page_package_proposals_blueprint_identity_all_or_none",
+            "("
+            "(blueprint_id IS NULL AND blueprint_version IS NULL AND "
+            "blueprint_structure_hash IS NULL) OR "
+            "(blueprint_id IS NOT NULL AND blueprint_version IS NOT NULL AND "
+            "blueprint_structure_hash IS NOT NULL)"
+            ")",
+        )
+        batch_op.create_foreign_key(
+            "fk_page_package_proposals_blueprint_identity",
+            "page_blueprints",
+            [
+                "project_id",
+                "blueprint_id",
+                "blueprint_version",
+                "blueprint_structure_hash",
+            ],
+            ["project_id", "id", "version", "structure_hash"],
+            ondelete="RESTRICT",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "fk_page_package_proposals_blueprint_id",
-        "page_package_proposals",
-        type_="foreignkey",
-    )
-    op.drop_constraint(
-        "ck_page_package_proposals_blueprint_identity_all_or_none",
-        "page_package_proposals",
-        type_="check",
-    )
-    op.drop_column("page_package_proposals", "blueprint_structure_hash")
-    op.drop_column("page_package_proposals", "blueprint_version")
-    op.drop_column("page_package_proposals", "blueprint_id")
+    with op.batch_alter_table("page_package_proposals", recreate="always") as batch_op:
+        batch_op.drop_constraint(
+            "fk_page_package_proposals_blueprint_identity", type_="foreignkey"
+        )
+        batch_op.drop_constraint(
+            "ck_page_package_proposals_blueprint_identity_all_or_none", type_="check"
+        )
+        batch_op.drop_column("blueprint_structure_hash")
+        batch_op.drop_column("blueprint_version")
+        batch_op.drop_column("blueprint_id")
 
     op.drop_index("uq_page_blueprint_default_per_type", table_name="page_blueprints")
     op.drop_index("ix_page_blueprints_project_id", table_name="page_blueprints")

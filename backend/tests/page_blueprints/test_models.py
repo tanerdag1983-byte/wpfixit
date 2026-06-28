@@ -157,6 +157,32 @@ def source_page(session: Session, projects: ProjectFixtures) -> WordPressPage:
     return page
 
 
+def page_package_proposal(
+    *,
+    proposal_id: str,
+    project_id: str,
+    opportunity_id: str,
+    job_id: str,
+    proposed_by: str,
+    blueprint_id: str | None,
+    blueprint_version: int | None,
+    blueprint_structure_hash: str | None,
+) -> PagePackageProposal:
+    return PagePackageProposal(
+        id=proposal_id,
+        project_id=project_id,
+        opportunity_id=opportunity_id,
+        job_id=job_id,
+        blueprint_id=blueprint_id,
+        blueprint_version=blueprint_version,
+        blueprint_structure_hash=blueprint_structure_hash,
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=proposed_by,
+    )
+
+
 def test_one_default_blueprint_per_project_page_type(
     session: Session,
     projects: ProjectFixtures,
@@ -172,6 +198,190 @@ def test_one_default_blueprint_per_project_page_type(
     session.commit()
 
     second.is_default_for_page_type = True
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_page_package_proposal_accepts_matching_blueprint_identity(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    blueprint_versioned = blueprint(projects.member_project.id, "service", version=1)
+    session.add(blueprint_versioned)
+    session.commit()
+
+    opportunity = KeywordOpportunity(
+        id="opportunity-matching",
+        project_id=projects.member_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-matching",
+        project_id=projects.member_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    session.add(
+        page_package_proposal(
+            proposal_id="proposal-matching",
+            project_id=projects.member_project.id,
+            opportunity_id=opportunity.id,
+            job_id=job.id,
+            proposed_by=projects.member.id,
+            blueprint_id=blueprint_versioned.id,
+            blueprint_version=blueprint_versioned.version,
+            blueprint_structure_hash=blueprint_versioned.structure_hash,
+        )
+    )
+    session.commit()
+
+    assert session.get(PagePackageProposal, "proposal-matching") is not None
+
+
+def test_page_package_proposal_rejects_mismatched_project(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    blueprint_versioned = blueprint(projects.member_project.id, "service", version=1)
+    session.add(blueprint_versioned)
+    session.commit()
+
+    opportunity = KeywordOpportunity(
+        id="opportunity-project",
+        project_id=projects.other_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-project",
+        project_id=projects.other_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    session.add(
+        page_package_proposal(
+            proposal_id="proposal-project",
+            project_id=projects.other_project.id,
+            opportunity_id=opportunity.id,
+            job_id=job.id,
+            proposed_by=projects.member.id,
+            blueprint_id=blueprint_versioned.id,
+            blueprint_version=blueprint_versioned.version,
+            blueprint_structure_hash=blueprint_versioned.structure_hash,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_page_package_proposal_rejects_mismatched_version(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    blueprint_versioned = blueprint(projects.member_project.id, "service", version=1)
+    session.add(blueprint_versioned)
+    session.commit()
+
+    opportunity = KeywordOpportunity(
+        id="opportunity-version",
+        project_id=projects.member_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-version",
+        project_id=projects.member_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    session.add(
+        page_package_proposal(
+            proposal_id="proposal-version",
+            project_id=projects.member_project.id,
+            opportunity_id=opportunity.id,
+            job_id=job.id,
+            proposed_by=projects.member.id,
+            blueprint_id=blueprint_versioned.id,
+            blueprint_version=blueprint_versioned.version + 1,
+            blueprint_structure_hash=blueprint_versioned.structure_hash,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_page_package_proposal_rejects_mismatched_structure_hash(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    blueprint_versioned = blueprint(projects.member_project.id, "service", version=1)
+    session.add(blueprint_versioned)
+    session.commit()
+
+    opportunity = KeywordOpportunity(
+        id="opportunity-hash",
+        project_id=projects.member_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-hash",
+        project_id=projects.member_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    session.add(
+        page_package_proposal(
+            proposal_id="proposal-hash",
+            project_id=projects.member_project.id,
+            opportunity_id=opportunity.id,
+            job_id=job.id,
+            proposed_by=projects.member.id,
+            blueprint_id=blueprint_versioned.id,
+            blueprint_version=blueprint_versioned.version,
+            blueprint_structure_hash="hash-mismatch",
+        )
+    )
 
     with pytest.raises(IntegrityError):
         session.commit()

@@ -23,6 +23,13 @@ class PageBlueprint(Base):
     __table_args__ = (
         UniqueConstraint(
             "project_id",
+            "id",
+            "version",
+            "structure_hash",
+            name="uq_page_blueprints_project_identity",
+        ),
+        UniqueConstraint(
+            "project_id",
             "wordpress_blueprint_id",
             name="uq_page_blueprint_wordpress_identity",
         ),

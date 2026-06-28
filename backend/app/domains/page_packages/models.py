@@ -5,6 +5,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -62,6 +63,22 @@ class PagePackageProposal(Base):
             ")",
             name="ck_page_package_proposals_blueprint_identity_all_or_none",
         ),
+        ForeignKeyConstraint(
+            [
+                "project_id",
+                "blueprint_id",
+                "blueprint_version",
+                "blueprint_structure_hash",
+            ],
+            [
+                "page_blueprints.project_id",
+                "page_blueprints.id",
+                "page_blueprints.version",
+                "page_blueprints.structure_hash",
+            ],
+            name="fk_page_package_proposals_blueprint_identity",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -79,9 +96,7 @@ class PagePackageProposal(Base):
     state: Mapped[str] = mapped_column(
         String(24), default="generating", server_default="generating", nullable=False
     )
-    blueprint_id: Mapped[str | None] = mapped_column(
-        ForeignKey("page_blueprints.id", ondelete="RESTRICT")
-    )
+    blueprint_id: Mapped[str | None] = mapped_column(String(64))
     blueprint_version: Mapped[int | None] = mapped_column(Integer)
     blueprint_structure_hash: Mapped[str | None] = mapped_column(String(128))
     package: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
