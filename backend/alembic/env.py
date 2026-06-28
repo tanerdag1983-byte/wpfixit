@@ -13,6 +13,7 @@ from app.domains.ga4 import models as ga4_models  # noqa: F401
 from app.domains.google import models as google_models  # noqa: F401
 from app.domains.gsc import models as gsc_models  # noqa: F401
 from app.domains.jobs import models as job_models  # noqa: F401
+from app.domains.page_blueprints import models as page_blueprint_models  # noqa: F401
 from app.domains.page_packages import models as page_package_models  # noqa: F401
 from app.domains.projects import models as project_models  # noqa: F401
 from app.domains.recommendations import models as recommendation_models  # noqa: F401
