@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -16,11 +17,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.domains.page_blueprints.lifecycle import blueprint_lifecycle_state_check
 
 
 class PageBlueprint(Base):
     __tablename__ = "page_blueprints"
     __table_args__ = (
+        CheckConstraint(
+            blueprint_lifecycle_state_check(),
+            name="ck_page_blueprints_state",
+        ),
         UniqueConstraint(
             "project_id",
             "id",

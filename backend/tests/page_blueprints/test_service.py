@@ -180,9 +180,12 @@ def test_one_default_blueprint_per_project_page_type(
     assert second.is_default_for_page_type is True
 
 
-def test_create_blueprint_version_advances_each_lineage_independently(
-    session: Session,
-    projects: ProjectFixtures,
+@pytest.mark.parametrize(
+    "state",
+    ["capture_required", "capturing", "ready", "stale", "invalid"],
+)
+def test_create_blueprint_version_accepts_lifecycle_states(
+    session: Session, projects: ProjectFixtures, state: str
 ) -> None:
     source_page(session, projects)
     original_a = blueprint(
@@ -208,7 +211,7 @@ def test_create_blueprint_version_advances_each_lineage_independently(
         wordpress_blueprint_id=903,
         structure_hash="hash-a-v2",
         content_schema=valid_schema(),
-        state="draft",
+        state=state,
     )
     replacement_b = create_blueprint_version(
         session,
@@ -216,7 +219,7 @@ def test_create_blueprint_version_advances_each_lineage_independently(
         wordpress_blueprint_id=904,
         structure_hash="hash-b-v2",
         content_schema=valid_schema(),
-        state="draft",
+        state=state,
     )
 
     assert replacement_a.version == 2
@@ -226,6 +229,8 @@ def test_create_blueprint_version_advances_each_lineage_independently(
     assert replacement_a.id != replacement_b.id
     assert replacement_a.supersedes_id == original_a.id
     assert replacement_b.supersedes_id == original_b.id
+    assert replacement_a.state == state
+    assert replacement_b.state == state
     assert original_a.structure_hash == "hash-v1"
     assert original_b.structure_hash == "hash-v1"
 
@@ -252,18 +257,18 @@ def test_create_blueprint_version_uses_explicit_state_and_preserves_default(
         wordpress_blueprint_id=906,
         structure_hash="hash-v2",
         content_schema=valid_schema(),
-        state="draft",
+        state="ready",
     )
 
     session.refresh(original)
     session.refresh(replacement)
-    assert replacement.state == "draft"
+    assert replacement.state == "ready"
     assert replacement.is_default_for_page_type is False
     assert original.is_default_for_page_type is True
     assert replacement.supersedes_id == original.id
 
 
-def test_create_blueprint_version_rejects_invalid_successor_state_before_persisting(
+def test_create_blueprint_version_rejects_draft_state_before_persisting(
     session: Session,
     projects: ProjectFixtures,
 ) -> None:
@@ -285,7 +290,7 @@ def test_create_blueprint_version_rejects_invalid_successor_state_before_persist
             wordpress_blueprint_id=908,
             structure_hash="hash-v2",
             content_schema=valid_schema(),
-            state="invalid",
+            state="draft",
         )
 
     assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1
@@ -310,7 +315,7 @@ def test_create_blueprint_version_rejects_invalid_schema_before_persisting(
             wordpress_blueprint_id=903,
             structure_hash="hash-v2",
             content_schema=invalid_schema,
-            state="draft",
+            state="capturing",
         )
 
     assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1
@@ -323,7 +328,7 @@ def test_set_default_blueprint_rejects_non_ready_blueprints_before_mutating_defa
     source_page(session, projects)
     current_default = blueprint(projects.member_project.id, "service", version=1)
     candidate = blueprint(projects.member_project.id, "service", version=2)
-    candidate.state = "draft"
+    candidate.state = "capturing"
     session.add_all([current_default, candidate])
     session.commit()
 

@@ -140,6 +140,46 @@ def blueprint(
     )
 
 
+@pytest.mark.parametrize(
+    "state",
+    [
+        "capture_required",
+        "capturing",
+        "ready",
+        "stale",
+        "invalid",
+    ],
+)
+def test_page_blueprint_lifecycle_states_persist(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+    state: str,
+) -> None:
+    del source_page
+    lifecycle_blueprint = blueprint(projects.member_project.id, "service", version=1)
+    lifecycle_blueprint.state = state
+    session.add(lifecycle_blueprint)
+    session.commit()
+
+    session.refresh(lifecycle_blueprint)
+    assert lifecycle_blueprint.state == state
+
+
+def test_page_blueprint_rejects_draft_state_at_database_boundary(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    draft_blueprint = blueprint(projects.member_project.id, "service", version=1)
+    draft_blueprint.state = "draft"
+    session.add(draft_blueprint)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 @pytest.fixture
 def source_page(session: Session, projects: ProjectFixtures) -> WordPressPage:
     page = WordPressPage(

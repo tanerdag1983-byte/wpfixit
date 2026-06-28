@@ -3,10 +3,14 @@ from uuid import NAMESPACE_URL, uuid5
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from app.domains.page_blueprints.lifecycle import (
+    BLUEPRINT_LIFECYCLE_STATES,
+    BlueprintLifecycleState,
+)
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema
 
-_ALLOWED_BLUEPRINT_STATES = {"draft", "ready"}
+_ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
 
 
 def _validated_schema(content_schema: dict) -> dict:
@@ -44,7 +48,7 @@ def create_blueprint_version(
     wordpress_blueprint_id: int,
     structure_hash: str,
     content_schema: dict,
-    state: str,
+    state: BlueprintLifecycleState,
 ) -> PageBlueprint:
     validated_schema = _validated_schema(content_schema)
     validated_state = _validated_state(state)

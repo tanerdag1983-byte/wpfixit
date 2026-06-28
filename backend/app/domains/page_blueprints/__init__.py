@@ -1,5 +1,9 @@
 """Immutable managed page blueprint persistence contracts."""
 
+from app.domains.page_blueprints.lifecycle import (
+    BLUEPRINT_LIFECYCLE_STATES,
+    BlueprintLifecycleState,
+)
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import (
     BlueprintBlock,
@@ -15,6 +19,8 @@ __all__ = [
     "BlueprintBlock",
     "BlueprintField",
     "BlueprintSchema",
+    "BLUEPRINT_LIFECYCLE_STATES",
+    "BlueprintLifecycleState",
     "PageBlueprint",
     "create_blueprint_version",
     "set_default_blueprint",

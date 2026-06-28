@@ -430,3 +430,36 @@ None beyond the usual SQLite/PostgreSQL migration parity checks already exercise
 ### Commit
 
 `b535dc9803ed3e124871e97335c02b6f981c35d0` (`fix: version blueprints by lineage`)
+
+## Lifecycle-state review adjudication
+- Accepted: blueprint lifecycle states are exactly capture_required, capturing, ready, stale, and invalid. The accidental draft state is removed and persistence must reject unknown states.
+
+## Lifecycle-state implementation
+
+Completed the final lifecycle-state contract fix for managed page blueprints:
+
+- Added a shared lifecycle contract in `backend/app/domains/page_blueprints/lifecycle.py` with the exact states:
+  - `capture_required`
+  - `capturing`
+  - `ready`
+  - `stale`
+  - `invalid`
+- Updated `create_blueprint_version()` to accept only that contract and reject `draft`.
+- Added a matching `CheckConstraint` on `PageBlueprint.state` in both ORM metadata and migration `0017_managed_page_blueprints.py`.
+- Kept `set_default_blueprint()` ready-only.
+- Added tests for:
+  - all five valid lifecycle states persisting through the service,
+  - `draft` being rejected by the service,
+  - `draft` being rejected by direct DB persistence,
+  - ready-only default behavior remaining intact.
+
+### Verification
+
+- Focused page blueprint tests: `25 passed`
+- Full backend pytest: `168 passed`
+- Ruff: `All checks passed!`
+- Alembic upgrade head: `Context impl PostgresqlImpl.`
+
+### Commit
+
+`pending`

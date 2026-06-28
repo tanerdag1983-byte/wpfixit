@@ -10,6 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 
 from alembic import op
+from app.domains.page_blueprints.lifecycle import blueprint_lifecycle_state_check
 
 revision: str = "0017_managed_page_blueprints"
 down_revision: str | None = "0016_page_pkg_proposals"
@@ -55,6 +56,10 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            blueprint_lifecycle_state_check(),
+            name="ck_page_blueprints_state",
         ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
