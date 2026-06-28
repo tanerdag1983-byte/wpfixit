@@ -1,12 +1,23 @@
-from sqlalchemy import func, select, update
+from uuid import NAMESPACE_URL, uuid5
+
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema
 
+_ALLOWED_BLUEPRINT_STATES = {"draft", "ready"}
+
 
 def _validated_schema(content_schema: dict) -> dict:
     return BlueprintSchema.model_validate(content_schema).model_dump(mode="python")
+
+
+def _validated_state(state: str) -> str:
+    if state not in _ALLOWED_BLUEPRINT_STATES:
+        allowed_states = ", ".join(sorted(_ALLOWED_BLUEPRINT_STATES))
+        raise ValueError(f"state must be one of: {allowed_states}")
+    return state
 
 
 def set_default_blueprint(session: Session, blueprint: PageBlueprint) -> None:
@@ -33,16 +44,13 @@ def create_blueprint_version(
     wordpress_blueprint_id: int,
     structure_hash: str,
     content_schema: dict,
+    state: str,
 ) -> PageBlueprint:
     validated_schema = _validated_schema(content_schema)
-    next_version = session.scalar(
-        select(func.max(PageBlueprint.version)).where(
-            PageBlueprint.project_id == original.project_id,
-            PageBlueprint.page_type == original.page_type,
-        )
-    )
+    validated_state = _validated_state(state)
+    next_version = original.version + 1
     replacement = PageBlueprint(
-        id=f"{original.id}-v{(next_version or original.version) + 1}",
+        id=str(uuid5(NAMESPACE_URL, f"page-blueprint:{original.id}:{next_version}")),
         project_id=original.project_id,
         name=original.name,
         page_type=original.page_type,
@@ -50,19 +58,15 @@ def create_blueprint_version(
         wordpress_blueprint_id=wordpress_blueprint_id,
         builder=original.builder,
         seo_plugin=original.seo_plugin,
-        version=(next_version or original.version) + 1,
+        version=next_version,
         structure_hash=structure_hash,
         content_schema=validated_schema,
-        state=original.state,
+        state=validated_state,
         is_default_for_page_type=False,
         supersedes_id=original.id,
     )
     session.add(replacement)
     session.commit()
     session.refresh(replacement)
-
-    if original.is_default_for_page_type:
-        set_default_blueprint(session, replacement)
-        session.refresh(replacement)
 
     return replacement

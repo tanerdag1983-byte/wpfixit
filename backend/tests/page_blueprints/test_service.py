@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from dataclasses import dataclass
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -121,21 +122,24 @@ def blueprint(
     project_id: str,
     page_type: str,
     version: int,
+    blueprint_id: str | None = None,
+    wordpress_blueprint_id: int | None = None,
+    state: str = "ready",
     supersedes_id: str | None = None,
 ) -> PageBlueprint:
     return PageBlueprint(
-        id=f"blueprint-{page_type}-{version}",
+        id=blueprint_id or f"blueprint-{page_type}-{version}",
         project_id=project_id,
         name=f"{page_type.title()}pagina",
         page_type=page_type,
         source_wordpress_page_id="source-page",
-        wordpress_blueprint_id=900 + version,
+        wordpress_blueprint_id=wordpress_blueprint_id or 900 + version,
         builder="acf",
         seo_plugin="yoast",
         version=version,
         structure_hash=f"hash-v{version}",
         content_schema=valid_schema(),
-        state="ready",
+        state=state,
         is_default_for_page_type=False,
         supersedes_id=supersedes_id,
     )
@@ -176,26 +180,115 @@ def test_one_default_blueprint_per_project_page_type(
     assert second.is_default_for_page_type is True
 
 
-def test_new_version_is_immutable_and_supersedes_previous(
+def test_create_blueprint_version_advances_each_lineage_independently(
     session: Session,
     projects: ProjectFixtures,
 ) -> None:
     source_page(session, projects)
-    original = blueprint(projects.member_project.id, "brand", version=1)
+    original_a = blueprint(
+        projects.member_project.id,
+        "brand",
+        version=1,
+        blueprint_id="11111111-1111-4111-8111-111111111111",
+        wordpress_blueprint_id=901,
+    )
+    original_b = blueprint(
+        projects.member_project.id,
+        "brand",
+        version=1,
+        blueprint_id="22222222-2222-4222-8222-222222222222",
+        wordpress_blueprint_id=902,
+    )
+    session.add_all([original_a, original_b])
+    session.commit()
+
+    replacement_a = create_blueprint_version(
+        session,
+        original_a,
+        wordpress_blueprint_id=903,
+        structure_hash="hash-a-v2",
+        content_schema=valid_schema(),
+        state="draft",
+    )
+    replacement_b = create_blueprint_version(
+        session,
+        original_b,
+        wordpress_blueprint_id=904,
+        structure_hash="hash-b-v2",
+        content_schema=valid_schema(),
+        state="draft",
+    )
+
+    assert replacement_a.version == 2
+    assert replacement_b.version == 2
+    assert UUID(replacement_a.id).version == 5
+    assert UUID(replacement_b.id).version == 5
+    assert replacement_a.id != replacement_b.id
+    assert replacement_a.supersedes_id == original_a.id
+    assert replacement_b.supersedes_id == original_b.id
+    assert original_a.structure_hash == "hash-v1"
+    assert original_b.structure_hash == "hash-v1"
+
+
+def test_create_blueprint_version_uses_explicit_state_and_preserves_default(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    source_page(session, projects)
+    original = blueprint(
+        projects.member_project.id,
+        "service",
+        version=1,
+        blueprint_id="33333333-3333-4333-8333-333333333333",
+        wordpress_blueprint_id=905,
+    )
+    original.is_default_for_page_type = True
     session.add(original)
     session.commit()
 
     replacement = create_blueprint_version(
         session,
         original,
-        wordpress_blueprint_id=902,
+        wordpress_blueprint_id=906,
         structure_hash="hash-v2",
         content_schema=valid_schema(),
+        state="draft",
     )
 
-    assert replacement.version == 2
+    session.refresh(original)
+    session.refresh(replacement)
+    assert replacement.state == "draft"
+    assert replacement.is_default_for_page_type is False
+    assert original.is_default_for_page_type is True
     assert replacement.supersedes_id == original.id
-    assert original.structure_hash == "hash-v1"
+
+
+def test_create_blueprint_version_rejects_invalid_successor_state_before_persisting(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    source_page(session, projects)
+    original = blueprint(
+        projects.member_project.id,
+        "service",
+        version=1,
+        blueprint_id="44444444-4444-4444-8444-444444444444",
+        wordpress_blueprint_id=907,
+    )
+    session.add(original)
+    session.commit()
+
+    with pytest.raises(ValueError):
+        create_blueprint_version(
+            session,
+            original,
+            wordpress_blueprint_id=908,
+            structure_hash="hash-v2",
+            content_schema=valid_schema(),
+            state="invalid",
+        )
+
+    assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1
 
 
 def test_create_blueprint_version_rejects_invalid_schema_before_persisting(
@@ -217,7 +310,8 @@ def test_create_blueprint_version_rejects_invalid_schema_before_persisting(
             wordpress_blueprint_id=903,
             structure_hash="hash-v2",
             content_schema=invalid_schema,
-    )
+            state="draft",
+        )
 
     assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1
 
