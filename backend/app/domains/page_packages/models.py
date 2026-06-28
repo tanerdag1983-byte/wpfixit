@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -43,6 +52,17 @@ class ProjectPagePackageSettings(Base):
 
 class PagePackageProposal(Base):
     __tablename__ = "page_package_proposals"
+    __table_args__ = (
+        CheckConstraint(
+            "("
+            "(blueprint_id IS NULL AND blueprint_version IS NULL AND "
+            "blueprint_structure_hash IS NULL) OR "
+            "(blueprint_id IS NOT NULL AND blueprint_version IS NOT NULL AND "
+            "blueprint_structure_hash IS NOT NULL)"
+            ")",
+            name="ck_page_package_proposals_blueprint_identity_all_or_none",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(

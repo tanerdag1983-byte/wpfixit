@@ -52,6 +52,11 @@ class WordPressPage(Base):
             "post_type",
             name="uq_wordpress_page_identity",
         ),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_wordpress_pages_project_id_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

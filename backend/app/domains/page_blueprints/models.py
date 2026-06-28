@@ -1,11 +1,16 @@
+from datetime import datetime
+
 from sqlalchemy import (
     JSON,
     Boolean,
+    DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -33,6 +38,12 @@ class PageBlueprint(Base):
             postgresql_where=text("is_default_for_page_type = true"),
             sqlite_where=text("is_default_for_page_type = 1"),
         ),
+        ForeignKeyConstraint(
+            ["project_id", "source_wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_page_blueprints_source_wordpress_page_project",
+            ondelete="RESTRICT",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -43,10 +54,7 @@ class PageBlueprint(Base):
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     page_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    source_wordpress_page_id: Mapped[str] = mapped_column(
-        ForeignKey("wordpress_pages.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    source_wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
     wordpress_blueprint_id: Mapped[int] = mapped_column(Integer, nullable=False)
     builder: Mapped[str] = mapped_column(String(32), nullable=False)
     seo_plugin: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -62,4 +70,15 @@ class PageBlueprint(Base):
     )
     supersedes_id: Mapped[str | None] = mapped_column(
         ForeignKey("page_blueprints.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )

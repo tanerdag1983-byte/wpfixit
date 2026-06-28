@@ -18,6 +18,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "uq_wordpress_pages_project_id_id",
+        "wordpress_pages",
+        ["project_id", "id"],
+    )
     op.create_table(
         "page_blueprints",
         sa.Column("id", sa.String(length=64), nullable=False),
@@ -39,10 +44,23 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("supersedes_id", sa.String(length=64), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
-            ["source_wordpress_page_id"],
-            ["wordpress_pages.id"],
+            ["project_id", "source_wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_page_blueprints_source_wordpress_page_project",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -85,6 +103,16 @@ def upgrade() -> None:
         "page_package_proposals",
         sa.Column("blueprint_structure_hash", sa.String(length=128), nullable=True),
     )
+    op.create_check_constraint(
+        "ck_page_package_proposals_blueprint_identity_all_or_none",
+        "page_package_proposals",
+        "("
+        "(blueprint_id IS NULL AND blueprint_version IS NULL AND "
+        "blueprint_structure_hash IS NULL) OR "
+        "(blueprint_id IS NOT NULL AND blueprint_version IS NOT NULL AND "
+        "blueprint_structure_hash IS NOT NULL)"
+        ")",
+    )
     op.create_foreign_key(
         "fk_page_package_proposals_blueprint_id",
         "page_package_proposals",
@@ -101,6 +129,11 @@ def downgrade() -> None:
         "page_package_proposals",
         type_="foreignkey",
     )
+    op.drop_constraint(
+        "ck_page_package_proposals_blueprint_identity_all_or_none",
+        "page_package_proposals",
+        type_="check",
+    )
     op.drop_column("page_package_proposals", "blueprint_structure_hash")
     op.drop_column("page_package_proposals", "blueprint_version")
     op.drop_column("page_package_proposals", "blueprint_id")
@@ -108,3 +141,8 @@ def downgrade() -> None:
     op.drop_index("uq_page_blueprint_default_per_type", table_name="page_blueprints")
     op.drop_index("ix_page_blueprints_project_id", table_name="page_blueprints")
     op.drop_table("page_blueprints")
+    op.drop_constraint(
+        "uq_wordpress_pages_project_id_id",
+        "wordpress_pages",
+        type_="unique",
+    )

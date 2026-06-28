@@ -217,6 +217,28 @@ def test_create_blueprint_version_rejects_invalid_schema_before_persisting(
             wordpress_blueprint_id=903,
             structure_hash="hash-v2",
             content_schema=invalid_schema,
-        )
+    )
 
     assert session.scalar(select(func.count()).select_from(PageBlueprint)) == 1
+
+
+def test_set_default_blueprint_rejects_non_ready_blueprints_before_mutating_defaults(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    source_page(session, projects)
+    current_default = blueprint(projects.member_project.id, "service", version=1)
+    candidate = blueprint(projects.member_project.id, "service", version=2)
+    candidate.state = "draft"
+    session.add_all([current_default, candidate])
+    session.commit()
+
+    set_default_blueprint(session, current_default)
+
+    with pytest.raises(ValueError):
+        set_default_blueprint(session, candidate)
+
+    session.refresh(current_default)
+    session.refresh(candidate)
+    assert current_default.is_default_for_page_type is True
+    assert candidate.is_default_for_page_type is False

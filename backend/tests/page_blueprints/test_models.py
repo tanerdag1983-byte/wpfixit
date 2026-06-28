@@ -9,7 +9,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.domains.audits import models as audit_models  # noqa: F401
+from app.domains.dataforseo.models import KeywordOpportunity
+from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.models import (
     Organization,
     OrganizationMember,
@@ -197,6 +200,114 @@ def test_second_successor_for_same_blueprint_fails(
         supersedes_id=original.id,
     )
     session.add(second_successor)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_legacy_page_package_proposal_without_blueprint_identity_is_allowed(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    opportunity = KeywordOpportunity(
+        id="opportunity-legacy",
+        project_id=projects.member_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-legacy",
+        project_id=projects.member_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    proposal = PagePackageProposal(
+        id="proposal-legacy",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id=job.id,
+        blueprint_id=None,
+        blueprint_version=None,
+        blueprint_structure_hash=None,
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    session.add(proposal)
+    session.commit()
+
+    assert session.get(PagePackageProposal, proposal.id) is not None
+
+
+def test_partial_page_package_blueprint_identity_is_rejected(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    existing_blueprint = blueprint(projects.member_project.id, "service", version=1)
+    session.add(existing_blueprint)
+    session.commit()
+
+    opportunity = KeywordOpportunity(
+        id="opportunity-partial",
+        project_id=projects.member_project.id,
+        keyword="dsg versnellingsbak reviseren",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=[],
+        source="dataforseo",
+        raw_payload={},
+    )
+    job = Job(
+        id="job-partial",
+        project_id=projects.member_project.id,
+        job_type="page_package_generation",
+    )
+    session.add_all([opportunity, job])
+    session.commit()
+
+    proposal = PagePackageProposal(
+        id="proposal-partial",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id=job.id,
+        blueprint_id=existing_blueprint.id,
+        blueprint_version=None,
+        blueprint_structure_hash=None,
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    session.add(proposal)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_blueprint_source_page_must_belong_to_same_project(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    cross_project_blueprint = blueprint(
+        projects.other_project.id,
+        "service",
+        version=1,
+    )
+    session.add(cross_project_blueprint)
 
     with pytest.raises(IntegrityError):
         session.commit()

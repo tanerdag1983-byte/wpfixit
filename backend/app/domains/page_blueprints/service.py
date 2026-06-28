@@ -10,6 +10,9 @@ def _validated_schema(content_schema: dict) -> dict:
 
 
 def set_default_blueprint(session: Session, blueprint: PageBlueprint) -> None:
+    if blueprint.state != "ready":
+        raise ValueError("Only ready blueprints can be set as the default")
+
     session.execute(
         update(PageBlueprint)
         .where(
