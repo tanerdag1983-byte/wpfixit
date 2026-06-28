@@ -462,4 +462,32 @@ Completed the final lifecycle-state contract fix for managed page blueprints:
 
 ### Commit
 
-`pending`
+`fc3b7b85cb667108e9c76ff8b85f5a94a747976a`
+
+## Persistence-boundary review adjudication
+- Accepted: add a DB check that a default blueprint must have state ready.
+- Accepted: make supersedes a same-project composite foreign key.
+- Not accepted as a DB constraint: exact predecessor version + 1 is a cross-row arithmetic invariant and is intentionally enforced by create_blueprint_version, the sole lineage mutation interface, together with the unique one-successor constraint and tests. A database trigger would duplicate domain behavior and diverge across SQLite/PostgreSQL.
+
+## Default-readiness and supersedes implementation
+
+Implemented the two accepted Task 1 database invariants for managed page blueprints:
+
+- Added a database `CheckConstraint` on `PageBlueprint` that rejects any default blueprint unless its state is `ready`.
+- Replaced the single-column self-referential `supersedes_id` foreign key with a same-project composite foreign key:
+  - `(project_id, supersedes_id) -> (project_id, id)`
+- Added the minimal supporting `UniqueConstraint(project_id, id)` needed for the composite FK to work on both SQLite and PostgreSQL.
+- Kept the existing unique `supersedes_id` rule so one blueprint still has only one successor.
+- Left version arithmetic in the service layer unchanged.
+
+### Verification
+
+- Focused page blueprint model tests: `17 passed`
+- Focused page blueprint service tests: `10 passed`
+- Alembic upgrade head: `Context impl PostgresqlImpl.`
+- Ruff: `All checks passed!`
+- Full backend pytest: `170 passed`
+
+### Commit
+
+`ed39af3f15840c30bf0c4f8aa9082f3eb468dcee`

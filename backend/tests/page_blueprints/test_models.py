@@ -243,6 +243,37 @@ def test_one_default_blueprint_per_project_page_type(
         session.commit()
 
 
+def test_default_blueprint_requires_ready_state_on_insert_and_update(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    stale_default = blueprint(projects.member_project.id, "service", version=1)
+    stale_default.state = "stale"
+    stale_default.is_default_for_page_type = True
+    session.add(stale_default)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+    session.rollback()
+
+    ready_default = blueprint(projects.member_project.id, "service", version=2)
+    ready_default.is_default_for_page_type = True
+    session.add(ready_default)
+    session.commit()
+
+    session.refresh(ready_default)
+    assert ready_default.state == "ready"
+    assert ready_default.is_default_for_page_type is True
+
+    ready_default.state = "stale"
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_page_package_proposal_accepts_matching_blueprint_identity(
     session: Session,
     projects: ProjectFixtures,
@@ -450,6 +481,41 @@ def test_second_successor_for_same_blueprint_fails(
         supersedes_id=original.id,
     )
     session.add(second_successor)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_supersedes_requires_same_project(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    original = blueprint(projects.member_project.id, "brand", version=1)
+    same_project_successor = blueprint(
+        projects.member_project.id,
+        "brand",
+        version=2,
+        supersedes_id=original.id,
+    )
+    session.add_all([original, same_project_successor])
+    session.commit()
+
+    session.refresh(same_project_successor)
+    assert same_project_successor.supersedes_id == original.id
+
+    foreign_original = blueprint(projects.member_project.id, "service", version=3)
+    session.add(foreign_original)
+    session.commit()
+
+    cross_project_successor = blueprint(
+        projects.other_project.id,
+        "service",
+        version=2,
+        supersedes_id=foreign_original.id,
+    )
+    session.add(cross_project_successor)
 
     with pytest.raises(IntegrityError):
         session.commit()

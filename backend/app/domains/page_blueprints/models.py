@@ -27,12 +27,21 @@ class PageBlueprint(Base):
             blueprint_lifecycle_state_check(),
             name="ck_page_blueprints_state",
         ),
+        CheckConstraint(
+            "is_default_for_page_type = false OR state = 'ready'",
+            name="ck_page_blueprints_default_ready",
+        ),
         UniqueConstraint(
             "project_id",
             "id",
             "version",
             "structure_hash",
             name="uq_page_blueprints_project_identity",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_page_blueprints_project_id_id",
         ),
         UniqueConstraint(
             "project_id",
@@ -55,6 +64,12 @@ class PageBlueprint(Base):
             ["project_id", "source_wordpress_page_id"],
             ["wordpress_pages.project_id", "wordpress_pages.id"],
             name="fk_page_blueprints_source_wordpress_page_project",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "supersedes_id"],
+            ["page_blueprints.project_id", "page_blueprints.id"],
+            name="fk_page_blueprints_supersedes_project",
             ondelete="RESTRICT",
         ),
     )
@@ -81,9 +96,7 @@ class PageBlueprint(Base):
         server_default="0",
         nullable=False,
     )
-    supersedes_id: Mapped[str | None] = mapped_column(
-        ForeignKey("page_blueprints.id", ondelete="RESTRICT")
-    )
+    supersedes_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

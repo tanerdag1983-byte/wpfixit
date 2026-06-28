@@ -61,6 +61,10 @@ def upgrade() -> None:
             blueprint_lifecycle_state_check(),
             name="ck_page_blueprints_state",
         ),
+        sa.CheckConstraint(
+            "is_default_for_page_type = false OR state = 'ready'",
+            name="ck_page_blueprints_default_ready",
+        ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["project_id", "source_wordpress_page_id"],
@@ -69,8 +73,9 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["supersedes_id"],
-            ["page_blueprints.id"],
+            ["project_id", "supersedes_id"],
+            ["page_blueprints.project_id", "page_blueprints.id"],
+            name="fk_page_blueprints_supersedes_project",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -80,6 +85,11 @@ def upgrade() -> None:
             "version",
             "structure_hash",
             name="uq_page_blueprints_project_identity",
+        ),
+        sa.UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_page_blueprints_project_id_id",
         ),
         sa.UniqueConstraint(
             "project_id",
