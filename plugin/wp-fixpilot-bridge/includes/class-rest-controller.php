@@ -6,18 +6,22 @@ final class WPFixPilot_REST_Controller
 {
     private const NAMESPACE = 'wpfixpilot/v1';
 
+    private WPFixPilot_Auth $auth;
+
     private WPFixPilot_Page_Package_Controller $pagePackageController;
 
     private WPFixPilot_Blueprint_Controller $blueprintController;
 
     public function __construct(
         ?WPFixPilot_Page_Package_Controller $pagePackageController = null,
-        ?WPFixPilot_Blueprint_Controller $blueprintController = null
+        ?WPFixPilot_Blueprint_Controller $blueprintController = null,
+        ?WPFixPilot_Auth $auth = null
     ) {
         $this->pagePackageController = $pagePackageController
             ?? new WPFixPilot_Page_Package_Controller();
         $this->blueprintController = $blueprintController
             ?? new WPFixPilot_Blueprint_Controller();
+        $this->auth = $auth ?? $this->build_default_auth();
     }
 
     public function register_routes(): void
@@ -83,23 +87,7 @@ final class WPFixPilot_REST_Controller
 
     public function authorize(WP_REST_Request $request): bool|WP_Error
     {
-        $secret = (string) get_option('wp_fixpilot_secret', '');
-        $auth = new WPFixPilot_Auth(
-            $secret,
-            null,
-            300,
-            static fn (string $nonce): bool =>
-                get_transient('wp_fixpilot_nonce_' . hash('sha256', $nonce)) !== false,
-            static function (string $nonce): void {
-                set_transient(
-                    'wp_fixpilot_nonce_' . hash('sha256', $nonce),
-                    '1',
-                    300
-                );
-            }
-        );
-
-        $valid = $auth->verify(
+        $valid = $this->auth->verify(
             $request->get_method(),
             $request->get_route(),
             (string) $request->get_header('x-wp-fixpilot-timestamp'),
@@ -115,6 +103,26 @@ final class WPFixPilot_REST_Controller
             );
         }
         return true;
+    }
+
+    private function build_default_auth(): WPFixPilot_Auth
+    {
+        $secret = (string) get_option('wp_fixpilot_secret', '');
+
+        return new WPFixPilot_Auth(
+            $secret,
+            null,
+            300,
+            static fn (string $nonce): bool =>
+                get_transient('wp_fixpilot_nonce_' . hash('sha256', $nonce)) !== false,
+            static function (string $nonce): void {
+                set_transient(
+                    'wp_fixpilot_nonce_' . hash('sha256', $nonce),
+                    '1',
+                    300
+                );
+            }
+        );
     }
 
     public function health(): WP_REST_Response

@@ -803,11 +803,17 @@ assert(is_wp_error($seoFailure));
 assert($seoFailure->code === 'wp_fixpilot_draft_failed');
 assert(get_post($seoFailureDraftId) === null);
 
+$restAuth = new WPFixPilot_Auth(
+    'test-secret',
+    static fn (): int => 1710000000,
+    300
+);
 $restController = new WPFixPilot_REST_Controller(
     null,
     new WPFixPilot_Blueprint_Controller([
         new Test_Blueprint_Adapter([19, 20, 22]),
-    ])
+    ]),
+    $restAuth
 );
 $restController->register_routes();
 
@@ -839,7 +845,7 @@ $restCapturePayload = [
 ];
 $restCaptureBody = wp_json_encode($restCapturePayload);
 $restCaptureRoute = '/wp-json/wpfixpilot/v1/blueprints';
-$restCaptureTimestamp = (string) time();
+$restCaptureTimestamp = '1710000000';
 $restCaptureNonce = 'rest-blueprint-capture';
 $restCaptureSignature = WPFixPilot_Auth::sign(
     'test-secret',
@@ -881,6 +887,11 @@ $forbidden = ($captureRoute['args']['permission_callback'])($forbiddenCaptureReq
 assert(is_wp_error($forbidden));
 assert($forbidden->code === 'wp_fixpilot_forbidden');
 assert(($forbidden->data['status'] ?? null) === 403);
+
+$replayedNonce = ($captureRoute['args']['permission_callback'])($authorizedCaptureRequest);
+assert(is_wp_error($replayedNonce));
+assert($replayedNonce->code === 'wp_fixpilot_forbidden');
+assert(($replayedNonce->data['status'] ?? null) === 403);
 
 $inventory = $restController->inventory()->get_data();
 assert($inventory['count'] === 5);

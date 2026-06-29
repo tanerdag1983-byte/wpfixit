@@ -235,3 +235,53 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Commit
 
 - `HEAD` at commit time: `fix: finalize task 2 blueprint lifecycle`
+
+## Authentication-boundary review adjudication
+- Accepted: make WPFixPilot_Auth an explicit injectable REST-controller dependency. Keep the public authorize permission callback for backward-compatible WordPress route registration, but delegate verification to the injected authenticator instead of constructing it inside each request.
+
+## Task 2 Continuation 4 (Authentication-Boundary Fix)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-rest-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v /tmp/wp-fixpilot-auth-red/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 -r 'final class WP_Error { public function __construct(public string $code, public string $message, public array $data = []) {} } final class WP_REST_Request { public function __construct(private string $method, private string $route, private array $headers = [], private string $body = "") {} public function get_method(): string { return $this->method; } public function get_route(): string { return $this->route; } public function get_header(string $key): string { return (string) ($this->headers[$key] ?? ""); } public function get_body(): string { return $this->body; } } final class WPFixPilot_Page_Package_Controller {} final class WPFixPilot_Blueprint_Controller {} final class WPFixPilot_Auth { public function __construct(private string $secret, private ?Closure $clock = null, private int $maxAge = 300) {} public static function sign(string $secret, string $method, string $route, string $timestamp, string $nonce, string $body): string { return hash_hmac("sha256", implode("\\n", [strtoupper($method), $route, $timestamp, $nonce, hash("sha256", $body)]), $secret); } public function verify(string $method, string $route, string $timestamp, string $nonce, string $body, string $signature): bool { return hash_equals(self::sign($this->secret, $method, $route, $timestamp, $nonce, $body), $signature); } } function get_option(string $key, mixed $default = false): mixed { return $key === "wp_fixpilot_secret" ? "test-secret" : $default; } function get_transient(string $key): mixed { return false; } function set_transient(string $key, mixed $value, int $expiration): void {} require_once "includes/class-rest-controller.php"; $auth = new WPFixPilot_Auth("injected-secret", static fn (): int => 1710000000); $controller = new WPFixPilot_REST_Controller(null, new WPFixPilot_Blueprint_Controller(), $auth); $route = "/wp-json/wpfixpilot/v1/blueprints"; $body = "{}"; $timestamp = "1710000000"; $nonce = "nonce-1"; $signature = WPFixPilot_Auth::sign("injected-secret", "POST", $route, $timestamp, $nonce, $body); $request = new WP_REST_Request("POST", $route, ["x-wp-fixpilot-timestamp" => $timestamp, "x-wp-fixpilot-nonce" => $nonce, "x-wp-fixpilot-signature" => $signature], $body); assert($controller->authorize($request) === true);'`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert($controller->authorize($request) === true) in Command line code:1
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 -r 'final class WP_Error { public function __construct(public string $code, public string $message, public array $data = []) {} } final class WP_REST_Request { public function __construct(private string $method, private string $route, private array $headers = [], private string $body = "") {} public function get_method(): string { return $this->method; } public function get_route(): string { return $this->route; } public function get_header(string $key): string { return (string) ($this->headers[$key] ?? ""); } public function get_body(): string { return $this->body; } } final class WPFixPilot_Page_Package_Controller {} final class WPFixPilot_Blueprint_Controller {} final class WPFixPilot_Auth { public function __construct(private string $secret, private ?Closure $clock = null, private int $maxAge = 300) {} public static function sign(string $secret, string $method, string $route, string $timestamp, string $nonce, string $body): string { return hash_hmac("sha256", implode("\\n", [strtoupper($method), $route, $timestamp, $nonce, hash("sha256", $body)]), $secret); } public function verify(string $method, string $route, string $timestamp, string $nonce, string $body, string $signature): bool { return hash_equals(self::sign($this->secret, $method, $route, $timestamp, $nonce, $body), $signature); } } function get_option(string $key, mixed $default = false): mixed { return $key === "wp_fixpilot_secret" ? "test-secret" : $default; } function get_transient(string $key): mixed { return false; } function set_transient(string $key, mixed $value, int $expiration): void {} require_once "includes/class-rest-controller.php"; $auth = new WPFixPilot_Auth("injected-secret", static fn (): int => 1710000000); $controller = new WPFixPilot_REST_Controller(null, new WPFixPilot_Blueprint_Controller(), $auth); $route = "/wp-json/wpfixpilot/v1/blueprints"; $body = "{}"; $timestamp = "1710000000"; $nonce = "nonce-1"; $signature = WPFixPilot_Auth::sign("injected-secret", "POST", $route, $timestamp, $nonce, $body); $request = new WP_REST_Request("POST", $route, ["x-wp-fixpilot-timestamp" => $timestamp, "x-wp-fixpilot-nonce" => $nonce, "x-wp-fixpilot-signature" => $signature], $body); assert($controller->authorize($request) === true);'`
+  - Result: PASS
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Added an optional `WPFixPilot_Auth` dependency to `WPFixPilot_REST_Controller` while keeping the existing constructor call patterns valid.
+- Moved REST authorization to the injected or default authenticator so route permission callbacks still call `authorize(WP_REST_Request)` and the controller no longer rebuilds auth state per request.
+- Preserved the default production auth behavior for `wp_fixpilot_secret`, the 300-second timestamp window, and nonce replay protection via transients.
+- Added a deterministic injected-auth regression in the blueprint lifecycle test that proves:
+  - valid signed blueprint capture succeeds;
+  - invalid signatures fail;
+  - replayed nonces fail;
+  - the registered permission callback and route callback both remain executable.
+
+### Concerns
+
+- None beyond the retained Task 3 adapter-registration boundary already noted above.
