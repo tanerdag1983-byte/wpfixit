@@ -8,7 +8,7 @@ $secret = 'test-secret';
 $timestamp = (string) time();
 $nonce = 'fixed-nonce';
 $method = 'GET';
-$route = '/wp-json/wpfixpilot/v1/inventory';
+$route = '/wpfixpilot/v1/inventory';
 $body = '';
 $signature = WPFixPilot_Auth::sign(
     $secret,
@@ -26,7 +26,21 @@ $auth = new WPFixPilot_Auth(
 );
 
 assert($auth->verify($method, $route, $timestamp, $nonce, $body, $signature));
+assert(!$auth->verify(
+    $method,
+    $route,
+    $timestamp,
+    'wrong-route-nonce',
+    $body,
+    WPFixPilot_Auth::sign(
+        $secret,
+        $method,
+        '/wp-json/wpfixpilot/v1/inventory',
+        $timestamp,
+        'wrong-route-nonce',
+        $body
+    )
+));
 assert(!$auth->verify($method, $route, $timestamp, $nonce, $body, $signature));
 
 echo "auth tests passed\n";
-

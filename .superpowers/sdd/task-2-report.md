@@ -285,3 +285,54 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - None beyond the retained Task 3 adapter-registration boundary already noted above.
+
+## Task 2 Continuation 5 (Contract Alignment Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/auth-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert((string)get_post_meta($noneSeoBlueprintId, '_wp_fixpilot_seo_plugin', true) === '') in /app/tests/blueprint-test.php:691
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Tightened snapshot contract validation to mirror the backend `BlueprintSchema` shape:
+  - `schema_version` must be exactly `blueprint-v1`;
+  - top-level, block, and field keys now follow backend `extra=forbid` semantics;
+  - block `semantic_role` is limited to `hero`, `introduction`, `benefits`, `process`, `faq`, `cta`, and `content`;
+  - field `value_type`, `current_value`, `required`, and `max_length` now enforce backend-compatible types and ranges.
+- Added compact table-driven invalid-schema regressions that prove invalid capture output deletes the cloned blueprint and returns `wp_fixpilot_blueprint_invalid`.
+- Captured the detected SEO plugin exactly once per blueprint snapshot, always persisted `_wp_fixpilot_seo_plugin`, and kept `read()` truthful to the captured snapshot value, including the explicit empty-string `none` case.
+- Added a plugin-drift regression and enforced a 409 conflict in `create_draft()` when the currently detected SEO plugin no longer matches the captured snapshot before any draft clone is created.
+- Routed SEO metadata writes through the validated captured plugin snapshot rather than a second live detection pass.
+- Corrected auth-route regressions to sign canonical WordPress REST routes as `WP_REST_Request::get_route()` returns them:
+  - valid signatures now use `/wpfixpilot/v1/...`;
+  - signatures built against `/wp-json/wpfixpilot/v1/...` are rejected in both `auth-test.php` and `blueprint-test.php`.
+- Preserved prior Task 2 safety behavior, including stale blueprint detection, idempotency guards, draft-only blueprint enforcement, and cleanup on failed capture or draft writes.
+
+### Concerns
+
+- No new scope concerns beyond the retained Task 3 adapter-registration boundary and existing backend ownership of proposal dependency checks.

@@ -357,39 +357,35 @@ final class Apply_Failing_Blueprint_Adapter extends Test_Blueprint_Adapter
     }
 }
 
-final class Empty_Blocks_Blueprint_Adapter extends Test_Blueprint_Adapter
+final class Schema_Contract_Blueprint_Adapter extends Test_Blueprint_Adapter
 {
+    /** @param array<int, int> $sourcePageIds */
+    public function __construct(
+        array $sourcePageIds,
+        private array|WP_Error $configuredSchema,
+        private ?string $configuredHash = null
+    ) {
+        parent::__construct($sourcePageIds);
+    }
+
     public function schema(int $postId): array|WP_Error
     {
-        return [
-            'schema_version' => 'blueprint-v1',
-            'blocks' => [],
-        ];
+        return $this->configuredSchema;
     }
-}
 
-final class Invalid_Field_Blueprint_Adapter extends Test_Blueprint_Adapter
-{
-    public function schema(int $postId): array|WP_Error
-    {
-        $schema = parent::schema($postId);
-        if (is_wp_error($schema)) {
-            return $schema;
-        }
-
-        $schema['blocks'][0]['fields'][0]['id'] = '';
-        $schema['blocks'][0]['fields'][0]['path'] = '';
-
-        return $schema;
-    }
-}
-
-final class Empty_Hash_Blueprint_Adapter extends Test_Blueprint_Adapter
-{
     public function structure_hash(int $postId): string
     {
-        return '';
+        return $this->configuredHash ?? parent::structure_hash($postId);
     }
+}
+
+/** @return array<string, mixed> */
+function valid_test_blueprint_schema(int $postId): array
+{
+    $schema = (new Test_Blueprint_Adapter([$postId]))->schema($postId);
+    assert(is_array($schema));
+
+    return $schema;
 }
 
 require_once __DIR__ . '/../includes/class-auth.php';
@@ -677,53 +673,179 @@ assert($publishedBlueprintDelete->code === 'wp_fixpilot_blueprint_not_draft');
 assert(($publishedBlueprintDelete->data['status'] ?? null) === 409);
 assert(get_post($publishedBlueprintId) instanceof WP_Post);
 
-$emptyBlocksController = new WPFixPilot_Blueprint_Controller([
-    new Empty_Blocks_Blueprint_Adapter([20]),
-]);
-$emptyBlocksBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
-$emptyBlocksCapture = $emptyBlocksController->capture([
-    'source_page_id' => 20,
-    'name' => 'Empty blocks blueprint',
+$noneSeoController = new WPFixPilot_Blueprint_Controller(
+    [new Test_Blueprint_Adapter([21])],
+    null,
+    static fn (): ?string => null
+);
+$noneSeoCapture = $noneSeoController->capture([
+    'source_page_id' => 21,
+    'name' => 'No SEO plugin blueprint',
     'page_type' => 'service',
     'builder' => 'acf',
     'version' => 1,
 ]);
-assert(is_wp_error($emptyBlocksCapture));
-assert($emptyBlocksCapture->code === 'wp_fixpilot_blueprint_invalid');
-assert(($emptyBlocksCapture->data['status'] ?? null) === 500);
-assert(get_post($emptyBlocksBlueprintId) === null);
+assert(!is_wp_error($noneSeoCapture));
+$noneSeoBlueprintId = (int) $noneSeoCapture['wordpress_blueprint_id'];
+assert(array_key_exists('_wp_fixpilot_seo_plugin', $GLOBALS['wpfixpilot_meta'][$noneSeoBlueprintId]));
+assert((string) get_post_meta($noneSeoBlueprintId, '_wp_fixpilot_seo_plugin', true) === '');
+$noneSeoRead = $noneSeoController->read($noneSeoBlueprintId);
+assert($noneSeoRead['seo_plugin'] === '');
 
-$invalidFieldController = new WPFixPilot_Blueprint_Controller([
-    new Invalid_Field_Blueprint_Adapter([20]),
-]);
-$invalidFieldBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
-$invalidFieldCapture = $invalidFieldController->capture([
-    'source_page_id' => 20,
-    'name' => 'Invalid field blueprint',
+$capturedSeoPlugins = ['yoast', 'rank_math'];
+$capturedSeoController = new WPFixPilot_Blueprint_Controller(
+    [new Test_Blueprint_Adapter([22])],
+    null,
+    static function () use (&$capturedSeoPlugins): ?string {
+        return array_shift($capturedSeoPlugins);
+    }
+);
+$capturedSeoBlueprint = $capturedSeoController->capture([
+    'source_page_id' => 22,
+    'name' => 'Captured SEO plugin blueprint',
     'page_type' => 'service',
     'builder' => 'acf',
     'version' => 1,
 ]);
-assert(is_wp_error($invalidFieldCapture));
-assert($invalidFieldCapture->code === 'wp_fixpilot_blueprint_invalid');
-assert(($invalidFieldCapture->data['status'] ?? null) === 500);
-assert(get_post($invalidFieldBlueprintId) === null);
+assert(!is_wp_error($capturedSeoBlueprint));
+$capturedSeoBlueprintId = (int) $capturedSeoBlueprint['wordpress_blueprint_id'];
+assert($capturedSeoBlueprint['seo_plugin'] === 'yoast');
+assert((string) get_post_meta($capturedSeoBlueprintId, '_wp_fixpilot_seo_plugin', true) === 'yoast');
+$capturedSeoRead = $capturedSeoController->read($capturedSeoBlueprintId);
+assert($capturedSeoRead['seo_plugin'] === 'yoast');
 
-$emptyHashController = new WPFixPilot_Blueprint_Controller([
-    new Empty_Hash_Blueprint_Adapter([20]),
+$pluginDriftController = new WPFixPilot_Blueprint_Controller(
+    [new Test_Blueprint_Adapter([22])],
+    null,
+    static fn (): ?string => 'rank_math'
+);
+$pluginDriftDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$pluginDrift = $pluginDriftController->create_draft($capturedSeoBlueprintId, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $capturedSeoBlueprint['structure_hash'],
+    'idempotency_key' => 'proposal-plugin-drift',
+    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
 ]);
-$emptyHashBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
-$emptyHashCapture = $emptyHashController->capture([
-    'source_page_id' => 20,
-    'name' => 'Empty hash blueprint',
-    'page_type' => 'service',
-    'builder' => 'acf',
-    'version' => 1,
-]);
-assert(is_wp_error($emptyHashCapture));
-assert($emptyHashCapture->code === 'wp_fixpilot_blueprint_invalid');
-assert(($emptyHashCapture->data['status'] ?? null) === 500);
-assert(get_post($emptyHashBlueprintId) === null);
+assert(is_wp_error($pluginDrift));
+assert($pluginDrift->code === 'wp_fixpilot_blueprint_conflict');
+assert(($pluginDrift->data['status'] ?? null) === 409);
+assert(get_post($pluginDriftDraftId) === null);
+
+$validSchema = valid_test_blueprint_schema(20);
+$invalidSchemaCases = [
+    [
+        'label' => 'schema version mismatch',
+        'schema' => array_replace($validSchema, ['schema_version' => 'blueprint-v2']),
+    ],
+    [
+        'label' => 'extra top-level key',
+        'schema' => array_replace($validSchema, ['unexpected' => 'value']),
+    ],
+    [
+        'label' => 'missing block semantic role',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            unset($schema['blocks'][0]['semantic_role']);
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'invalid block semantic role',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['semantic_role'] = 'footer';
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'extra block key',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['unexpected'] = 'value';
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'missing required field flag',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            unset($schema['blocks'][0]['fields'][0]['required']);
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'invalid field value type',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['fields'][0]['value_type'] = 'image';
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'non-string current value',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['fields'][0]['current_value'] = ['not-a-string'];
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'invalid max length',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['fields'][0]['max_length'] = 0;
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'extra field key',
+        'schema' => (static function () use ($validSchema): array {
+            $schema = $validSchema;
+            $schema['blocks'][0]['fields'][0]['unexpected'] = 'value';
+
+            return $schema;
+        })(),
+    ],
+    [
+        'label' => 'empty structure hash',
+        'schema' => $validSchema,
+        'structure_hash' => '',
+    ],
+];
+
+foreach ($invalidSchemaCases as $invalidSchemaCase) {
+    $invalidSchemaController = new WPFixPilot_Blueprint_Controller([
+        new Schema_Contract_Blueprint_Adapter(
+            [20],
+            $invalidSchemaCase['schema'],
+            $invalidSchemaCase['structure_hash'] ?? null
+        ),
+    ]);
+    $invalidSchemaBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+    $invalidSchemaCapture = $invalidSchemaController->capture([
+        'source_page_id' => 20,
+        'name' => 'Invalid schema blueprint ' . $invalidSchemaCase['label'],
+        'page_type' => 'service',
+        'builder' => 'acf',
+        'version' => 1,
+    ]);
+    assert(is_wp_error($invalidSchemaCapture), $invalidSchemaCase['label']);
+    assert($invalidSchemaCapture->code === 'wp_fixpilot_blueprint_invalid', $invalidSchemaCase['label']);
+    assert(($invalidSchemaCapture->data['status'] ?? null) === 500, $invalidSchemaCase['label']);
+    assert(get_post($invalidSchemaBlueprintId) === null, $invalidSchemaCase['label']);
+}
 
 $schemaFailureController = new WPFixPilot_Blueprint_Controller([
     new Schema_Failing_Blueprint_Adapter([20]),
@@ -844,7 +966,7 @@ $restCapturePayload = [
     'version' => 1,
 ];
 $restCaptureBody = wp_json_encode($restCapturePayload);
-$restCaptureRoute = '/wp-json/wpfixpilot/v1/blueprints';
+$restCaptureRoute = '/wpfixpilot/v1/blueprints';
 $restCaptureTimestamp = '1710000000';
 $restCaptureNonce = 'rest-blueprint-capture';
 $restCaptureSignature = WPFixPilot_Auth::sign(
@@ -871,6 +993,29 @@ $captureResponse = ($captureRoute['args']['callback'])($authorizedCaptureRequest
 assert($captureResponse instanceof WP_REST_Response);
 assert($captureResponse->status === 201);
 assert($captureResponse->get_data()['status'] === 'ready');
+
+$wrongRouteSignatureRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restCapturePayload,
+    [
+        'x-wp-fixpilot-timestamp' => $restCaptureTimestamp,
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-capture-wrong-route',
+        'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+            'test-secret',
+            'POST',
+            '/wp-json/wpfixpilot/v1/blueprints',
+            $restCaptureTimestamp,
+            'rest-blueprint-capture-wrong-route',
+            $restCaptureBody
+        ),
+    ],
+    $restCaptureBody
+);
+$wrongRouteSignature = ($captureRoute['args']['permission_callback'])($wrongRouteSignatureRequest);
+assert(is_wp_error($wrongRouteSignature));
+assert($wrongRouteSignature->code === 'wp_fixpilot_forbidden');
+assert(($wrongRouteSignature->data['status'] ?? null) === 403);
 
 $forbiddenCaptureRequest = new WP_REST_Request(
     'POST',
