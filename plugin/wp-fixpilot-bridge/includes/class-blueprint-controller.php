@@ -73,6 +73,14 @@ final class WPFixPilot_Blueprint_Controller
                 return $schema;
             }
             $structureHash = $adapter->structure_hash($blueprintId);
+            $snapshotValidation = $this->validate_snapshot_contract(
+                $schema,
+                $structureHash
+            );
+            if (is_wp_error($snapshotValidation)) {
+                wp_delete_post($blueprintId, true);
+                return $snapshotValidation;
+            }
 
             update_post_meta($blueprintId, '_wp_fixpilot_source_page_id', $sourceId);
             update_post_meta($blueprintId, '_wp_fixpilot_blueprint_builder', $adapter->key());
@@ -203,10 +211,25 @@ final class WPFixPilot_Blueprint_Controller
                 '_wp_fixpilot_source_blueprint_id',
                 true
             );
-            if ($existingBlueprintId !== $blueprintId) {
+            $existingVersion = (int) get_post_meta(
+                $existingDraftId,
+                '_wp_fixpilot_blueprint_version',
+                true
+            );
+            $existingStructureHash = (string) get_post_meta(
+                $existingDraftId,
+                '_wp_fixpilot_blueprint_structure_hash',
+                true
+            );
+            if (
+                $existingBlueprintId !== $blueprintId
+                || $existingVersion !== $storedVersion
+                || $existingStructureHash === ''
+                || !hash_equals($currentHash, $existingStructureHash)
+            ) {
                 return new WP_Error(
                     'wp_fixpilot_blueprint_conflict',
-                    'De idempotency-sleutel hoort al bij een andere blueprint.',
+                    'De idempotency-sleutel hoort bij een andere blueprint-snapshot.',
                     ['status' => 409]
                 );
             }
@@ -231,6 +254,11 @@ final class WPFixPilot_Blueprint_Controller
             update_post_meta($draftId, '_wp_fixpilot_idempotency_key', $idempotencyKey);
             update_post_meta($draftId, '_wp_fixpilot_source_blueprint_id', $blueprintId);
             update_post_meta($draftId, '_wp_fixpilot_blueprint_version', $storedVersion);
+            update_post_meta(
+                $draftId,
+                '_wp_fixpilot_blueprint_structure_hash',
+                $currentHash
+            );
 
             $write = $adapter->apply_replacements($draftId, $schema, $replacements);
             if (is_wp_error($write)) {
@@ -329,6 +357,13 @@ final class WPFixPilot_Blueprint_Controller
                 ['status' => 404]
             );
         }
+        if ($post->post_status !== 'draft') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_not_draft',
+                'Blueprintpagina is geen concept meer.',
+                ['status' => 409]
+            );
+        }
 
         return $post;
     }
@@ -350,18 +385,19 @@ final class WPFixPilot_Blueprint_Controller
         if (is_wp_error($schema)) {
             return $schema;
         }
-        if (!is_array($schema) || !isset($schema['schema_version'], $schema['blocks'])) {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_invalid',
-                'De blueprint-inhoud is ongeldig.',
-                ['status' => 500]
-            );
+        $structureHash = $adapter->structure_hash($blueprintId);
+        $snapshotValidation = $this->validate_snapshot_contract(
+            $schema,
+            $structureHash
+        );
+        if (is_wp_error($snapshotValidation)) {
+            return $snapshotValidation;
         }
 
         return [
             'adapter' => $adapter,
             'schema' => $schema,
-            'structure_hash' => $adapter->structure_hash($blueprintId),
+            'structure_hash' => $structureHash,
         ];
     }
 
@@ -424,12 +460,71 @@ final class WPFixPilot_Blueprint_Controller
     /** @return array<string, mixed> */
     private function draft_response(int $postId, string $structureHash = ''): array
     {
+        $post = get_post($postId);
+
         return [
             'wordpress_object_id' => $postId,
             'edit_url' => get_edit_post_link($postId, 'raw'),
-            'status' => 'draft',
+            'status' => $post instanceof WP_Post && $post->post_status !== ''
+                ? $post->post_status
+                : 'draft',
             'content_hash' => $structureHash,
         ];
+    }
+
+    /** @param array<string, mixed> $schema */
+    private function validate_snapshot_contract(
+        array $schema,
+        string $structureHash
+    ): true|WP_Error {
+        if (
+            !isset($schema['schema_version'], $schema['blocks'])
+            || $schema['schema_version'] !== 'blueprint-v1'
+            || !is_array($schema['blocks'])
+            || $schema['blocks'] === []
+        ) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-inhoud is ongeldig.',
+                ['status' => 500]
+            );
+        }
+
+        foreach ($schema['blocks'] as $block) {
+            if (!is_array($block) || !isset($block['fields']) || !is_array($block['fields']) || $block['fields'] === []) {
+                return new WP_Error(
+                    'wp_fixpilot_blueprint_invalid',
+                    'De blueprint-inhoud mist geldige velden.',
+                    ['status' => 500]
+                );
+            }
+            foreach ($block['fields'] as $field) {
+                if (
+                    !is_array($field)
+                    || !isset($field['id'], $field['path'])
+                    || !is_string($field['id'])
+                    || !is_string($field['path'])
+                    || $field['id'] === ''
+                    || $field['path'] === ''
+                ) {
+                    return new WP_Error(
+                        'wp_fixpilot_blueprint_invalid',
+                        'De blueprint-velden zijn ongeldig.',
+                        ['status' => 500]
+                    );
+                }
+            }
+        }
+
+        if ($structureHash === '') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-structuurhash ontbreekt.',
+                ['status' => 500]
+            );
+        }
+
+        return true;
     }
 
     private function write_seo(int $postId, array $seo): bool|WP_Error

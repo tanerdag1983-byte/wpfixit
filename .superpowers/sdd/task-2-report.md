@@ -175,3 +175,63 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - No new scope concerns beyond the retained Task 3 adapter-registration boundary.
+
+## Final lifecycle review adjudication
+- Accepted: idempotent draft records must store and match blueprint ID, version, and structure hash before reuse.
+- Accepted: managed blueprint operations require the WordPress page itself to remain post_status=draft.
+- Accepted: capture validates schema shape and a non-empty structure hash before persisting ready metadata; invalid clones are deleted.
+- Accepted: idempotent reuse reports the existing WordPress object's real status rather than hardcoding draft.
+
+## Task 2 Continuation 3 (Accepted Final Lifecycle Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert((string)get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint_structure_hash', true) === $captured['structure_hash']) in /app/tests/blueprint-test.php:452
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Stored the validated blueprint snapshot on generated drafts by persisting:
+  - source blueprint ID;
+  - blueprint version;
+  - blueprint structure hash.
+- Tightened idempotent reuse so the existing draft is reused only when its stored blueprint ID, version, and structure hash match the current validated snapshot; mismatches now return HTTP 409 instead of stale content.
+- Enforced draft-only managed blueprint operations across `read()`, `create_draft()`, and `delete()` by rejecting marked blueprints whose live WordPress `post_status` is no longer `draft`.
+- Validated adapter capture output before returning `ready`:
+  - schema version must be `blueprint-v1`;
+  - blocks must be non-empty;
+  - every block must expose non-empty field IDs and field paths;
+  - structure hash must be non-empty.
+- Deleted invalid blueprint clones when capture output fails contract validation.
+- Updated draft responses to derive the live WordPress object status safely, so idempotent reuse after manual publish reports `publish` and does not create a duplicate.
+
+### Concerns
+
+- No new scope concerns beyond the retained Task 3 real-adapter registration boundary and the existing backend ownership of proposal dependency checks.
+
+### Commit
+
+- `HEAD` at commit time: `fix: finalize task 2 blueprint lifecycle`

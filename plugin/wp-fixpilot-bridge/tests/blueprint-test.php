@@ -357,6 +357,41 @@ final class Apply_Failing_Blueprint_Adapter extends Test_Blueprint_Adapter
     }
 }
 
+final class Empty_Blocks_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function schema(int $postId): array|WP_Error
+    {
+        return [
+            'schema_version' => 'blueprint-v1',
+            'blocks' => [],
+        ];
+    }
+}
+
+final class Invalid_Field_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function schema(int $postId): array|WP_Error
+    {
+        $schema = parent::schema($postId);
+        if (is_wp_error($schema)) {
+            return $schema;
+        }
+
+        $schema['blocks'][0]['fields'][0]['id'] = '';
+        $schema['blocks'][0]['fields'][0]['path'] = '';
+
+        return $schema;
+    }
+}
+
+final class Empty_Hash_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function structure_hash(int $postId): string
+    {
+        return '';
+    }
+}
+
 require_once __DIR__ . '/../includes/class-auth.php';
 require_once __DIR__ . '/../includes/seo-adapters/interface-seo-adapter.php';
 require_once __DIR__ . '/../includes/seo-adapters/class-adapter-changes.php';
@@ -413,6 +448,14 @@ assert(get_post($draft['wordpress_object_id'])->post_type === 'page');
 assert(get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint', true) === '');
 assert(get_post_meta($draft['wordpress_object_id'], '_yoast_wpseo_title', true) === 'SEO titel');
 assert(get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_source_blueprint_id', true) === 200);
+assert((int) get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint_version', true) === 1);
+assert(
+    (string) get_post_meta(
+        $draft['wordpress_object_id'],
+        '_wp_fixpilot_blueprint_structure_hash',
+        true
+    ) === $captured['structure_hash']
+);
 assert(get_post_meta($draft['wordpress_object_id'], 'fake_blueprint_tree', true)[0]['field-title'] === 'Nieuwe titel');
 
 $repeated = $controller->create_draft(200, [
@@ -427,6 +470,64 @@ $repeated = $controller->create_draft(200, [
     ],
 ]);
 assert($repeated['wordpress_object_id'] === $draft['wordpress_object_id']);
+
+get_post($draft['wordpress_object_id'])->post_status = 'publish';
+$publishedReuse = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-title' => 'Andere titel'],
+    'seo' => [
+        'title' => 'Tweede SEO titel',
+        'description' => 'Andere omschrijving',
+        'keyword' => 'andere zoekterm',
+    ],
+]);
+assert($publishedReuse['wordpress_object_id'] === $draft['wordpress_object_id']);
+assert($publishedReuse['status'] === 'publish');
+assert($GLOBALS['wpfixpilot_next_post_id'] === 202);
+
+update_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint_version', 99);
+$sameKeyStoredVersionMismatch = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-title' => 'Andere titel'],
+    'seo' => [
+        'title' => 'Tweede SEO titel',
+        'description' => 'Andere omschrijving',
+        'keyword' => 'andere zoekterm',
+    ],
+]);
+assert(is_wp_error($sameKeyStoredVersionMismatch));
+assert($sameKeyStoredVersionMismatch->code === 'wp_fixpilot_blueprint_conflict');
+assert(($sameKeyStoredVersionMismatch->data['status'] ?? null) === 409);
+update_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint_version', 1);
+
+update_post_meta(
+    $draft['wordpress_object_id'],
+    '_wp_fixpilot_blueprint_structure_hash',
+    'legacy-structure-hash'
+);
+$sameKeyStoredHashMismatch = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-title' => 'Andere titel'],
+    'seo' => [
+        'title' => 'Tweede SEO titel',
+        'description' => 'Andere omschrijving',
+        'keyword' => 'andere zoekterm',
+    ],
+]);
+assert(is_wp_error($sameKeyStoredHashMismatch));
+assert($sameKeyStoredHashMismatch->code === 'wp_fixpilot_blueprint_conflict');
+assert(($sameKeyStoredHashMismatch->data['status'] ?? null) === 409);
+update_post_meta(
+    $draft['wordpress_object_id'],
+    '_wp_fixpilot_blueprint_structure_hash',
+    $captured['structure_hash']
+);
 
 $mismatchedVersionRetry = $controller->create_draft(200, [
     'expected_version' => 2,
@@ -546,6 +647,83 @@ $crossBlueprintKeyReuse = $controller->create_draft(
 assert(is_wp_error($crossBlueprintKeyReuse));
 assert($crossBlueprintKeyReuse->code === 'wp_fixpilot_blueprint_conflict');
 assert(($crossBlueprintKeyReuse->data['status'] ?? null) === 409);
+
+$publishedBlueprintId = (int) $secondBlueprint['wordpress_blueprint_id'];
+get_post($publishedBlueprintId)->post_status = 'publish';
+
+$publishedBlueprintRead = $controller->read($publishedBlueprintId);
+assert(is_wp_error($publishedBlueprintRead));
+assert($publishedBlueprintRead->code === 'wp_fixpilot_blueprint_not_draft');
+assert(($publishedBlueprintRead->data['status'] ?? null) === 409);
+
+$publishedBlueprintDraft = $controller->create_draft($publishedBlueprintId, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $secondBlueprint['structure_hash'],
+    'idempotency_key' => 'proposal-published-blueprint',
+    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($publishedBlueprintDraft));
+assert($publishedBlueprintDraft->code === 'wp_fixpilot_blueprint_not_draft');
+assert(($publishedBlueprintDraft->data['status'] ?? null) === 409);
+
+$publishedBlueprintDelete = $controller->delete($publishedBlueprintId);
+assert(is_wp_error($publishedBlueprintDelete));
+assert($publishedBlueprintDelete->code === 'wp_fixpilot_blueprint_not_draft');
+assert(($publishedBlueprintDelete->data['status'] ?? null) === 409);
+assert(get_post($publishedBlueprintId) instanceof WP_Post);
+
+$emptyBlocksController = new WPFixPilot_Blueprint_Controller([
+    new Empty_Blocks_Blueprint_Adapter([20]),
+]);
+$emptyBlocksBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$emptyBlocksCapture = $emptyBlocksController->capture([
+    'source_page_id' => 20,
+    'name' => 'Empty blocks blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($emptyBlocksCapture));
+assert($emptyBlocksCapture->code === 'wp_fixpilot_blueprint_invalid');
+assert(($emptyBlocksCapture->data['status'] ?? null) === 500);
+assert(get_post($emptyBlocksBlueprintId) === null);
+
+$invalidFieldController = new WPFixPilot_Blueprint_Controller([
+    new Invalid_Field_Blueprint_Adapter([20]),
+]);
+$invalidFieldBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$invalidFieldCapture = $invalidFieldController->capture([
+    'source_page_id' => 20,
+    'name' => 'Invalid field blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($invalidFieldCapture));
+assert($invalidFieldCapture->code === 'wp_fixpilot_blueprint_invalid');
+assert(($invalidFieldCapture->data['status'] ?? null) === 500);
+assert(get_post($invalidFieldBlueprintId) === null);
+
+$emptyHashController = new WPFixPilot_Blueprint_Controller([
+    new Empty_Hash_Blueprint_Adapter([20]),
+]);
+$emptyHashBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$emptyHashCapture = $emptyHashController->capture([
+    'source_page_id' => 20,
+    'name' => 'Empty hash blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($emptyHashCapture));
+assert($emptyHashCapture->code === 'wp_fixpilot_blueprint_invalid');
+assert(($emptyHashCapture->data['status'] ?? null) === 500);
+assert(get_post($emptyHashBlueprintId) === null);
 
 $schemaFailureController = new WPFixPilot_Blueprint_Controller([
     new Schema_Failing_Blueprint_Adapter([20]),
