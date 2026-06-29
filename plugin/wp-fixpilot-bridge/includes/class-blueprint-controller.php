@@ -4,6 +4,14 @@ declare(strict_types=1);
 
 final class WPFixPilot_Blueprint_Controller
 {
+    private const ALLOWED_PAGE_TYPES = [
+        'service',
+        'brand',
+        'location',
+        'blog',
+        'generic',
+    ];
+
     private const ALLOWED_SEMANTIC_ROLES = [
         'hero',
         'introduction',
@@ -62,10 +70,46 @@ final class WPFixPilot_Blueprint_Controller
 
         $sourceId = (int) $payload['source_page_id'];
         $name = sanitize_text_field((string) $payload['name']);
-        $pageType = sanitize_key((string) $payload['page_type']);
-        $version = (int) $payload['version'];
+        if ($name === '') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
 
-        $adapter = $this->adapter((string) $payload['builder']);
+        $pageType = sanitize_key((string) $payload['page_type']);
+        if (!in_array($pageType, self::ALLOWED_PAGE_TYPES, true)) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
+
+        $version = filter_var(
+            $payload['version'],
+            FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1]]
+        );
+        if ($version === false) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
+
+        $builder = sanitize_key((string) $payload['builder']);
+        if ($builder === '') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
+
+        $adapter = $this->adapter($builder);
         if (is_wp_error($adapter)) {
             return $adapter;
         }
@@ -113,7 +157,7 @@ final class WPFixPilot_Blueprint_Controller
             update_post_meta($blueprintId, '_wp_fixpilot_content_schema', $schema);
             update_post_meta($blueprintId, '_wp_fixpilot_seo_plugin', $capturedSeoPlugin);
 
-            return $this->blueprint_response($blueprintId, $schema, $structureHash);
+            return $this->blueprint_response($blueprintId, $schema, $structureHash, true);
         } catch (Throwable $error) {
             wp_delete_post($blueprintId, true);
             return new WP_Error(
@@ -140,7 +184,8 @@ final class WPFixPilot_Blueprint_Controller
         return $this->blueprint_response(
             $blueprintId,
             $snapshot['schema'],
-            $snapshot['structure_hash']
+            $snapshot['structure_hash'],
+            false
         );
     }
 
@@ -254,9 +299,9 @@ final class WPFixPilot_Blueprint_Controller
             if (
                 $existingBlueprintId !== $blueprintId
                 || $existingVersion !== $storedVersion
-                || $existingStructureHash === ''
-                || !hash_equals($currentHash, $existingStructureHash)
-            ) {
+            || $existingStructureHash === ''
+            || !hash_equals($currentHash, $existingStructureHash)
+        ) {
                 return new WP_Error(
                     'wp_fixpilot_blueprint_conflict',
                     'De idempotency-sleutel hoort bij een andere blueprint-snapshot.',
@@ -264,7 +309,7 @@ final class WPFixPilot_Blueprint_Controller
                 );
             }
 
-            return $this->draft_response($existingDraftId, $currentHash);
+            return $this->draft_response($existingDraftId, $currentHash, false);
         }
 
         $adapter = $snapshot['adapter'];
@@ -308,7 +353,7 @@ final class WPFixPilot_Blueprint_Controller
 
             wp_update_post(['ID' => $draftId, 'post_status' => 'draft']);
 
-            return $this->draft_response($draftId, $currentHash);
+            return $this->draft_response($draftId, $currentHash, true);
         } catch (Throwable $error) {
             wp_delete_post($draftId, true);
             return new WP_Error(
@@ -459,10 +504,12 @@ final class WPFixPilot_Blueprint_Controller
     private function blueprint_response(
         int $blueprintId,
         array $schema,
-        string $structureHash
+        string $structureHash,
+        bool $created
     ): array {
         return [
             'status' => 'ready',
+            'created' => $created,
             'source_page_id' => (int) get_post_meta(
                 $blueprintId,
                 '_wp_fixpilot_source_page_id',
@@ -495,12 +542,17 @@ final class WPFixPilot_Blueprint_Controller
     }
 
     /** @return array<string, mixed> */
-    private function draft_response(int $postId, string $structureHash = ''): array
+    private function draft_response(
+        int $postId,
+        string $structureHash = '',
+        bool $created = false
+    ): array
     {
         $post = get_post($postId);
 
         return [
             'wordpress_object_id' => $postId,
+            'created' => $created,
             'edit_url' => get_edit_post_link($postId, 'raw'),
             'status' => $post instanceof WP_Post && $post->post_status !== ''
                 ? $post->post_status

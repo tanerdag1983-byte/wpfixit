@@ -241,7 +241,13 @@ final class WPFixPilot_REST_Controller
             (int) $request->get_param('id'),
             (array) $request->get_json_params()
         );
-        return is_wp_error($result) ? $result : new WP_REST_Response($result, 201);
+        if (is_wp_error($result)) {
+            return $result;
+        }
+
+        $status = !empty($result['created']) ? 201 : 200;
+
+        return new WP_REST_Response($result, $status);
     }
 
     public function delete_blueprint(

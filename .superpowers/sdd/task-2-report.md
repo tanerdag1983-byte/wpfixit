@@ -239,6 +239,48 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ## Authentication-boundary review adjudication
 - Accepted: make WPFixPilot_Auth an explicit injectable REST-controller dependency. Keep the public authorize permission callback for backward-compatible WordPress route registration, but delegate verification to the injected authenticator instead of constructing it inside each request.
 
+## Task 2 Continuation 4 (Accepted API Contract Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-rest-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert(false, 'whitespace name')
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 plugin/wp-fixpilot-bridge/tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 plugin/wp-fixpilot-bridge/tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 plugin/wp-fixpilot-bridge/tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app -w /app php:8.2-cli sh -lc "find plugin/wp-fixpilot-bridge -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Validated blueprint capture inputs after sanitization so:
+  - `name` must remain non-empty after trimming;
+  - `page_type` must be one of the supported blueprint types after `sanitize_key()`;
+  - `version` must be a positive integer;
+  - `builder` must remain a non-empty sanitized key.
+- Added controller and REST regressions for whitespace-only names and unsupported page types.
+- Added a `created` flag to blueprint draft responses so the controller can distinguish a freshly cloned draft from an idempotent reuse without changing existing response fields.
+- Updated the blueprint draft REST route to return HTTP 201 for new drafts and HTTP 200 for idempotent replays.
+- Expanded the lifecycle test to prove the first POST creates a draft, the replay reuses the same WordPress object, and the inventory does not duplicate the draft.
+
 ## Task 2 Continuation 4 (Authentication-Boundary Fix)
 
 ### Files
