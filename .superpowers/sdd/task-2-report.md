@@ -123,3 +123,55 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - No new scope concerns beyond the accepted Task 3 adapter-registration boundary and Task 4 backend dependency checks.
+
+## Second review adjudication
+- Accepted: idempotent retries must not bypass blueprint existence, expected version, live structure hash, or field-schema validation. Move the existing-draft lookup after those checks and ensure an existing key belongs to the requested blueprint.
+- Task boundary retained: the REST controller already supports injecting a blueprint controller; production registration of the five concrete adapters is Task 3. Add an executable REST-controller integration test with the injected fake adapter so route callbacks and authorization wiring are covered now.
+
+## Task 2 Continuation 2 (Accepted Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert(is_wp_error($mismatchedVersionRetry)) in /app/tests/blueprint-test.php:442
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Added RED coverage proving an existing idempotency key cannot bypass:
+  - expected blueprint version checks;
+  - expected live structure hash checks;
+  - unknown replacement-field validation.
+- Added a cross-blueprint reuse regression proving an idempotency key bound to one blueprint is rejected for another blueprint with HTTP 409 semantics.
+- Added an executable REST-controller regression that:
+  - constructs `WPFixPilot_REST_Controller` with an injected fake-adapter blueprint controller;
+  - asserts the registered `/blueprints` permission callback is `authorize`;
+  - executes the registered capture callback and verifies it returns HTTP 201;
+  - exercises invalid signed authorization on the blueprint endpoint and expects `wp_fixpilot_forbidden`.
+- Updated `WPFixPilot_Blueprint_Controller::create_draft()` so the idempotency lookup runs only after blueprint existence, expected version, live hash, and schema/replacement validation, and only reuses an existing draft when it belongs to the requested blueprint.
+
+### Concerns
+
+- No new scope concerns beyond the retained Task 3 adapter-registration boundary.

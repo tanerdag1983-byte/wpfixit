@@ -370,7 +370,7 @@ require_once __DIR__ . '/../includes/class-blueprint-controller.php';
 require_once __DIR__ . '/../includes/class-rest-controller.php';
 
 $controller = new WPFixPilot_Blueprint_Controller([
-    new Test_Blueprint_Adapter(),
+    new Test_Blueprint_Adapter([19, 20, 22]),
 ]);
 
 $captured = $controller->capture([
@@ -428,6 +428,35 @@ $repeated = $controller->create_draft(200, [
 ]);
 assert($repeated['wordpress_object_id'] === $draft['wordpress_object_id']);
 
+$mismatchedVersionRetry = $controller->create_draft(200, [
+    'expected_version' => 2,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-title' => 'Andere titel'],
+    'seo' => [
+        'title' => 'Tweede SEO titel',
+        'description' => 'Andere omschrijving',
+        'keyword' => 'andere zoekterm',
+    ],
+]);
+assert(is_wp_error($mismatchedVersionRetry));
+assert($mismatchedVersionRetry->code === 'wp_fixpilot_blueprint_conflict');
+assert(($mismatchedVersionRetry->data['status'] ?? null) === 409);
+
+$sameKeyUnknownField = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-unknown' => 'Nee'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($sameKeyUnknownField));
+assert($sameKeyUnknownField->code === 'wp_fixpilot_blueprint_field_unknown');
+
 $unknownField = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
@@ -475,6 +504,48 @@ assert(is_wp_error($staleDraft));
 assert($staleDraft->code === 'wp_fixpilot_blueprint_conflict');
 assert(($staleDraft->data['status'] ?? null) === 409);
 assert(!isset($GLOBALS['wpfixpilot_posts'][202]));
+
+$sameKeyStaleRetry = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => ['field-title' => 'Nog steeds niet'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($sameKeyStaleRetry));
+assert($sameKeyStaleRetry->code === 'wp_fixpilot_blueprint_conflict');
+assert(($sameKeyStaleRetry->data['status'] ?? null) === 409);
+
+$secondBlueprint = $controller->capture([
+    'source_page_id' => 22,
+    'name' => 'Tweede dienstpagina',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($secondBlueprint));
+
+$crossBlueprintKeyReuse = $controller->create_draft(
+    (int) $secondBlueprint['wordpress_blueprint_id'],
+    [
+        'expected_version' => 1,
+        'expected_structure_hash' => $secondBlueprint['structure_hash'],
+        'idempotency_key' => 'proposal-123',
+        'replacements' => ['field-title' => 'Mag niet lukken'],
+        'seo' => [
+            'title' => 'SEO titel',
+            'description' => 'SEO omschrijving',
+            'keyword' => 'dsg revisie',
+        ],
+    ]
+);
+assert(is_wp_error($crossBlueprintKeyReuse));
+assert($crossBlueprintKeyReuse->code === 'wp_fixpilot_blueprint_conflict');
+assert(($crossBlueprintKeyReuse->data['status'] ?? null) === 409);
 
 $schemaFailureController = new WPFixPilot_Blueprint_Controller([
     new Schema_Failing_Blueprint_Adapter([20]),
@@ -554,7 +625,12 @@ assert(is_wp_error($seoFailure));
 assert($seoFailure->code === 'wp_fixpilot_draft_failed');
 assert(get_post($seoFailureDraftId) === null);
 
-$restController = new WPFixPilot_REST_Controller();
+$restController = new WPFixPilot_REST_Controller(
+    null,
+    new WPFixPilot_Blueprint_Controller([
+        new Test_Blueprint_Adapter([19, 20, 22]),
+    ])
+);
 $restController->register_routes();
 
 $registeredRoutes = array_map(
@@ -565,6 +641,68 @@ assert(in_array('/draft-pages', $registeredRoutes, true));
 assert(in_array('/blueprints', $registeredRoutes, true));
 assert(in_array('/blueprints/(?P<id>\d+)', $registeredRoutes, true));
 assert(in_array('/blueprints/(?P<id>\d+)/drafts', $registeredRoutes, true));
+
+$captureRoute = null;
+foreach ($GLOBALS['wpfixpilot_routes'] as $route) {
+    if ($route['route'] === '/blueprints') {
+        $captureRoute = $route;
+        break;
+    }
+}
+assert(is_array($captureRoute));
+assert($captureRoute['args']['permission_callback'] === [$restController, 'authorize']);
+
+$restCapturePayload = [
+    'source_page_id' => 20,
+    'name' => 'REST blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+];
+$restCaptureBody = wp_json_encode($restCapturePayload);
+$restCaptureRoute = '/wp-json/wpfixpilot/v1/blueprints';
+$restCaptureTimestamp = (string) time();
+$restCaptureNonce = 'rest-blueprint-capture';
+$restCaptureSignature = WPFixPilot_Auth::sign(
+    'test-secret',
+    'POST',
+    $restCaptureRoute,
+    $restCaptureTimestamp,
+    $restCaptureNonce,
+    $restCaptureBody
+);
+$authorizedCaptureRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restCapturePayload,
+    [
+        'x-wp-fixpilot-timestamp' => $restCaptureTimestamp,
+        'x-wp-fixpilot-nonce' => $restCaptureNonce,
+        'x-wp-fixpilot-signature' => $restCaptureSignature,
+    ],
+    $restCaptureBody
+);
+assert(($captureRoute['args']['permission_callback'])($authorizedCaptureRequest) === true);
+$captureResponse = ($captureRoute['args']['callback'])($authorizedCaptureRequest);
+assert($captureResponse instanceof WP_REST_Response);
+assert($captureResponse->status === 201);
+assert($captureResponse->get_data()['status'] === 'ready');
+
+$forbiddenCaptureRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restCapturePayload,
+    [
+        'x-wp-fixpilot-timestamp' => $restCaptureTimestamp,
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-capture-invalid',
+        'x-wp-fixpilot-signature' => 'not-a-valid-signature',
+    ],
+    $restCaptureBody
+);
+$forbidden = ($captureRoute['args']['permission_callback'])($forbiddenCaptureRequest);
+assert(is_wp_error($forbidden));
+assert($forbidden->code === 'wp_fixpilot_forbidden');
+assert(($forbidden->data['status'] ?? null) === 403);
 
 $inventory = $restController->inventory()->get_data();
 assert($inventory['count'] === 5);

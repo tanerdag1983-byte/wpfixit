@@ -139,19 +139,6 @@ final class WPFixPilot_Blueprint_Controller
             }
         }
 
-        $idempotencyKey = sanitize_text_field((string) $payload['idempotency_key']);
-        $existing = get_posts([
-            'post_type' => 'page',
-            'post_status' => 'any',
-            'meta_key' => '_wp_fixpilot_idempotency_key',
-            'meta_value' => $idempotencyKey,
-            'posts_per_page' => 1,
-            'fields' => 'ids',
-        ]);
-        if ($existing !== []) {
-            return $this->draft_response((int) $existing[0]);
-        }
-
         $blueprint = $this->blueprint($blueprintId);
         if (is_wp_error($blueprint)) {
             return $blueprint;
@@ -198,6 +185,33 @@ final class WPFixPilot_Blueprint_Controller
                     ['status' => 400]
                 );
             }
+        }
+
+        $idempotencyKey = sanitize_text_field((string) $payload['idempotency_key']);
+        $existing = get_posts([
+            'post_type' => 'page',
+            'post_status' => 'any',
+            'meta_key' => '_wp_fixpilot_idempotency_key',
+            'meta_value' => $idempotencyKey,
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+        ]);
+        if ($existing !== []) {
+            $existingDraftId = (int) $existing[0];
+            $existingBlueprintId = (int) get_post_meta(
+                $existingDraftId,
+                '_wp_fixpilot_source_blueprint_id',
+                true
+            );
+            if ($existingBlueprintId !== $blueprintId) {
+                return new WP_Error(
+                    'wp_fixpilot_blueprint_conflict',
+                    'De idempotency-sleutel hoort al bij een andere blueprint.',
+                    ['status' => 409]
+                );
+            }
+
+            return $this->draft_response($existingDraftId, $currentHash);
         }
 
         $adapter = $snapshot['adapter'];
