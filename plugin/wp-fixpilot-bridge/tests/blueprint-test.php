@@ -107,6 +107,7 @@ $GLOBALS['wpfixpilot_routes'] = [];
 $GLOBALS['wpfixpilot_deleted_posts'] = [];
 $GLOBALS['wpfixpilot_next_post_id'] = 200;
 $GLOBALS['wpfixpilot_source_page_template'] = 'algemeen-productdetail.php';
+$GLOBALS['wpfixpilot_update_post_meta_failures'] = [];
 
 function sanitize_text_field(string $value): string { return trim($value); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
@@ -197,6 +198,9 @@ function get_post_meta(int $postId, string $key = '', bool $single = false): mix
 }
 function update_post_meta(int $postId, string $key, mixed $value): void
 {
+    if (isset($GLOBALS['wpfixpilot_update_post_meta_failures'][$postId][$key])) {
+        throw $GLOBALS['wpfixpilot_update_post_meta_failures'][$postId][$key];
+    }
     $GLOBALS['wpfixpilot_meta'][$postId][$key] = [$value];
 }
 function add_post_meta(int $postId, string $key, mixed $value): void
@@ -205,30 +209,45 @@ function add_post_meta(int $postId, string $key, mixed $value): void
     $GLOBALS['wpfixpilot_meta'][$postId][$key][] = $value;
 }
 
-$source = new WP_Post();
-$source->ID = 19;
-$source->post_title = 'Transmissie onderhoud';
-$source->post_content = '<section>Originele content</section>';
-$source->post_excerpt = 'Originele samenvatting';
-$source->post_parent = 3;
-$source->menu_order = 2;
-$GLOBALS['wpfixpilot_posts'][19] = $source;
-$GLOBALS['wpfixpilot_meta'][19] = [
-    '_wp_page_template' => ['algemeen-productdetail.php'],
-    '_thumbnail_id' => [77],
-    'fake_blueprint_tree' => [[[
-        'field-title' => 'Bestaande titel',
-        'field-body' => '<p>Bestaande inhoud</p>',
-    ]]],
-    'analytics_state' => ['skip-me'],
-    '_edit_lock' => ['1700000000:1'],
-    '_wp_fixpilot_idempotency_key' => ['proposal-legacy'],
-];
+function seed_source_page(
+    int $postId,
+    string $title = 'Transmissie onderhoud',
+    string $fieldTitle = 'Bestaande titel',
+    string $fieldBody = '<p>Bestaande inhoud</p>'
+): void {
+    $source = new WP_Post();
+    $source->ID = $postId;
+    $source->post_title = $title;
+    $source->post_content = '<section>Originele content</section>';
+    $source->post_excerpt = 'Originele samenvatting';
+    $source->post_parent = 3;
+    $source->menu_order = 2;
+    $GLOBALS['wpfixpilot_posts'][$postId] = $source;
+    $GLOBALS['wpfixpilot_meta'][$postId] = [
+        '_wp_page_template' => ['algemeen-productdetail.php'],
+        '_thumbnail_id' => [77],
+        'fake_blueprint_tree' => [[[
+            'field-title' => $fieldTitle,
+            'field-body' => $fieldBody,
+        ]]],
+        'analytics_state' => ['skip-me'],
+        '_edit_lock' => ['1700000000:1'],
+        '_wp_fixpilot_idempotency_key' => ['proposal-legacy'],
+    ];
+}
+
+seed_source_page(19);
+seed_source_page(20, 'Schema failure bron');
+seed_source_page(21, 'Replacement failure bron');
+seed_source_page(22, 'SEO failure bron');
 
 require_once __DIR__ . '/../includes/builder-adapters/interface-blueprint-adapter.php';
 
-final class Test_Blueprint_Adapter implements WPFixPilot_Blueprint_Adapter
+class Test_Blueprint_Adapter implements WPFixPilot_Blueprint_Adapter
 {
+    /** @param array<int, int> $sourcePageIds */
+    public function __construct(private array $sourcePageIds = [19]) {}
+
     public function key(): string
     {
         return 'acf';
@@ -241,7 +260,7 @@ final class Test_Blueprint_Adapter implements WPFixPilot_Blueprint_Adapter
 
     public function uses_page(int $postId): bool
     {
-        return $postId === 19 || $postId >= 200;
+        return in_array($postId, $this->sourcePageIds, true) || $postId >= 200;
     }
 
     public function clone_meta_keys(int $postId): array
@@ -307,6 +326,34 @@ final class Test_Blueprint_Adapter implements WPFixPilot_Blueprint_Adapter
         }
         update_post_meta($postId, 'fake_blueprint_tree', $tree);
         return true;
+    }
+}
+
+final class Schema_Failing_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function schema(int $postId): array|WP_Error
+    {
+        if ($postId >= 200) {
+            return new WP_Error(
+                'wp_fixpilot_schema_failed',
+                'Schema extractie mislukt.',
+                ['status' => 500]
+            );
+        }
+
+        return parent::schema($postId);
+    }
+}
+
+final class Apply_Failing_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function apply_replacements(int $postId, array $schema, array $replacements): bool|WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_replacements_failed',
+            'Replacement write mislukt.',
+            ['status' => 500]
+        );
     }
 }
 
@@ -396,6 +443,117 @@ assert(is_wp_error($unknownField));
 assert($unknownField->code === 'wp_fixpilot_blueprint_field_unknown');
 assert(!isset($GLOBALS['wpfixpilot_posts'][202]));
 
+$liveBlueprintTree = get_post_meta(200, 'fake_blueprint_tree', true);
+$liveBlueprintTree[0]['field-title'] = 'Handmatig aangepaste titel';
+$liveBlueprintTree[0]['field-body'] = '<p>Handmatig aangepaste inhoud</p>';
+update_post_meta(200, 'fake_blueprint_tree', $liveBlueprintTree);
+
+$staleRead = $controller->read(200);
+assert($staleRead['structure_hash'] !== $captured['structure_hash']);
+assert(
+    $staleRead['content_schema']['blocks'][0]['fields'][0]['current_value']
+    === 'Handmatig aangepaste titel'
+);
+assert((string) get_post_meta(200, '_wp_fixpilot_structure_hash', true) === $captured['structure_hash']);
+assert(
+    get_post_meta(200, '_wp_fixpilot_content_schema', true)['blocks'][0]['fields'][0]['current_value']
+    === 'Bestaande titel'
+);
+
+$staleDraft = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-stale',
+    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($staleDraft));
+assert($staleDraft->code === 'wp_fixpilot_blueprint_conflict');
+assert(($staleDraft->data['status'] ?? null) === 409);
+assert(!isset($GLOBALS['wpfixpilot_posts'][202]));
+
+$schemaFailureController = new WPFixPilot_Blueprint_Controller([
+    new Schema_Failing_Blueprint_Adapter([20]),
+]);
+$schemaFailureBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$schemaFailure = $schemaFailureController->capture([
+    'source_page_id' => 20,
+    'name' => 'Schema failure blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($schemaFailure));
+assert($schemaFailure->code === 'wp_fixpilot_schema_failed');
+assert(get_post($schemaFailureBlueprintId) === null);
+
+$replacementFailureController = new WPFixPilot_Blueprint_Controller([
+    new Apply_Failing_Blueprint_Adapter([21]),
+]);
+$replacementFailureCapture = $replacementFailureController->capture([
+    'source_page_id' => 21,
+    'name' => 'Replacement failure blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($replacementFailureCapture));
+$replacementFailureDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$replacementFailure = $replacementFailureController->create_draft(
+    (int) $replacementFailureCapture['wordpress_blueprint_id'],
+    [
+        'expected_version' => 1,
+        'expected_structure_hash' => $replacementFailureCapture['structure_hash'],
+        'idempotency_key' => 'proposal-replacement-failure',
+        'replacements' => ['field-title' => 'Nieuwe titel'],
+        'seo' => [
+            'title' => 'SEO titel',
+            'description' => 'SEO omschrijving',
+            'keyword' => 'dsg revisie',
+        ],
+    ]
+);
+assert(is_wp_error($replacementFailure));
+assert($replacementFailure->code === 'wp_fixpilot_replacements_failed');
+assert(get_post($replacementFailureDraftId) === null);
+
+$seoFailureController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([22]),
+]);
+$seoFailureCapture = $seoFailureController->capture([
+    'source_page_id' => 22,
+    'name' => 'SEO failure blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($seoFailureCapture));
+$seoFailureDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_failures'][$seoFailureDraftId] = [
+    '_yoast_wpseo_title' => new RuntimeException('SEO meta write mislukt.'),
+];
+$seoFailure = $seoFailureController->create_draft(
+    (int) $seoFailureCapture['wordpress_blueprint_id'],
+    [
+        'expected_version' => 1,
+        'expected_structure_hash' => $seoFailureCapture['structure_hash'],
+        'idempotency_key' => 'proposal-seo-failure',
+        'replacements' => ['field-title' => 'Nieuwe titel'],
+        'seo' => [
+            'title' => 'SEO titel',
+            'description' => 'SEO omschrijving',
+            'keyword' => 'dsg revisie',
+        ],
+    ]
+);
+assert(is_wp_error($seoFailure));
+assert($seoFailure->code === 'wp_fixpilot_draft_failed');
+assert(get_post($seoFailureDraftId) === null);
+
 $restController = new WPFixPilot_REST_Controller();
 $restController->register_routes();
 
@@ -409,8 +567,8 @@ assert(in_array('/blueprints/(?P<id>\d+)', $registeredRoutes, true));
 assert(in_array('/blueprints/(?P<id>\d+)/drafts', $registeredRoutes, true));
 
 $inventory = $restController->inventory()->get_data();
-assert($inventory['count'] === 2);
-assert(array_column($inventory['items'], 'id') === [19, 201]);
+assert($inventory['count'] === 5);
+assert(array_column($inventory['items'], 'id') === [19, 20, 21, 22, 201]);
 
 $health = $restController->health()->get_data();
 assert($health['plugin_version'] === '0.3.0');

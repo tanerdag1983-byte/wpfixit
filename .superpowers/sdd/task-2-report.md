@@ -70,3 +70,56 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ## Commit Hash
 
 - Task 2 code commit: `dfe61d2` (`feat: capture managed wordpress blueprints`)
+
+## Review adjudication
+- Deferred by explicit task boundary: production registration of the five real adapters is Task 3; Task 2 deliberately proves the controller through an injected fake adapter.
+- Accepted: read and create_draft must recalculate the live schema/structure hash through the selected adapter so edited managed blueprints are detected before a draft clone is used.
+- Deferred by ownership boundary: proposal dependency checks live in the backend Task 4 delete route, because the WordPress bridge has no proposal registry. The bridge delete endpoint remains a low-level authenticated operation called only after backend validation.
+- Accepted test gap: add cleanup tests for capture schema failure and post-clone replacement/SEO failures.
+
+## Task 2 Continuation (Accepted Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert($staleRead['structure_hash'] !== $captured['structure_hash']) in /app/tests/blueprint-test.php:452
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Added a stale-blueprint regression that edits the managed blueprint after capture and proves `read()` returns the live schema/hash from the configured adapter while stored capture meta remains unchanged.
+- Added cleanup regressions for:
+  - capture clone deletion when adapter schema extraction fails;
+  - draft clone deletion when adapter replacement application fails;
+  - draft clone deletion when SEO meta writing throws after clone.
+- Updated `WPFixPilot_Blueprint_Controller` so `read()` and `create_draft()` resolve the stored builder adapter and inspect the current blueprint schema/hash before validating replacements or cloning drafts.
+
+### Commit
+
+- `HEAD` commit: `fix: tighten blueprint stale-state handling`
+
+### Concerns
+
+- No new scope concerns beyond the accepted Task 3 adapter-registration boundary and Task 4 backend dependency checks.

@@ -107,15 +107,15 @@ final class WPFixPilot_Blueprint_Controller
             return $blueprint;
         }
 
-        $schema = $this->schema($blueprintId);
-        if (is_wp_error($schema)) {
-            return $schema;
+        $snapshot = $this->current_blueprint_snapshot($blueprintId);
+        if (is_wp_error($snapshot)) {
+            return $snapshot;
         }
 
         return $this->blueprint_response(
             $blueprintId,
-            $schema,
-            (string) get_post_meta($blueprintId, '_wp_fixpilot_structure_hash', true)
+            $snapshot['schema'],
+            $snapshot['structure_hash']
         );
     }
 
@@ -170,14 +170,15 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
-        $storedHash = (string) get_post_meta(
-            $blueprintId,
-            '_wp_fixpilot_structure_hash',
-            true
-        );
+        $snapshot = $this->current_blueprint_snapshot($blueprintId);
+        if (is_wp_error($snapshot)) {
+            return $snapshot;
+        }
+
+        $currentHash = $snapshot['structure_hash'];
         if (
-            $storedHash === ''
-            || !hash_equals((string) $payload['expected_structure_hash'], $storedHash)
+            $currentHash === ''
+            || !hash_equals((string) $payload['expected_structure_hash'], $currentHash)
         ) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_conflict',
@@ -186,11 +187,7 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
-        $schema = $this->schema($blueprintId);
-        if (is_wp_error($schema)) {
-            return $schema;
-        }
-
+        $schema = $snapshot['schema'];
         $replacements = (array) $payload['replacements'];
         $fieldIds = $this->field_ids($schema);
         foreach (array_keys($replacements) as $fieldId) {
@@ -203,15 +200,7 @@ final class WPFixPilot_Blueprint_Controller
             }
         }
 
-        $builder = (string) get_post_meta(
-            $blueprintId,
-            '_wp_fixpilot_blueprint_builder',
-            true
-        );
-        $adapter = $this->adapter($builder);
-        if (is_wp_error($adapter)) {
-            return $adapter;
-        }
+        $adapter = $snapshot['adapter'];
 
         $draftId = $this->cloner()->clone_page(
             $blueprintId,
@@ -243,7 +232,7 @@ final class WPFixPilot_Blueprint_Controller
 
             wp_update_post(['ID' => $draftId, 'post_status' => 'draft']);
 
-            return $this->draft_response($draftId, $storedHash);
+            return $this->draft_response($draftId, $currentHash);
         } catch (Throwable $error) {
             wp_delete_post($draftId, true);
             return new WP_Error(
@@ -330,10 +319,23 @@ final class WPFixPilot_Blueprint_Controller
         return $post;
     }
 
-    /** @return array<string, mixed>|WP_Error */
-    private function schema(int $blueprintId): array|WP_Error
+    /** @return array{adapter: WPFixPilot_Blueprint_Adapter, schema: array<string, mixed>, structure_hash: string}|WP_Error */
+    private function current_blueprint_snapshot(int $blueprintId): array|WP_Error
     {
-        $schema = get_post_meta($blueprintId, '_wp_fixpilot_content_schema', true);
+        $builder = (string) get_post_meta(
+            $blueprintId,
+            '_wp_fixpilot_blueprint_builder',
+            true
+        );
+        $adapter = $this->adapter($builder);
+        if (is_wp_error($adapter)) {
+            return $adapter;
+        }
+
+        $schema = $adapter->schema($blueprintId);
+        if (is_wp_error($schema)) {
+            return $schema;
+        }
         if (!is_array($schema) || !isset($schema['schema_version'], $schema['blocks'])) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_invalid',
@@ -342,7 +344,11 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
-        return $schema;
+        return [
+            'adapter' => $adapter,
+            'schema' => $schema,
+            'structure_hash' => $adapter->structure_hash($blueprintId),
+        ];
     }
 
     /**
