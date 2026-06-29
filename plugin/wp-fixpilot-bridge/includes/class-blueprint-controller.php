@@ -68,7 +68,10 @@ final class WPFixPilot_Blueprint_Controller
             }
         }
 
-        $sourceId = (int) $payload['source_page_id'];
+        $sourceId = $this->source_page_id($payload['source_page_id']);
+        if (is_wp_error($sourceId)) {
+            return $sourceId;
+        }
         $name = sanitize_text_field((string) $payload['name']);
         if ($name === '') {
             return new WP_Error(
@@ -109,6 +112,11 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
+        $source = $this->source_page($sourceId);
+        if (is_wp_error($source)) {
+            return $source;
+        }
+
         $adapter = $this->adapter($builder);
         if (is_wp_error($adapter)) {
             return $adapter;
@@ -117,6 +125,15 @@ final class WPFixPilot_Blueprint_Controller
             return new WP_Error(
                 'wp_fixpilot_blueprint_builder_mismatch',
                 'De gekozen builder hoort niet bij deze pagina.',
+                ['status' => 409]
+            );
+        }
+
+        $capturedSeoPlugin = $this->detected_seo_plugin_snapshot();
+        if ($capturedSeoPlugin === '') {
+            return new WP_Error(
+                'wp_fixpilot_seo_plugin_unsupported',
+                'SEO-plugin wordt niet ondersteund.',
                 ['status' => 409]
             );
         }
@@ -147,7 +164,6 @@ final class WPFixPilot_Blueprint_Controller
                 wp_delete_post($blueprintId, true);
                 return $snapshotValidation;
             }
-            $capturedSeoPlugin = $this->detected_seo_plugin_snapshot();
 
             update_post_meta($blueprintId, '_wp_fixpilot_source_page_id', $sourceId);
             update_post_meta($blueprintId, '_wp_fixpilot_blueprint_builder', $adapter->key());
@@ -271,6 +287,13 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         $idempotencyKey = sanitize_text_field((string) $payload['idempotency_key']);
+        if ($idempotencyKey === '') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
         $existing = get_posts([
             'post_type' => 'page',
             'post_status' => 'any',
@@ -383,7 +406,9 @@ final class WPFixPilot_Blueprint_Controller
     public function seo_plugin(): ?string
     {
         if ($this->configuredSeoPluginDetector instanceof Closure) {
-            return ($this->configuredSeoPluginDetector)();
+            return $this->normalize_seo_plugin(
+                ($this->configuredSeoPluginDetector)()
+            );
         }
         if (defined('WPSEO_VERSION')) {
             return 'yoast';
@@ -423,6 +448,48 @@ final class WPFixPilot_Blueprint_Controller
             'De gekozen builder wordt nog niet ondersteund.',
             ['status' => 400]
         );
+    }
+
+    private function source_page_id(mixed $sourcePageId): int|WP_Error
+    {
+        if (is_int($sourcePageId)) {
+            $normalized = $sourcePageId;
+        } elseif (
+            is_string($sourcePageId)
+            && preg_match('/^[1-9][0-9]*$/', $sourcePageId) === 1
+        ) {
+            $normalized = (int) $sourcePageId;
+        } else {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
+
+        if ($normalized < 1) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
+
+        return $normalized;
+    }
+
+    private function source_page(int $sourceId): WP_Post|WP_Error
+    {
+        $source = get_post($sourceId);
+        if (!$source instanceof WP_Post || $source->post_type !== 'page') {
+            return new WP_Error(
+                'wp_fixpilot_source_missing',
+                'Bronpagina niet gevonden.',
+                ['status' => 404]
+            );
+        }
+
+        return $source;
     }
 
     private function blueprint(int $blueprintId): WP_Post|WP_Error
@@ -639,6 +706,15 @@ final class WPFixPilot_Blueprint_Controller
             '_wp_fixpilot_seo_plugin',
             true
         );
+    }
+
+    private function normalize_seo_plugin(mixed $plugin): ?string
+    {
+        $normalized = sanitize_key((string) $plugin);
+
+        return in_array($normalized, ['yoast', 'rank_math', 'aioseo'], true)
+            ? $normalized
+            : null;
     }
 
     /** @param array<string, mixed> $value */

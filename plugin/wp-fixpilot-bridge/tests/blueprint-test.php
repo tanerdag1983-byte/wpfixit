@@ -109,7 +109,7 @@ $GLOBALS['wpfixpilot_next_post_id'] = 200;
 $GLOBALS['wpfixpilot_source_page_template'] = 'algemeen-productdetail.php';
 $GLOBALS['wpfixpilot_update_post_meta_failures'] = [];
 
-function sanitize_text_field(string $value): string { return trim($value); }
+function sanitize_text_field(string $value): string { return trim(strip_tags($value)); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
 function sanitize_title(string $value): string { return trim(strtolower(str_replace(' ', '-', $value)), '-'); }
 function esc_html(string $value): string { return htmlspecialchars($value, ENT_QUOTES); }
@@ -240,6 +240,12 @@ seed_source_page(19);
 seed_source_page(20, 'Schema failure bron');
 seed_source_page(21, 'Replacement failure bron');
 seed_source_page(22, 'SEO failure bron');
+$unsupportedSource = new WP_Post();
+$unsupportedSource->ID = 23;
+$unsupportedSource->post_type = 'post';
+$unsupportedSource->post_status = 'trash';
+$unsupportedSource->post_title = 'Verkeerd post type';
+$GLOBALS['wpfixpilot_posts'][23] = $unsupportedSource;
 
 require_once __DIR__ . '/../includes/builder-adapters/interface-blueprint-adapter.php';
 
@@ -379,6 +385,19 @@ final class Schema_Contract_Blueprint_Adapter extends Test_Blueprint_Adapter
     }
 }
 
+final class Tracking_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    /** @var array<int, int> */
+    public array $usesPageCalls = [];
+
+    public function uses_page(int $postId): bool
+    {
+        $this->usesPageCalls[] = $postId;
+
+        return parent::uses_page($postId);
+    }
+}
+
 /** @return array<string, mixed> */
 function valid_test_blueprint_schema(int $postId): array
 {
@@ -403,6 +422,64 @@ require_once __DIR__ . '/../includes/class-rest-controller.php';
 $controller = new WPFixPilot_Blueprint_Controller([
     new Test_Blueprint_Adapter([19, 20, 22]),
 ]);
+
+$invalidSourcePageIdCases = [
+    ['label' => 'mixed source page id', 'value' => '19abc'],
+    ['label' => 'zero source page id', 'value' => 0],
+    ['label' => 'negative source page id', 'value' => -19],
+    ['label' => 'float source page id', 'value' => 19.5],
+    ['label' => 'whitespace source page id', 'value' => '   '],
+];
+
+foreach ($invalidSourcePageIdCases as $invalidSourcePageIdCase) {
+    $trackingAdapter = new Tracking_Blueprint_Adapter([19]);
+    $invalidSourceIdController = new WPFixPilot_Blueprint_Controller([$trackingAdapter]);
+    $invalidSourceIdBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+    $invalidSourceId = $invalidSourceIdController->capture([
+        'source_page_id' => $invalidSourcePageIdCase['value'],
+        'name' => 'Dienstpagina',
+        'page_type' => 'service',
+        'builder' => 'acf',
+        'version' => 1,
+    ]);
+    assert(is_wp_error($invalidSourceId), $invalidSourcePageIdCase['label']);
+    assert($invalidSourceId->code === 'wp_fixpilot_blueprint_invalid', $invalidSourcePageIdCase['label']);
+    assert(($invalidSourceId->data['status'] ?? null) === 400, $invalidSourcePageIdCase['label']);
+    assert($trackingAdapter->usesPageCalls === [], $invalidSourcePageIdCase['label']);
+    assert(get_post($invalidSourceIdBlueprintId) === null, $invalidSourcePageIdCase['label']);
+}
+
+$missingSourceAdapter = new Tracking_Blueprint_Adapter([19]);
+$missingSourceController = new WPFixPilot_Blueprint_Controller([$missingSourceAdapter]);
+$missingSourceBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$missingSource = $missingSourceController->capture([
+    'source_page_id' => 999,
+    'name' => 'Ontbrekende bronpagina',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($missingSource));
+assert($missingSource->code === 'wp_fixpilot_source_missing');
+assert(($missingSource->data['status'] ?? null) === 404);
+assert($missingSourceAdapter->usesPageCalls === []);
+assert(get_post($missingSourceBlueprintId) === null);
+
+$wrongTypeSourceAdapter = new Tracking_Blueprint_Adapter([19]);
+$wrongTypeSourceController = new WPFixPilot_Blueprint_Controller([$wrongTypeSourceAdapter]);
+$wrongTypeSourceBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$wrongTypeSource = $wrongTypeSourceController->capture([
+    'source_page_id' => 23,
+    'name' => 'Verkeerde bronpagina',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($wrongTypeSource));
+assert($wrongTypeSource->code === 'wp_fixpilot_source_missing');
+assert(($wrongTypeSource->data['status'] ?? null) === 404);
+assert($wrongTypeSourceAdapter->usesPageCalls === []);
+assert(get_post($wrongTypeSourceBlueprintId) === null);
 
 $invalidCaptureCases = [
     [
@@ -457,7 +534,7 @@ foreach ($invalidCaptureCases as $invalidCaptureCase) {
 }
 
 $captured = $controller->capture([
-    'source_page_id' => 19,
+    'source_page_id' => '19',
     'name' => 'Dienstpagina',
     'page_type' => 'service',
     'builder' => 'acf',
@@ -625,6 +702,40 @@ assert(is_wp_error($unknownField));
 assert($unknownField->code === 'wp_fixpilot_blueprint_field_unknown');
 assert(!isset($GLOBALS['wpfixpilot_posts'][202]));
 
+$emptyIdempotencyKeyDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$emptyIdempotencyKey = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => '   ',
+    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($emptyIdempotencyKey));
+assert($emptyIdempotencyKey->code === 'wp_fixpilot_blueprint_invalid');
+assert(($emptyIdempotencyKey->data['status'] ?? null) === 400);
+assert(get_post($emptyIdempotencyKeyDraftId) === null);
+
+$sanitizedEmptyIdempotencyKeyDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$sanitizedEmptyIdempotencyKey = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => '<b> </b>',
+    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($sanitizedEmptyIdempotencyKey));
+assert($sanitizedEmptyIdempotencyKey->code === 'wp_fixpilot_blueprint_invalid');
+assert(($sanitizedEmptyIdempotencyKey->data['status'] ?? null) === 400);
+assert(get_post($sanitizedEmptyIdempotencyKeyDraftId) === null);
+
 $liveBlueprintTree = get_post_meta(200, 'fake_blueprint_tree', true);
 $liveBlueprintTree[0]['field-title'] = 'Handmatig aangepaste titel';
 $liveBlueprintTree[0]['field-body'] = '<p>Handmatig aangepaste inhoud</p>';
@@ -734,6 +845,7 @@ $noneSeoController = new WPFixPilot_Blueprint_Controller(
     null,
     static fn (): ?string => null
 );
+$noneSeoBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
 $noneSeoCapture = $noneSeoController->capture([
     'source_page_id' => 21,
     'name' => 'No SEO plugin blueprint',
@@ -741,12 +853,10 @@ $noneSeoCapture = $noneSeoController->capture([
     'builder' => 'acf',
     'version' => 1,
 ]);
-assert(!is_wp_error($noneSeoCapture));
-$noneSeoBlueprintId = (int) $noneSeoCapture['wordpress_blueprint_id'];
-assert(array_key_exists('_wp_fixpilot_seo_plugin', $GLOBALS['wpfixpilot_meta'][$noneSeoBlueprintId]));
-assert((string) get_post_meta($noneSeoBlueprintId, '_wp_fixpilot_seo_plugin', true) === '');
-$noneSeoRead = $noneSeoController->read($noneSeoBlueprintId);
-assert($noneSeoRead['seo_plugin'] === '');
+assert(is_wp_error($noneSeoCapture));
+assert($noneSeoCapture->code === 'wp_fixpilot_seo_plugin_unsupported');
+assert(($noneSeoCapture->data['status'] ?? null) === 409);
+assert(get_post($noneSeoBlueprintId) === null);
 
 $capturedSeoPlugins = ['yoast', 'rank_math'];
 $capturedSeoController = new WPFixPilot_Blueprint_Controller(
@@ -1113,6 +1223,68 @@ assert(is_wp_error($restInvalidPageType));
 assert($restInvalidPageType->code === 'wp_fixpilot_blueprint_invalid');
 assert(($restInvalidPageType->data['status'] ?? null) === 400);
 
+$restInvalidSourcePageIdPayload = [
+    'source_page_id' => '20abc',
+    'name' => 'REST blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+];
+$restInvalidSourcePageIdBody = wp_json_encode($restInvalidSourcePageIdPayload);
+$restInvalidSourcePageIdRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restInvalidSourcePageIdPayload,
+    [
+        'x-wp-fixpilot-timestamp' => $restCaptureTimestamp,
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-capture-invalid-source',
+        'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+            'test-secret',
+            'POST',
+            $restCaptureRoute,
+            $restCaptureTimestamp,
+            'rest-blueprint-capture-invalid-source',
+            $restInvalidSourcePageIdBody
+        ),
+    ],
+    $restInvalidSourcePageIdBody
+);
+$restInvalidSourcePageId = ($captureRoute['args']['callback'])($restInvalidSourcePageIdRequest);
+assert(is_wp_error($restInvalidSourcePageId));
+assert($restInvalidSourcePageId->code === 'wp_fixpilot_blueprint_invalid');
+assert(($restInvalidSourcePageId->data['status'] ?? null) === 400);
+
+$restMissingSourcePayload = [
+    'source_page_id' => 999,
+    'name' => 'REST missing source blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+];
+$restMissingSourceBody = wp_json_encode($restMissingSourcePayload);
+$restMissingSourceRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restMissingSourcePayload,
+    [
+        'x-wp-fixpilot-timestamp' => $restCaptureTimestamp,
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-capture-missing-source',
+        'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+            'test-secret',
+            'POST',
+            $restCaptureRoute,
+            $restCaptureTimestamp,
+            'rest-blueprint-capture-missing-source',
+            $restMissingSourceBody
+        ),
+    ],
+    $restMissingSourceBody
+);
+$restMissingSource = ($captureRoute['args']['callback'])($restMissingSourceRequest);
+assert(is_wp_error($restMissingSource));
+assert($restMissingSource->code === 'wp_fixpilot_source_missing');
+assert(($restMissingSource->data['status'] ?? null) === 404);
+
 $restDraftCapturePayload = [
     'source_page_id' => 22,
     'name' => 'REST draft blueprint',
@@ -1227,6 +1399,73 @@ assert($restDraftReplay->get_data()['wordpress_object_id'] === $restDraftFirst->
 assert($restDraftReplay->get_data()['created'] === false);
 assert(count($GLOBALS['wpfixpilot_posts']) === $restDraftPostsBefore + 1);
 
+$restWhitespaceIdempotencyPayload = $restDraftPayload;
+$restWhitespaceIdempotencyPayload['idempotency_key'] = '   ';
+$restWhitespaceIdempotencyBody = wp_json_encode($restWhitespaceIdempotencyPayload);
+$restWhitespaceIdempotencyRequest = new WP_REST_Request(
+    'POST',
+    $restDraftRoute,
+    array_merge(['id' => $restDraftBlueprintId], $restWhitespaceIdempotencyPayload),
+    [
+        'x-wp-fixpilot-timestamp' => '1710000004',
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-draft-empty-key',
+        'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+            'test-secret',
+            'POST',
+            $restDraftRoute,
+            '1710000004',
+            'rest-blueprint-draft-empty-key',
+            $restWhitespaceIdempotencyBody
+        ),
+    ],
+    $restWhitespaceIdempotencyBody
+);
+$restWhitespaceIdempotency = ($draftRoute['args']['callback'])($restWhitespaceIdempotencyRequest);
+assert(is_wp_error($restWhitespaceIdempotency));
+assert($restWhitespaceIdempotency->code === 'wp_fixpilot_blueprint_invalid');
+assert(($restWhitespaceIdempotency->data['status'] ?? null) === 400);
+assert(count($GLOBALS['wpfixpilot_posts']) === $restDraftPostsBefore + 1);
+
+$restNoSeoController = new WPFixPilot_REST_Controller(
+    null,
+    new WPFixPilot_Blueprint_Controller(
+        [new Test_Blueprint_Adapter([21])],
+        null,
+        static fn (): ?string => null
+    ),
+    $restAuth
+);
+$restNoSeoPayload = [
+    'source_page_id' => 21,
+    'name' => 'REST no SEO blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+];
+$restNoSeoBody = wp_json_encode($restNoSeoPayload);
+$restNoSeoRequest = new WP_REST_Request(
+    'POST',
+    $restCaptureRoute,
+    $restNoSeoPayload,
+    [
+        'x-wp-fixpilot-timestamp' => '1710000005',
+        'x-wp-fixpilot-nonce' => 'rest-blueprint-capture-no-seo',
+        'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+            'test-secret',
+            'POST',
+            $restCaptureRoute,
+            '1710000005',
+            'rest-blueprint-capture-no-seo',
+            $restNoSeoBody
+        ),
+    ],
+    $restNoSeoBody
+);
+$restNoSeo = $restNoSeoController->capture_blueprint($restNoSeoRequest);
+assert(is_wp_error($restNoSeo));
+assert($restNoSeo->code === 'wp_fixpilot_seo_plugin_unsupported');
+assert(($restNoSeo->data['status'] ?? null) === 409);
+
 $wrongRouteSignatureRequest = new WP_REST_Request(
     'POST',
     $restCaptureRoute,
@@ -1273,7 +1512,7 @@ assert(($replayedNonce->data['status'] ?? null) === 403);
 
 $inventory = $restController->inventory()->get_data();
 assert($inventory['count'] === 6);
-assert(array_column($inventory['items'], 'id') === [19, 20, 21, 22, 201, 223]);
+assert(array_column($inventory['items'], 'id') === [19, 20, 21, 22, 201, 222]);
 
 $health = $restController->health()->get_data();
 assert($health['plugin_version'] === '0.3.0');
