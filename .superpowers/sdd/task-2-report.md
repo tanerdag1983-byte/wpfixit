@@ -424,3 +424,62 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - No new scope concerns beyond the retained Task 3 adapter-registration boundary and existing backend ownership of proposal dependency checks.
+
+## Task 2 Continuation 6 (Final Clone/Payload Validation Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-post-cloner.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert(is_wp_error($metaWriteFailure)) in /app/tests/blueprint-test.php:467
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Treated `add_post_meta(... ) === false` and blueprint-marker `update_post_meta(... ) === false` as atomic clone failures in `WPFixPilot_Post_Cloner`, force-deleting the incomplete clone and returning `wp_fixpilot_clone_failed` with HTTP 500 semantics while leaving the source page untouched.
+- Added direct clone regressions for:
+  - allowlisted meta-write failure;
+  - blueprint marker-write failure.
+- Tightened `WPFixPilot_Blueprint_Controller::create_draft()` payload validation before idempotency lookup or clone work by requiring:
+  - `expected_version` to be a positive integer or canonical digit string only;
+  - `expected_structure_hash` to be a non-empty string;
+  - `idempotency_key` to remain a non-empty sanitized string;
+  - `replacements` to be an array/map of string values only;
+  - `seo` to be an array with exactly `title`, `description`, and `keyword` string fields.
+- Added schema-aware replacement validation before draft lookup/clone so:
+  - unknown fields still return `wp_fixpilot_blueprint_field_unknown`;
+  - required replacement values cannot be empty after stripping tags;
+  - replacement strings cannot exceed the field `max_length`.
+- Added warning-guard regressions proving malformed client payloads now return HTTP 400 instead of emitting PHP array-to-string warnings or creating partial drafts, including:
+  - `expected_version = '1abc'`;
+  - nested replacement arrays;
+  - empty required replacement values;
+  - over-length replacement values;
+  - malformed SEO payloads, missing/extra SEO keys, and object/array SEO fields.
+- Preserved prior Task 2 lifecycle behavior, including idempotent reuse, live snapshot/drift checks, cleanup on downstream write failures, and the existing fake-adapter test boundary.
+
+### Concerns
+
+- No new scope concerns. The fix stays inside the owned Task 2 cloner/controller/test/report files and does not register concrete adapters or refactor unrelated bridge code.

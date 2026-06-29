@@ -208,21 +208,9 @@ final class WPFixPilot_Blueprint_Controller
     /** @return array<string, mixed>|WP_Error */
     public function create_draft(int $blueprintId, array $payload): array|WP_Error
     {
-        $required = [
-            'expected_version',
-            'expected_structure_hash',
-            'idempotency_key',
-            'replacements',
-            'seo',
-        ];
-        foreach ($required as $key) {
-            if (!isset($payload[$key]) || $payload[$key] === '') {
-                return new WP_Error(
-                    'wp_fixpilot_blueprint_invalid',
-                    'De blueprint-aanvraag is niet compleet.',
-                    ['status' => 400]
-                );
-            }
+        $validatedPayload = $this->validate_create_draft_payload($payload);
+        if (is_wp_error($validatedPayload)) {
+            return $validatedPayload;
         }
 
         $blueprint = $this->blueprint($blueprintId);
@@ -235,7 +223,7 @@ final class WPFixPilot_Blueprint_Controller
             '_wp_fixpilot_blueprint_version',
             true
         );
-        if ($storedVersion !== (int) $payload['expected_version']) {
+        if ($storedVersion !== $validatedPayload['expected_version']) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_conflict',
                 'De blueprint-versie is gewijzigd. Vernieuw eerst de gegevens.',
@@ -251,7 +239,7 @@ final class WPFixPilot_Blueprint_Controller
         $currentHash = $snapshot['structure_hash'];
         if (
             $currentHash === ''
-            || !hash_equals((string) $payload['expected_structure_hash'], $currentHash)
+            || !hash_equals($validatedPayload['expected_structure_hash'], $currentHash)
         ) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_conflict',
@@ -261,16 +249,12 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         $schema = $snapshot['schema'];
-        $replacements = (array) $payload['replacements'];
-        $fieldIds = $this->field_ids($schema);
-        foreach (array_keys($replacements) as $fieldId) {
-            if (!in_array((string) $fieldId, $fieldIds, true)) {
-                return new WP_Error(
-                    'wp_fixpilot_blueprint_field_unknown',
-                    'Onbekend blueprint-veld.',
-                    ['status' => 400]
-                );
-            }
+        $replacements = $this->validate_replacements_against_schema(
+            $validatedPayload['replacements'],
+            $schema
+        );
+        if (is_wp_error($replacements)) {
+            return $replacements;
         }
         $capturedSeoPlugin = $this->captured_seo_plugin($blueprintId);
         if (
@@ -286,14 +270,7 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
-        $idempotencyKey = sanitize_text_field((string) $payload['idempotency_key']);
-        if ($idempotencyKey === '') {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_invalid',
-                'De blueprint-aanvraag is niet compleet.',
-                ['status' => 400]
-            );
-        }
+        $idempotencyKey = $validatedPayload['idempotency_key'];
         $existing = get_posts([
             'post_type' => 'page',
             'post_status' => 'any',
@@ -366,7 +343,7 @@ final class WPFixPilot_Blueprint_Controller
 
             $seoWrite = $this->write_seo(
                 $draftId,
-                (array) $payload['seo'],
+                $validatedPayload['seo'],
                 $capturedSeoPlugin
             );
             if (is_wp_error($seoWrite)) {
@@ -478,6 +455,65 @@ final class WPFixPilot_Blueprint_Controller
         return $normalized;
     }
 
+    /** @return array{expected_version: int, expected_structure_hash: string, idempotency_key: string, replacements: array<string, string>, seo: array{title: string, description: string, keyword: string}}|WP_Error */
+    private function validate_create_draft_payload(array $payload): array|WP_Error
+    {
+        $required = [
+            'expected_version',
+            'expected_structure_hash',
+            'idempotency_key',
+            'replacements',
+            'seo',
+        ];
+        foreach ($required as $key) {
+            if (!array_key_exists($key, $payload)) {
+                return $this->invalid_request_error();
+            }
+        }
+
+        $expectedVersion = $this->positive_integer_value(
+            $payload['expected_version']
+        );
+        if (is_wp_error($expectedVersion)) {
+            return $expectedVersion;
+        }
+
+        if (
+            !is_string($payload['expected_structure_hash'])
+            || $payload['expected_structure_hash'] === ''
+        ) {
+            return $this->invalid_request_error();
+        }
+
+        if (!is_string($payload['idempotency_key'])) {
+            return $this->invalid_request_error();
+        }
+        $idempotencyKey = sanitize_text_field($payload['idempotency_key']);
+        if ($idempotencyKey === '') {
+            return $this->invalid_request_error();
+        }
+
+        $replacements = $this->validate_replacements_payload(
+            $payload['replacements']
+        );
+        if (is_wp_error($replacements)) {
+            return $replacements;
+        }
+
+        $seo = $this->validate_seo_payload($payload['seo']);
+        if (is_wp_error($seo)) {
+            return $seo;
+        }
+
+        return [
+            'expected_version' => $expectedVersion,
+            'expected_structure_hash' => $payload['expected_structure_hash'],
+            'idempotency_key' => $idempotencyKey,
+            'replacements' => $replacements,
+            'seo' => $seo,
+        ];
+    }
+
     private function source_page(int $sourceId): WP_Post|WP_Error
     {
         $source = get_post($sourceId);
@@ -565,6 +601,121 @@ final class WPFixPilot_Blueprint_Controller
             }
         }
         return $fieldIds;
+    }
+
+    /** @return array<string, string>|WP_Error */
+    private function validate_replacements_payload(mixed $replacements): array|WP_Error
+    {
+        if (!is_array($replacements)) {
+            return $this->invalid_request_error();
+        }
+
+        $normalized = [];
+        foreach ($replacements as $fieldId => $value) {
+            if (!is_string($fieldId) || !is_string($value)) {
+                return $this->invalid_request_error();
+            }
+
+            $normalized[$fieldId] = $value;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, string> $replacements
+     * @param array<string, mixed> $schema
+     * @return array<string, string>|WP_Error
+     */
+    private function validate_replacements_against_schema(
+        array $replacements,
+        array $schema
+    ): array|WP_Error {
+        $fields = $this->schema_fields($schema);
+        foreach ($replacements as $fieldId => $value) {
+            if (!isset($fields[$fieldId])) {
+                return new WP_Error(
+                    'wp_fixpilot_blueprint_field_unknown',
+                    'Onbekend blueprint-veld.',
+                    ['status' => 400]
+                );
+            }
+
+            $field = $fields[$fieldId];
+            if (
+                !empty($field['required'])
+                && trim(wp_strip_all_tags($value)) === ''
+            ) {
+                return $this->invalid_request_error();
+            }
+
+            if (strlen($value) > (int) $field['max_length']) {
+                return $this->invalid_request_error();
+            }
+        }
+
+        return $replacements;
+    }
+
+    /** @param array<string, mixed> $schema
+     *  @return array<string, array<string, mixed>>
+     */
+    private function schema_fields(array $schema): array
+    {
+        $fields = [];
+        foreach ((array) ($schema['blocks'] ?? []) as $block) {
+            foreach ((array) ($block['fields'] ?? []) as $field) {
+                if (
+                    is_array($field)
+                    && isset($field['id'])
+                    && is_string($field['id'])
+                ) {
+                    $fields[$field['id']] = $field;
+                }
+            }
+        }
+
+        return $fields;
+    }
+
+    /** @return array{title: string, description: string, keyword: string}|WP_Error */
+    private function validate_seo_payload(mixed $seo): array|WP_Error
+    {
+        if (
+            !is_array($seo)
+            || !$this->has_exact_keys($seo, ['title', 'description', 'keyword'])
+            || !is_string($seo['title'] ?? null)
+            || !is_string($seo['description'] ?? null)
+            || !is_string($seo['keyword'] ?? null)
+        ) {
+            return $this->invalid_request_error();
+        }
+
+        return [
+            'title' => $seo['title'],
+            'description' => $seo['description'],
+            'keyword' => $seo['keyword'],
+        ];
+    }
+
+    private function positive_integer_value(mixed $value): int|WP_Error
+    {
+        if (is_int($value)) {
+            $normalized = $value;
+        } elseif (
+            is_string($value)
+            && preg_match('/^[1-9][0-9]*$/', $value) === 1
+        ) {
+            $normalized = (int) $value;
+        } else {
+            return $this->invalid_request_error();
+        }
+
+        if ($normalized < 1) {
+            return $this->invalid_request_error();
+        }
+
+        return $normalized;
     }
 
     /** @return array<string, mixed> */
@@ -796,6 +947,15 @@ final class WPFixPilot_Blueprint_Controller
             'wp_fixpilot_blueprint_invalid',
             'De blueprint-inhoud is ongeldig.',
             ['status' => 500]
+        );
+    }
+
+    private function invalid_request_error(): WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_blueprint_invalid',
+            'De blueprint-aanvraag is niet compleet.',
+            ['status' => 400]
         );
     }
 }

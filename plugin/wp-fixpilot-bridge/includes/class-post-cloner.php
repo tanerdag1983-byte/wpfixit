@@ -64,14 +64,35 @@ final class WPFixPilot_Post_Cloner
                 continue;
             }
             foreach ((array) $values as $value) {
-                add_post_meta((int) $newId, (string) $key, maybe_unserialize($value));
+                $metaWrite = add_post_meta(
+                    (int) $newId,
+                    (string) $key,
+                    maybe_unserialize($value)
+                );
+                if ($metaWrite === false) {
+                    return $this->failed_clone_error((int) $newId);
+                }
             }
         }
 
-        if ($asBlueprint) {
-            update_post_meta((int) $newId, '_wp_fixpilot_blueprint', '1');
+        if (
+            $asBlueprint
+            && update_post_meta((int) $newId, '_wp_fixpilot_blueprint', '1') === false
+        ) {
+            return $this->failed_clone_error((int) $newId);
         }
 
         return (int) $newId;
+    }
+
+    private function failed_clone_error(int $cloneId): WP_Error
+    {
+        wp_delete_post($cloneId, true);
+
+        return new WP_Error(
+            'wp_fixpilot_clone_failed',
+            'De pagina kon niet volledig worden gekloond.',
+            ['status' => 500]
+        );
     }
 }

@@ -108,6 +108,9 @@ $GLOBALS['wpfixpilot_deleted_posts'] = [];
 $GLOBALS['wpfixpilot_next_post_id'] = 200;
 $GLOBALS['wpfixpilot_source_page_template'] = 'algemeen-productdetail.php';
 $GLOBALS['wpfixpilot_update_post_meta_failures'] = [];
+$GLOBALS['wpfixpilot_update_post_meta_results'] = [];
+$GLOBALS['wpfixpilot_add_post_meta_results'] = [];
+$GLOBALS['wpfixpilot_get_posts_calls'] = [];
 
 function sanitize_text_field(string $value): string { return trim(strip_tags($value)); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
@@ -140,6 +143,7 @@ function register_rest_route(string $namespace, string $route, array $args): voi
 }
 function get_posts(array $args): array
 {
+    $GLOBALS['wpfixpilot_get_posts_calls'][] = $args;
     $metaKey = (string) ($args['meta_key'] ?? '');
     $metaValue = (string) ($args['meta_value'] ?? '');
     $matches = [];
@@ -196,17 +200,47 @@ function get_post_meta(int $postId, string $key = '', bool $single = false): mix
     }
     return $single ? ($meta[$key][0] ?? '') : $meta[$key];
 }
-function update_post_meta(int $postId, string $key, mixed $value): void
+function update_post_meta(int $postId, string $key, mixed $value): mixed
 {
     if (isset($GLOBALS['wpfixpilot_update_post_meta_failures'][$postId][$key])) {
         throw $GLOBALS['wpfixpilot_update_post_meta_failures'][$postId][$key];
     }
+    $result = $GLOBALS['wpfixpilot_update_post_meta_results'][$postId][$key] ?? null;
+    if ($result === false) {
+        return false;
+    }
     $GLOBALS['wpfixpilot_meta'][$postId][$key] = [$value];
+
+    return $result;
 }
-function add_post_meta(int $postId, string $key, mixed $value): void
+function add_post_meta(int $postId, string $key, mixed $value): mixed
 {
+    $result = $GLOBALS['wpfixpilot_add_post_meta_results'][$postId][$key] ?? null;
+    if ($result === false) {
+        return false;
+    }
     $GLOBALS['wpfixpilot_meta'][$postId][$key] ??= [];
     $GLOBALS['wpfixpilot_meta'][$postId][$key][] = $value;
+
+    return $result;
+}
+
+/** @param Closure(): mixed $callback */
+function capture_without_php_warnings(Closure $callback): mixed
+{
+    set_error_handler(
+        static function (int $severity, string $message, string $file, int $line): never {
+            throw new RuntimeException(
+                sprintf('%s in %s:%d', $message, $file, $line)
+            );
+        }
+    );
+
+    try {
+        return $callback();
+    } finally {
+        restore_error_handler();
+    }
 }
 
 function seed_source_page(
@@ -419,6 +453,46 @@ require_once __DIR__ . '/../includes/class-page-package-controller.php';
 require_once __DIR__ . '/../includes/class-blueprint-controller.php';
 require_once __DIR__ . '/../includes/class-rest-controller.php';
 
+$cloner = new WPFixPilot_Post_Cloner();
+$metaWriteFailureCloneId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_add_post_meta_results'][$metaWriteFailureCloneId] = [
+    'fake_blueprint_tree' => false,
+];
+$metaWriteFailure = $cloner->clone_page(
+    19,
+    'Allowlisted meta write failure',
+    false,
+    ['fake_blueprint_tree']
+);
+assert(is_wp_error($metaWriteFailure));
+assert($metaWriteFailure->code === 'wp_fixpilot_clone_failed');
+assert(($metaWriteFailure->data['status'] ?? null) === 500);
+assert(get_post($metaWriteFailureCloneId) === null);
+assert(in_array($metaWriteFailureCloneId, $GLOBALS['wpfixpilot_deleted_posts'], true));
+assert(get_post(19) instanceof WP_Post);
+assert(!in_array(19, $GLOBALS['wpfixpilot_deleted_posts'], true));
+unset($GLOBALS['wpfixpilot_add_post_meta_results'][$metaWriteFailureCloneId]);
+
+$markerWriteFailureCloneId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_results'][$markerWriteFailureCloneId] = [
+    '_wp_fixpilot_blueprint' => false,
+];
+$markerWriteFailure = $cloner->clone_page(
+    19,
+    'Blueprint marker write failure',
+    true,
+    ['fake_blueprint_tree']
+);
+assert(is_wp_error($markerWriteFailure));
+assert($markerWriteFailure->code === 'wp_fixpilot_clone_failed');
+assert(($markerWriteFailure->data['status'] ?? null) === 500);
+assert(get_post($markerWriteFailureCloneId) === null);
+assert(in_array($markerWriteFailureCloneId, $GLOBALS['wpfixpilot_deleted_posts'], true));
+assert(get_post(19) instanceof WP_Post);
+assert(!in_array(19, $GLOBALS['wpfixpilot_deleted_posts'], true));
+unset($GLOBALS['wpfixpilot_update_post_meta_results'][$markerWriteFailureCloneId]);
+$GLOBALS['wpfixpilot_next_post_id'] = 200;
+
 $controller = new WPFixPilot_Blueprint_Controller([
     new Test_Blueprint_Adapter([19, 20, 22]),
 ]);
@@ -556,6 +630,147 @@ assert($captured['created'] === true);
 $read = $controller->read(200);
 assert($read['content_schema']['schema_version'] === 'blueprint-v1');
 assert($read['structure_hash'] === $captured['structure_hash']);
+
+$invalidDraftPayloadCases = [
+    [
+        'label' => 'expected version numeric prefix string',
+        'payload' => [
+            'expected_version' => '1abc',
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-invalid-version',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+    [
+        'label' => 'expected structure hash array',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => ['not-a-string'],
+            'idempotency_key' => 'proposal-invalid-hash',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+    [
+        'label' => 'nested replacement array',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-nested-replacement',
+            'replacements' => ['field-title' => ['nested']],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+    [
+        'label' => 'required replacement empty string',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-empty-replacement',
+            'replacements' => ['field-title' => '   '],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+    [
+        'label' => 'replacement exceeds max length',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-long-replacement',
+            'replacements' => ['field-title' => str_repeat('x', 181)],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+    [
+        'label' => 'seo payload list',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-seo-list',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => ['SEO titel'],
+        ],
+    ],
+    [
+        'label' => 'seo payload missing keyword',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-seo-missing',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+            ],
+        ],
+    ],
+    [
+        'label' => 'seo payload extra key',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-seo-extra',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+                'extra' => 'nee',
+            ],
+        ],
+    ],
+    [
+        'label' => 'seo object field',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-seo-object-field',
+            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'seo' => [
+                'title' => ['nested'],
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ],
+    ],
+];
+
+foreach ($invalidDraftPayloadCases as $invalidDraftPayloadCase) {
+    $invalidDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+    $lookupCount = count($GLOBALS['wpfixpilot_get_posts_calls']);
+    $invalidDraft = capture_without_php_warnings(
+        static fn () => $controller->create_draft(
+            200,
+            $invalidDraftPayloadCase['payload']
+        )
+    );
+    assert(is_wp_error($invalidDraft), $invalidDraftPayloadCase['label']);
+    assert($invalidDraft->code === 'wp_fixpilot_blueprint_invalid', $invalidDraftPayloadCase['label']);
+    assert(($invalidDraft->data['status'] ?? null) === 400, $invalidDraftPayloadCase['label']);
+    assert(count($GLOBALS['wpfixpilot_get_posts_calls']) === $lookupCount, $invalidDraftPayloadCase['label']);
+    assert(get_post($invalidDraftId) === null, $invalidDraftPayloadCase['label']);
+}
 
 $draft = $controller->create_draft(200, [
     'expected_version' => 1,
