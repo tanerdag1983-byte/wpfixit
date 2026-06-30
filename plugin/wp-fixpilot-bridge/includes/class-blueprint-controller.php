@@ -152,7 +152,10 @@ final class WPFixPilot_Blueprint_Controller
         try {
             $schema = $adapter->schema($blueprintId);
             if (is_wp_error($schema)) {
-                wp_delete_post($blueprintId, true);
+                $cleanup = $this->cleanup_blueprint($blueprintId);
+                if (is_wp_error($cleanup)) {
+                    return $cleanup;
+                }
                 return $schema;
             }
             $structureHash = $adapter->structure_hash($blueprintId);
@@ -161,26 +164,41 @@ final class WPFixPilot_Blueprint_Controller
                 $structureHash
             );
             if (is_wp_error($snapshotValidation)) {
-                wp_delete_post($blueprintId, true);
+                $cleanup = $this->cleanup_blueprint($blueprintId);
+                if (is_wp_error($cleanup)) {
+                    return $cleanup;
+                }
                 return $snapshotValidation;
             }
 
-            update_post_meta($blueprintId, '_wp_fixpilot_source_page_id', $sourceId);
-            update_post_meta($blueprintId, '_wp_fixpilot_blueprint_builder', $adapter->key());
-            update_post_meta($blueprintId, '_wp_fixpilot_blueprint_version', $version);
-            update_post_meta($blueprintId, '_wp_fixpilot_blueprint_page_type', $pageType);
-            update_post_meta($blueprintId, '_wp_fixpilot_structure_hash', $structureHash);
-            update_post_meta($blueprintId, '_wp_fixpilot_content_schema', $schema);
-            update_post_meta($blueprintId, '_wp_fixpilot_seo_plugin', $capturedSeoPlugin);
+            $captureMeta = [
+                '_wp_fixpilot_source_page_id' => $sourceId,
+                '_wp_fixpilot_blueprint_builder' => $adapter->key(),
+                '_wp_fixpilot_blueprint_version' => $version,
+                '_wp_fixpilot_blueprint_page_type' => $pageType,
+                '_wp_fixpilot_structure_hash' => $structureHash,
+                '_wp_fixpilot_content_schema' => $schema,
+                '_wp_fixpilot_seo_plugin' => $capturedSeoPlugin,
+            ];
+            foreach ($captureMeta as $key => $value) {
+                if (!$this->verified_update_post_meta($blueprintId, $key, $value)) {
+                    $cleanup = $this->cleanup_blueprint($blueprintId);
+                    if (is_wp_error($cleanup)) {
+                        return $cleanup;
+                    }
+
+                    return $this->blueprint_failed_error();
+                }
+            }
 
             return $this->blueprint_response($blueprintId, $schema, $structureHash, true);
         } catch (Throwable $error) {
-            wp_delete_post($blueprintId, true);
-            return new WP_Error(
-                'wp_fixpilot_blueprint_failed',
-                'De blueprint kon niet volledig worden vastgelegd.',
-                ['status' => 500]
-            );
+            $cleanup = $this->cleanup_blueprint($blueprintId);
+            if (is_wp_error($cleanup)) {
+                return $cleanup;
+            }
+
+            return $this->blueprint_failed_error();
         }
     }
 
@@ -326,18 +344,29 @@ final class WPFixPilot_Blueprint_Controller
         $draftId = (int) $draftId;
 
         try {
-            update_post_meta($draftId, '_wp_fixpilot_idempotency_key', $idempotencyKey);
-            update_post_meta($draftId, '_wp_fixpilot_source_blueprint_id', $blueprintId);
-            update_post_meta($draftId, '_wp_fixpilot_blueprint_version', $storedVersion);
-            update_post_meta(
-                $draftId,
-                '_wp_fixpilot_blueprint_structure_hash',
-                $currentHash
-            );
+            $draftMeta = [
+                '_wp_fixpilot_idempotency_key' => $idempotencyKey,
+                '_wp_fixpilot_source_blueprint_id' => $blueprintId,
+                '_wp_fixpilot_blueprint_version' => $storedVersion,
+                '_wp_fixpilot_blueprint_structure_hash' => $currentHash,
+            ];
+            foreach ($draftMeta as $key => $value) {
+                if (!$this->verified_update_post_meta($draftId, $key, $value)) {
+                    $cleanup = $this->cleanup_draft($draftId);
+                    if (is_wp_error($cleanup)) {
+                        return $cleanup;
+                    }
+
+                    return $this->draft_failed_error();
+                }
+            }
 
             $write = $adapter->apply_replacements($draftId, $schema, $replacements);
             if (is_wp_error($write)) {
-                wp_delete_post($draftId, true);
+                $cleanup = $this->cleanup_draft($draftId);
+                if (is_wp_error($cleanup)) {
+                    return $cleanup;
+                }
                 return $write;
             }
 
@@ -347,7 +376,10 @@ final class WPFixPilot_Blueprint_Controller
                 $capturedSeoPlugin
             );
             if (is_wp_error($seoWrite)) {
-                wp_delete_post($draftId, true);
+                $cleanup = $this->cleanup_draft($draftId);
+                if (is_wp_error($cleanup)) {
+                    return $cleanup;
+                }
                 return $seoWrite;
             }
 
@@ -355,12 +387,12 @@ final class WPFixPilot_Blueprint_Controller
 
             return $this->draft_response($draftId, $currentHash, true);
         } catch (Throwable $error) {
-            wp_delete_post($draftId, true);
-            return new WP_Error(
-                'wp_fixpilot_draft_failed',
-                'Het WordPress-concept kon niet volledig worden aangemaakt.',
-                ['status' => 500]
-            );
+            $cleanup = $this->cleanup_draft($draftId);
+            if (is_wp_error($cleanup)) {
+                return $cleanup;
+            }
+
+            return $this->draft_failed_error();
         }
     }
 
@@ -373,6 +405,13 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         wp_delete_post($blueprintId, true);
+        if (get_post($blueprintId) instanceof WP_Post) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_delete_failed',
+                'De blueprintpagina kon niet volledig worden verwijderd.',
+                ['status' => 500]
+            );
+        }
 
         return [
             'status' => 'deleted',
@@ -632,6 +671,12 @@ final class WPFixPilot_Blueprint_Controller
         array $schema
     ): array|WP_Error {
         $fields = $this->schema_fields($schema);
+        foreach ($fields as $fieldId => $field) {
+            if (!empty($field['required']) && !array_key_exists($fieldId, $replacements)) {
+                return $this->invalid_request_error();
+            }
+        }
+
         foreach ($replacements as $fieldId => $value) {
             if (!isset($fields[$fieldId])) {
                 return new WP_Error(
@@ -838,11 +883,94 @@ final class WPFixPilot_Blueprint_Controller
             }
             $change = $adapters[$plugin]->build_change_set($type, $value);
             foreach ((array) ($change['meta'] ?? []) as $key => $metaValue) {
-                update_post_meta($postId, (string) $key, $metaValue);
+                if (
+                    !$this->verified_update_post_meta(
+                        $postId,
+                        (string) $key,
+                        $metaValue
+                    )
+                ) {
+                    return $this->draft_failed_error();
+                }
             }
         }
 
         return true;
+    }
+
+    private function verified_update_post_meta(
+        int $postId,
+        string $key,
+        mixed $value
+    ): bool {
+        $result = update_post_meta($postId, $key, $value);
+        if ($result !== false) {
+            return true;
+        }
+
+        return $this->meta_value_matches(
+            get_post_meta($postId, $key, true),
+            $value
+        );
+    }
+
+    private function meta_value_matches(mixed $actual, mixed $expected): bool
+    {
+        if (is_array($expected)) {
+            return $actual === $expected;
+        }
+
+        if (is_bool($expected) || $expected === null) {
+            return $actual === $expected;
+        }
+
+        return is_scalar($actual) && (string) $actual === (string) $expected;
+    }
+
+    private function cleanup_blueprint(int $blueprintId): true|WP_Error
+    {
+        wp_delete_post($blueprintId, true);
+        if (get_post($blueprintId) instanceof WP_Post) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_cleanup_failed',
+                'De onvolledige blueprint kon niet worden verwijderd.',
+                ['status' => 500]
+            );
+        }
+
+        return true;
+    }
+
+    private function cleanup_draft(int $draftId): true|WP_Error
+    {
+        wp_delete_post($draftId, true);
+        if (get_post($draftId) instanceof WP_Post) {
+            return new WP_Error(
+                'wp_fixpilot_draft_cleanup_failed',
+                'Het onvolledige WordPress-concept kon niet worden verwijderd.',
+                ['status' => 500]
+            );
+        }
+
+        return true;
+    }
+
+    private function blueprint_failed_error(): WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_blueprint_failed',
+            'De blueprint kon niet volledig worden vastgelegd.',
+            ['status' => 500]
+        );
+    }
+
+    private function draft_failed_error(): WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_draft_failed',
+            'Het WordPress-concept kon niet volledig worden aangemaakt.',
+            ['status' => 500]
+        );
     }
 
     private function detected_seo_plugin_snapshot(): string

@@ -88,6 +88,13 @@ final class WPFixPilot_Post_Cloner
     private function failed_clone_error(int $cloneId): WP_Error
     {
         wp_delete_post($cloneId, true);
+        if (get_post($cloneId) instanceof WP_Post) {
+            return new WP_Error(
+                'wp_fixpilot_clone_cleanup_failed',
+                'De onvolledige kloon kon niet worden verwijderd.',
+                ['status' => 500]
+            );
+        }
 
         return new WP_Error(
             'wp_fixpilot_clone_failed',

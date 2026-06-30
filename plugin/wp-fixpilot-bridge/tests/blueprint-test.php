@@ -105,6 +105,7 @@ $GLOBALS['wpfixpilot_posts'] = [];
 $GLOBALS['wpfixpilot_meta'] = [];
 $GLOBALS['wpfixpilot_routes'] = [];
 $GLOBALS['wpfixpilot_deleted_posts'] = [];
+$GLOBALS['wpfixpilot_delete_post_persist'] = [];
 $GLOBALS['wpfixpilot_next_post_id'] = 200;
 $GLOBALS['wpfixpilot_source_page_template'] = 'algemeen-productdetail.php';
 $GLOBALS['wpfixpilot_update_post_meta_failures'] = [];
@@ -187,6 +188,9 @@ function wp_update_post(array $postData, bool $wpError = false): int
 function wp_delete_post(int $postId, bool $force): void
 {
     $GLOBALS['wpfixpilot_deleted_posts'][] = $postId;
+    if (($GLOBALS['wpfixpilot_delete_post_persist'][$postId] ?? false) === true) {
+        return;
+    }
     unset($GLOBALS['wpfixpilot_posts'][$postId], $GLOBALS['wpfixpilot_meta'][$postId]);
 }
 function get_post_meta(int $postId, string $key = '', bool $single = false): mixed
@@ -432,6 +436,18 @@ final class Tracking_Blueprint_Adapter extends Test_Blueprint_Adapter
     }
 }
 
+final class Optional_Field_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    public function schema(int $postId): array|WP_Error
+    {
+        $schema = parent::schema($postId);
+        assert(is_array($schema));
+        $schema['blocks'][0]['fields'][1]['required'] = false;
+
+        return $schema;
+    }
+}
+
 /** @return array<string, mixed> */
 function valid_test_blueprint_schema(int $postId): array
 {
@@ -439,6 +455,17 @@ function valid_test_blueprint_schema(int $postId): array
     assert(is_array($schema));
 
     return $schema;
+}
+
+/** @return array<string, string> */
+function valid_replacements(
+    string $title = 'Nieuwe titel',
+    string $body = '<p>Nieuwe inhoud</p>'
+): array {
+    return [
+        'field-title' => $title,
+        'field-body' => $body,
+    ];
 }
 
 require_once __DIR__ . '/../includes/class-auth.php';
@@ -638,7 +665,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => '1abc',
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-invalid-version',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -652,7 +679,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => ['not-a-string'],
             'idempotency_key' => 'proposal-invalid-hash',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -666,7 +693,10 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-nested-replacement',
-            'replacements' => ['field-title' => ['nested']],
+            'replacements' => [
+                'field-title' => ['nested'],
+                'field-body' => '<p>Nieuwe inhoud</p>',
+            ],
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -680,7 +710,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-empty-replacement',
-            'replacements' => ['field-title' => '   '],
+            'replacements' => valid_replacements('   '),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -694,7 +724,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-long-replacement',
-            'replacements' => ['field-title' => str_repeat('x', 181)],
+            'replacements' => valid_replacements(str_repeat('x', 181)),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -708,7 +738,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-seo-list',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => ['SEO titel'],
         ],
     ],
@@ -718,7 +748,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-seo-missing',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -731,7 +761,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-seo-extra',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => [
                 'title' => 'SEO titel',
                 'description' => 'SEO omschrijving',
@@ -746,7 +776,7 @@ $invalidDraftPayloadCases = [
             'expected_version' => 1,
             'expected_structure_hash' => $captured['structure_hash'],
             'idempotency_key' => 'proposal-seo-object-field',
-            'replacements' => ['field-title' => 'Nieuwe titel'],
+            'replacements' => valid_replacements(),
             'seo' => [
                 'title' => ['nested'],
                 'description' => 'SEO omschrijving',
@@ -772,11 +802,37 @@ foreach ($invalidDraftPayloadCases as $invalidDraftPayloadCase) {
     assert(get_post($invalidDraftId) === null, $invalidDraftPayloadCase['label']);
 }
 
+$missingRequiredLookupCount = count($GLOBALS['wpfixpilot_get_posts_calls']);
+$missingRequiredDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$missingRequiredReplacement = capture_without_php_warnings(
+    static fn () => $controller->create_draft(
+        200,
+        [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-missing-required-field',
+            'replacements' => [
+                'field-title' => 'Nieuwe titel',
+            ],
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+        ]
+    )
+);
+assert(is_wp_error($missingRequiredReplacement));
+assert($missingRequiredReplacement->code === 'wp_fixpilot_blueprint_invalid');
+assert(($missingRequiredReplacement->data['status'] ?? null) === 400);
+assert(count($GLOBALS['wpfixpilot_get_posts_calls']) === $missingRequiredLookupCount);
+assert(get_post($missingRequiredDraftId) === null);
+
 $draft = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Nieuwe titel'],
+    'replacements' => valid_replacements(),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -804,7 +860,7 @@ $repeated = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Andere titel'],
+    'replacements' => valid_replacements('Andere titel'),
     'seo' => [
         'title' => 'Tweede SEO titel',
         'description' => 'Andere omschrijving',
@@ -819,7 +875,7 @@ $publishedReuse = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Andere titel'],
+    'replacements' => valid_replacements('Andere titel'),
     'seo' => [
         'title' => 'Tweede SEO titel',
         'description' => 'Andere omschrijving',
@@ -836,7 +892,7 @@ $sameKeyStoredVersionMismatch = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Andere titel'],
+    'replacements' => valid_replacements('Andere titel'),
     'seo' => [
         'title' => 'Tweede SEO titel',
         'description' => 'Andere omschrijving',
@@ -857,7 +913,7 @@ $sameKeyStoredHashMismatch = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Andere titel'],
+    'replacements' => valid_replacements('Andere titel'),
     'seo' => [
         'title' => 'Tweede SEO titel',
         'description' => 'Andere omschrijving',
@@ -877,7 +933,7 @@ $mismatchedVersionRetry = $controller->create_draft(200, [
     'expected_version' => 2,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Andere titel'],
+    'replacements' => valid_replacements('Andere titel'),
     'seo' => [
         'title' => 'Tweede SEO titel',
         'description' => 'Andere omschrijving',
@@ -892,7 +948,10 @@ $sameKeyUnknownField = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-unknown' => 'Nee'],
+    'replacements' => array_merge(
+        valid_replacements('Andere titel'),
+        ['field-unknown' => 'Nee']
+    ),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -906,7 +965,10 @@ $unknownField = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-456',
-    'replacements' => ['field-unknown' => 'Nee'],
+    'replacements' => array_merge(
+        valid_replacements('Nieuwe titel'),
+        ['field-unknown' => 'Nee']
+    ),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -922,7 +984,7 @@ $emptyIdempotencyKey = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => '   ',
-    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'replacements' => valid_replacements('Mag niet lukken'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -939,7 +1001,7 @@ $sanitizedEmptyIdempotencyKey = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => '<b> </b>',
-    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'replacements' => valid_replacements('Mag niet lukken'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -972,7 +1034,7 @@ $staleDraft = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-stale',
-    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'replacements' => valid_replacements('Mag niet lukken'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -988,7 +1050,7 @@ $sameKeyStaleRetry = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => ['field-title' => 'Nog steeds niet'],
+    'replacements' => valid_replacements('Nog steeds niet'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -1014,7 +1076,7 @@ $crossBlueprintKeyReuse = $controller->create_draft(
         'expected_version' => 1,
         'expected_structure_hash' => $secondBlueprint['structure_hash'],
         'idempotency_key' => 'proposal-123',
-        'replacements' => ['field-title' => 'Mag niet lukken'],
+        'replacements' => valid_replacements('Mag niet lukken'),
         'seo' => [
             'title' => 'SEO titel',
             'description' => 'SEO omschrijving',
@@ -1038,7 +1100,7 @@ $publishedBlueprintDraft = $controller->create_draft($publishedBlueprintId, [
     'expected_version' => 1,
     'expected_structure_hash' => $secondBlueprint['structure_hash'],
     'idempotency_key' => 'proposal-published-blueprint',
-    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'replacements' => valid_replacements('Mag niet lukken'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -1105,7 +1167,7 @@ $pluginDrift = $pluginDriftController->create_draft($capturedSeoBlueprintId, [
     'expected_version' => 1,
     'expected_structure_hash' => $capturedSeoBlueprint['structure_hash'],
     'idempotency_key' => 'proposal-plugin-drift',
-    'replacements' => ['field-title' => 'Mag niet lukken'],
+    'replacements' => valid_replacements('Mag niet lukken'),
     'seo' => [
         'title' => 'SEO titel',
         'description' => 'SEO omschrijving',
@@ -1261,7 +1323,7 @@ $replacementFailure = $replacementFailureController->create_draft(
         'expected_version' => 1,
         'expected_structure_hash' => $replacementFailureCapture['structure_hash'],
         'idempotency_key' => 'proposal-replacement-failure',
-        'replacements' => ['field-title' => 'Nieuwe titel'],
+        'replacements' => valid_replacements(),
         'seo' => [
             'title' => 'SEO titel',
             'description' => 'SEO omschrijving',
@@ -1294,7 +1356,7 @@ $seoFailure = $seoFailureController->create_draft(
         'expected_version' => 1,
         'expected_structure_hash' => $seoFailureCapture['structure_hash'],
         'idempotency_key' => 'proposal-seo-failure',
-        'replacements' => ['field-title' => 'Nieuwe titel'],
+        'replacements' => valid_replacements(),
         'seo' => [
             'title' => 'SEO titel',
             'description' => 'SEO omschrijving',
@@ -1547,7 +1609,7 @@ $restDraftPayload = [
     'expected_version' => 1,
     'expected_structure_hash' => $restDraftCaptureResponse->get_data()['structure_hash'],
     'idempotency_key' => 'rest-blueprint-draft-1',
-    'replacements' => ['field-title' => 'REST titel'],
+    'replacements' => valid_replacements('REST titel'),
     'seo' => [
         'title' => 'REST SEO titel',
         'description' => 'REST SEO omschrijving',
@@ -1731,5 +1793,178 @@ assert(array_column($inventory['items'], 'id') === [19, 20, 21, 22, 201, 222]);
 
 $health = $restController->health()->get_data();
 assert($health['plugin_version'] === '0.3.0');
+
+$optionalFieldController = new WPFixPilot_Blueprint_Controller([
+    new Optional_Field_Blueprint_Adapter([21]),
+]);
+$optionalFieldCapture = $optionalFieldController->capture([
+    'source_page_id' => 21,
+    'name' => 'Optioneel veld blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($optionalFieldCapture));
+$optionalFieldDraft = $optionalFieldController->create_draft(
+    (int) $optionalFieldCapture['wordpress_blueprint_id'],
+    [
+        'expected_version' => 1,
+        'expected_structure_hash' => $optionalFieldCapture['structure_hash'],
+        'idempotency_key' => 'proposal-optional-field-omit',
+        'replacements' => [
+            'field-title' => 'Alleen verplichte titel',
+        ],
+        'seo' => [
+            'title' => 'SEO titel',
+            'description' => 'SEO omschrijving',
+            'keyword' => 'dsg revisie',
+        ],
+    ]
+);
+assert(!is_wp_error($optionalFieldDraft));
+assert($optionalFieldDraft['created'] === true);
+assert(
+    get_post_meta($optionalFieldDraft['wordpress_object_id'], 'fake_blueprint_tree', true)[0]['field-body']
+    === '<p>Bestaande inhoud</p>'
+);
+
+$captureMetaWriteFailureController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([20]),
+]);
+$captureMetaWriteFailureBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_results'][$captureMetaWriteFailureBlueprintId] = [
+    '_wp_fixpilot_content_schema' => false,
+];
+$captureMetaWriteFailure = $captureMetaWriteFailureController->capture([
+    'source_page_id' => 20,
+    'name' => 'Capture meta false return blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($captureMetaWriteFailure));
+assert($captureMetaWriteFailure->code === 'wp_fixpilot_blueprint_failed');
+assert(($captureMetaWriteFailure->data['status'] ?? null) === 500);
+assert(get_post($captureMetaWriteFailureBlueprintId) === null);
+unset($GLOBALS['wpfixpilot_update_post_meta_results'][$captureMetaWriteFailureBlueprintId]);
+
+$draftOwnershipWriteFailureDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_results'][$draftOwnershipWriteFailureDraftId] = [
+    '_wp_fixpilot_idempotency_key' => false,
+];
+$draftOwnershipWriteFailure = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $staleRead['structure_hash'],
+    'idempotency_key' => 'proposal-draft-meta-failure',
+    'replacements' => valid_replacements('Nieuwe titel', '<p>Nieuwe inhoud</p>'),
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($draftOwnershipWriteFailure));
+assert($draftOwnershipWriteFailure->code === 'wp_fixpilot_draft_failed');
+assert(($draftOwnershipWriteFailure->data['status'] ?? null) === 500);
+assert(get_post($draftOwnershipWriteFailureDraftId) === null);
+unset($GLOBALS['wpfixpilot_update_post_meta_results'][$draftOwnershipWriteFailureDraftId]);
+
+$seoFalseReturnDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_results'][$seoFalseReturnDraftId] = [
+    '_yoast_wpseo_title' => false,
+];
+$seoFalseReturnFailure = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $staleRead['structure_hash'],
+    'idempotency_key' => 'proposal-seo-false-return',
+    'replacements' => valid_replacements('Nieuwe titel', '<p>Nieuwe inhoud</p>'),
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($seoFalseReturnFailure));
+assert($seoFalseReturnFailure->code === 'wp_fixpilot_draft_failed');
+assert(($seoFalseReturnFailure->data['status'] ?? null) === 500);
+assert(get_post($seoFalseReturnDraftId) === null);
+unset($GLOBALS['wpfixpilot_update_post_meta_results'][$seoFalseReturnDraftId]);
+
+$clonerCleanupFailureCloneId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_add_post_meta_results'][$clonerCleanupFailureCloneId] = [
+    'fake_blueprint_tree' => false,
+];
+$GLOBALS['wpfixpilot_delete_post_persist'][$clonerCleanupFailureCloneId] = true;
+$clonerCleanupFailure = $cloner->clone_page(
+    19,
+    'Cleanup delete failure clone',
+    false,
+    ['fake_blueprint_tree']
+);
+assert(is_wp_error($clonerCleanupFailure));
+assert($clonerCleanupFailure->code === 'wp_fixpilot_clone_cleanup_failed');
+assert(($clonerCleanupFailure->data['status'] ?? null) === 500);
+assert(get_post($clonerCleanupFailureCloneId) instanceof WP_Post);
+unset($GLOBALS['wpfixpilot_add_post_meta_results'][$clonerCleanupFailureCloneId]);
+unset($GLOBALS['wpfixpilot_delete_post_persist'][$clonerCleanupFailureCloneId]);
+wp_delete_post($clonerCleanupFailureCloneId, true);
+
+$captureCleanupFailureController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([20]),
+]);
+$captureCleanupFailureBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$GLOBALS['wpfixpilot_update_post_meta_results'][$captureCleanupFailureBlueprintId] = [
+    '_wp_fixpilot_content_schema' => false,
+];
+$GLOBALS['wpfixpilot_delete_post_persist'][$captureCleanupFailureBlueprintId] = true;
+$captureCleanupFailure = $captureCleanupFailureController->capture([
+    'source_page_id' => 20,
+    'name' => 'Capture cleanup failure blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(is_wp_error($captureCleanupFailure));
+assert($captureCleanupFailure->code === 'wp_fixpilot_blueprint_cleanup_failed');
+assert(($captureCleanupFailure->data['status'] ?? null) === 500);
+assert(get_post($captureCleanupFailureBlueprintId) instanceof WP_Post);
+unset($GLOBALS['wpfixpilot_update_post_meta_results'][$captureCleanupFailureBlueprintId]);
+unset($GLOBALS['wpfixpilot_delete_post_persist'][$captureCleanupFailureBlueprintId]);
+wp_delete_post($captureCleanupFailureBlueprintId, true);
+
+$deleteController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([22]),
+]);
+$deleteCapture = $deleteController->capture([
+    'source_page_id' => 22,
+    'name' => 'Delete endpoint blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($deleteCapture));
+$deleteBlueprintId = (int) $deleteCapture['wordpress_blueprint_id'];
+$deleteSuccess = $deleteController->delete($deleteBlueprintId);
+assert(!is_wp_error($deleteSuccess));
+assert($deleteSuccess['status'] === 'deleted');
+assert(get_post($deleteBlueprintId) === null);
+
+$deleteFailureCapture = $deleteController->capture([
+    'source_page_id' => 22,
+    'name' => 'Delete endpoint cleanup failure blueprint',
+    'page_type' => 'service',
+    'builder' => 'acf',
+    'version' => 1,
+]);
+assert(!is_wp_error($deleteFailureCapture));
+$deleteFailureBlueprintId = (int) $deleteFailureCapture['wordpress_blueprint_id'];
+$GLOBALS['wpfixpilot_delete_post_persist'][$deleteFailureBlueprintId] = true;
+$deleteFailure = $deleteController->delete($deleteFailureBlueprintId);
+assert(is_wp_error($deleteFailure));
+assert($deleteFailure->code === 'wp_fixpilot_blueprint_delete_failed');
+assert(($deleteFailure->data['status'] ?? null) === 500);
+assert(get_post($deleteFailureBlueprintId) instanceof WP_Post);
+unset($GLOBALS['wpfixpilot_delete_post_persist'][$deleteFailureBlueprintId]);
+wp_delete_post($deleteFailureBlueprintId, true);
 
 echo "blueprint lifecycle tests passed\n";

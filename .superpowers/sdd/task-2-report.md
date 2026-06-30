@@ -483,3 +483,60 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - No new scope concerns. The fix stays inside the owned Task 2 cloner/controller/test/report files and does not register concrete adapters or refactor unrelated bridge code.
+
+## Task 2 Continuation 7 (Atomicity Findings Closed)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-post-cloner.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert(is_wp_error($missingRequiredReplacement)) in /app/tests/blueprint-test.php:825
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v /Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build/plugin/wp-fixpilot-bridge:/app -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Required schema replacements now behave atomically at the controller boundary:
+  - every field marked `required=true` must be present in `create_draft()` replacements;
+  - empty required values still fail with HTTP 400;
+  - optional fields may be omitted and leave the captured source value intact;
+  - focused regressions prove these validation failures happen before idempotency lookup or clone creation.
+- Critical metadata writes now verify persistence instead of trusting `update_post_meta()` alone:
+  - capture snapshot metadata writes;
+  - draft ownership/idempotency metadata writes;
+  - SEO metadata writes.
+- Explicit `false` from `update_post_meta()` is treated as failure unless reading the key back proves the intended value is already stored, matching WordPress unchanged-write semantics.
+- Capture and draft write failures now delete the incomplete clone and return HTTP 500 errors; cleanup failures escalate to clear `*_cleanup_failed` errors instead of pretending the object is gone.
+- Explicit blueprint deletion and cloner cleanup now verify the post is actually absent after `wp_delete_post(..., true)`.
+- Added end-to-end regressions for:
+  - missing required replacement IDs;
+  - optional-field omission success;
+  - false-return capture metadata writes;
+  - false-return draft ownership/idempotency writes;
+  - false-return SEO writes;
+  - delete calls that leave the post present for controller cleanup, explicit delete, and cloner cleanup.
+
+### Concerns
+
+- No new scope concerns. The fix stays inside the owned Task 2 controller/cloner/tests/report surface and does not touch concrete adapters or later backend work.
