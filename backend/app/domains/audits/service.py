@@ -47,6 +47,30 @@ ISSUE_RECOMMENDATIONS = {
 }
 
 
+def _calculate_importance(page_type_label: str, status: str) -> float:
+    """
+    Calculate page importance based on page type and status.
+    Returns a value between 0.0 and 1.0.
+    """
+    # Base importance by page type
+    type_importance = {
+        "homepage": 1.0,
+        "page": 0.7,
+        "blog": 0.5,
+        "thankyou": 0.2,
+        "private": 0.1,
+    }
+    base = type_importance.get(page_type_label, 0.5)
+    
+    # Adjust for status
+    if status.lower() == "draft":
+        return base * 0.3
+    if status.lower() == "private":
+        return base * 0.2
+    
+    return base
+
+
 def audit_project(session: Session, project: Project) -> int:
     pages = list(
         session.scalars(
@@ -79,6 +103,9 @@ def audit_project(session: Session, project: Project) -> int:
             facts={
                 "title_length": len(page.title.strip()),
                 "slug_length": len(page.slug.strip()),
+                "importance": _calculate_importance(
+                    result.page_type_label, page.status
+                ),
             },
         )
         session.add(audit)

@@ -444,7 +444,11 @@ def update_change_proposal(
     proposal.after_value = payload.after_value
     session.commit()
     page = session.get(WordPressPage, proposal.wordpress_page_id)
-    assert page is not None
+    if page is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Associated page not found",
+        )
     return _proposal_payload(proposal, page)
 
 
@@ -458,7 +462,11 @@ def refresh_change_proposal(
     _project_or_404(session, user, project_id)
     proposal = _proposal_or_404(session, project_id, proposal_id)
     page = session.get(WordPressPage, proposal.wordpress_page_id)
-    assert page is not None
+    if page is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Associated page not found",
+        )
     if proposal.approval_state not in {"proposed", "approved", "conflict"}:
         raise HTTPException(
             status_code=409,
@@ -515,7 +523,11 @@ def approve_change_proposal(
     proposal.approved_at = datetime.now(UTC)
     session.commit()
     page = session.get(WordPressPage, proposal.wordpress_page_id)
-    assert page is not None
+    if page is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Associated page not found",
+        )
     return _proposal_payload(proposal, page)
 
 
@@ -530,7 +542,11 @@ def publish_change_proposal(
     _require_manager(session, user, project)
     proposal = _proposal_or_404(session, project_id, proposal_id)
     page = session.get(WordPressPage, proposal.wordpress_page_id)
-    assert page is not None
+    if page is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Associated page not found",
+        )
     try:
         result = Publisher(_connection_client(session, project_id)).publish(
             _publishing_proposal(proposal, page)
@@ -577,7 +593,11 @@ def rollback_change_proposal(
     if publish_event is None or proposal.approval_state != "published":
         raise HTTPException(status_code=409, detail="Proposal is not published")
     page = session.get(WordPressPage, proposal.wordpress_page_id)
-    assert page is not None
+    if page is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Associated page not found",
+        )
     published = MutationResult(
         mutation_type="publish",
         before_value=publish_event.before_value,

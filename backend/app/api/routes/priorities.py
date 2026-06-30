@@ -53,7 +53,11 @@ def seo_priority_score(
         if result.priority_score < minimum_score:
             continue
         signals = result.signals
-        assert signals is not None
+        if signals is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Priority signals missing",
+            )
         items.append(
             {
                 "url": page.url,
