@@ -91,6 +91,11 @@ git log --oneline -12
 7. Task 8: legacy page-package migration plus integration and end-to-end tests.
 8. Task 9: release, GitHub push, Render/Vercel deployment, plugin package, and live smoke
    tests.
+9. Roadmap Task 10: Project Brand DNA, using
+   `docs/superpowers/plans/2026-06-30-project-brand-dna.md`.
+10. Roadmap Tasks 11 onward: Link Intelligence, Content Studio and SEO scoring, Image
+    Studio, Content Calendar, and the GSC/GA4/PageSpeed Impact Timeline. Each receives a
+    separate spec and implementation plan after Task 10.
 
 ## Live-First Product Sequence
 
@@ -114,6 +119,10 @@ The detailed approved architecture, calendar safeguards, project Brand DNA, rewr
 versioning, image styles, SEO score card, PageSpeed schedule, and one-year GSC/GA4 impact
 timeline are specified in
 `docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`.
+
+The first post-launch implementation plan is
+`docs/superpowers/plans/2026-06-30-project-brand-dna.md`. Execute it only after the
+managed-blueprint Task 9 deployment and smoke tests are complete.
 
 ## Deployment Context
 
