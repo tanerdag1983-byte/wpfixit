@@ -516,10 +516,8 @@ final class WPFixPilot_Blueprint_Controller
             'replacements',
             'seo',
         ];
-        foreach ($required as $key) {
-            if (!array_key_exists($key, $payload)) {
-                return $this->invalid_request_error();
-            }
+        if (!$this->has_exact_keys($payload, $required)) {
+            return $this->invalid_request_error();
         }
 
         $expectedVersion = $this->positive_integer_value(
@@ -856,6 +854,11 @@ final class WPFixPilot_Blueprint_Controller
             ) {
                 return $this->invalid_snapshot_error();
             }
+        }
+
+        $fieldIds = $this->field_ids($schema);
+        if (count($fieldIds) !== count(array_unique($fieldIds))) {
+            return $this->invalid_snapshot_error();
         }
 
         if ($structureHash === '') {

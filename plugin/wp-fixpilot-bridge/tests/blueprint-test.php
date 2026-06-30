@@ -45,7 +45,8 @@ final class WP_REST_Request
         private string $route = '',
         private array $params = [],
         private array $headers = [],
-        private string $body = ''
+        private string $body = '',
+        private array $jsonParams = []
     ) {}
 
     public function get_method(): string
@@ -66,7 +67,7 @@ final class WP_REST_Request
     /** @return array<string, mixed> */
     public function get_json_params(): array
     {
-        return $this->params;
+        return $this->jsonParams !== [] ? $this->jsonParams : $this->params;
     }
 
     public function get_header(string $key): string
@@ -418,6 +419,11 @@ final class Schema_Contract_Blueprint_Adapter extends Test_Blueprint_Adapter
         return $this->configuredSchema;
     }
 
+    public function setSchema(array|WP_Error $schema): void
+    {
+        $this->configuredSchema = $schema;
+    }
+
     public function structure_hash(int $postId): string
     {
         return $this->configuredHash ?? parent::structure_hash($postId);
@@ -467,6 +473,40 @@ function valid_replacements(
         'field-title' => $title,
         'field-body' => $body,
     ];
+}
+
+/** @return array<string, mixed> */
+function same_block_duplicate_field_ids_schema(): array
+{
+    $schema = valid_test_blueprint_schema(20);
+    $schema['blocks'][0]['fields'][1]['id'] = $schema['blocks'][0]['fields'][0]['id'];
+
+    return $schema;
+}
+
+/** @return array<string, mixed> */
+function cross_block_duplicate_field_ids_schema(): array
+{
+    $schema = valid_test_blueprint_schema(20);
+    $schema['blocks'][] = [
+        'id' => 'block-content',
+        'layout' => 'content',
+        'label' => 'Content',
+        'semantic_role' => 'content',
+        'fields' => [
+            [
+                'id' => $schema['blocks'][0]['fields'][0]['id'],
+                'path' => 'fake_blueprint_tree/1/field-title',
+                'label' => 'Titel herhaling',
+                'value_type' => 'heading',
+                'current_value' => 'Herhaalde titel',
+                'required' => true,
+                'max_length' => 180,
+            ],
+        ],
+    ];
+
+    return $schema;
 }
 
 require_once __DIR__ . '/../includes/class-auth.php';
@@ -785,6 +825,21 @@ $invalidDraftPayloadCases = [
             ],
         ],
     ],
+    [
+        'label' => 'extra top-level key',
+        'payload' => [
+            'expected_version' => 1,
+            'expected_structure_hash' => $captured['structure_hash'],
+            'idempotency_key' => 'proposal-extra-top-level',
+            'replacements' => valid_replacements(),
+            'seo' => [
+                'title' => 'SEO titel',
+                'description' => 'SEO omschrijving',
+                'keyword' => 'dsg revisie',
+            ],
+            'unexpected' => 'value',
+        ],
+    ],
 ];
 
 foreach ($invalidDraftPayloadCases as $invalidDraftPayloadCase) {
@@ -902,6 +957,28 @@ $reorderedReplay = $controller->create_draft(200, [
 ]);
 assert($reorderedReplay['wordpress_object_id'] === $draft['wordpress_object_id']);
 assert($reorderedReplay['created'] === false);
+
+$extraTopLevelReplayLookupCount = count($GLOBALS['wpfixpilot_get_posts_calls']);
+$extraTopLevelReplayDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+$extraTopLevelReplay = capture_without_php_warnings(
+    static fn () => $controller->create_draft(200, [
+        'expected_version' => 1,
+        'expected_structure_hash' => $captured['structure_hash'],
+        'idempotency_key' => 'proposal-123',
+        'replacements' => valid_replacements(),
+        'seo' => [
+            'title' => 'SEO titel',
+            'description' => 'SEO omschrijving',
+            'keyword' => 'dsg revisie',
+        ],
+        'unexpected' => 'value',
+    ])
+);
+assert(is_wp_error($extraTopLevelReplay));
+assert($extraTopLevelReplay->code === 'wp_fixpilot_blueprint_invalid');
+assert(($extraTopLevelReplay->data['status'] ?? null) === 400);
+assert(count($GLOBALS['wpfixpilot_get_posts_calls']) === $extraTopLevelReplayLookupCount);
+assert(get_post($extraTopLevelReplayDraftId) === null);
 
 $changedReplacement = $controller->create_draft(200, [
     'expected_version' => 1,
@@ -1702,7 +1779,8 @@ $restDraftRequest = new WP_REST_Request(
         'x-wp-fixpilot-nonce' => $restDraftNonce,
         'x-wp-fixpilot-signature' => $restDraftSignature,
     ],
-    $restDraftBody
+    $restDraftBody,
+    $restDraftPayload
 );
 $restDraftFirst = ($draftRoute['args']['callback'])($restDraftRequest);
 assert($restDraftFirst->status === 201);
@@ -1730,7 +1808,8 @@ $restDraftReplayRequest = new WP_REST_Request(
         'x-wp-fixpilot-nonce' => $restDraftReplayNonce,
         'x-wp-fixpilot-signature' => $restDraftReplaySignature,
     ],
-    $restDraftReplayBody
+    $restDraftReplayBody,
+    $restDraftReplayPayload
 );
 $restDraftReplay = ($draftRoute['args']['callback'])($restDraftReplayRequest);
 assert($restDraftReplay instanceof WP_REST_Response);
@@ -1758,7 +1837,8 @@ $restWhitespaceIdempotencyRequest = new WP_REST_Request(
             $restWhitespaceIdempotencyBody
         ),
     ],
-    $restWhitespaceIdempotencyBody
+    $restWhitespaceIdempotencyBody,
+    $restWhitespaceIdempotencyPayload
 );
 $restWhitespaceIdempotency = ($draftRoute['args']['callback'])($restWhitespaceIdempotencyRequest);
 assert(is_wp_error($restWhitespaceIdempotency));
@@ -2029,5 +2109,96 @@ assert(($deleteFailure->data['status'] ?? null) === 500);
 assert(get_post($deleteFailureBlueprintId) instanceof WP_Post);
 unset($GLOBALS['wpfixpilot_delete_post_persist'][$deleteFailureBlueprintId]);
 wp_delete_post($deleteFailureBlueprintId, true);
+
+$duplicateCaptureCases = [
+    [
+        'label' => 'same block duplicate field ids',
+        'schema' => same_block_duplicate_field_ids_schema(),
+    ],
+    [
+        'label' => 'cross block duplicate field ids',
+        'schema' => cross_block_duplicate_field_ids_schema(),
+    ],
+];
+
+foreach ($duplicateCaptureCases as $duplicateCaptureCase) {
+    $duplicateCaptureController = new WPFixPilot_Blueprint_Controller([
+        new Schema_Contract_Blueprint_Adapter(
+            [20],
+            $duplicateCaptureCase['schema']
+        ),
+    ]);
+    $duplicateCaptureBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+    $duplicateCapture = $duplicateCaptureController->capture([
+        'source_page_id' => 20,
+        'name' => 'Duplicate capture blueprint ' . $duplicateCaptureCase['label'],
+        'page_type' => 'service',
+        'builder' => 'acf',
+        'version' => 1,
+    ]);
+    assert(is_wp_error($duplicateCapture), $duplicateCaptureCase['label']);
+    assert($duplicateCapture->code === 'wp_fixpilot_blueprint_invalid', $duplicateCaptureCase['label']);
+    assert(($duplicateCapture->data['status'] ?? null) === 500, $duplicateCaptureCase['label']);
+    assert(get_post($duplicateCaptureBlueprintId) === null, $duplicateCaptureCase['label']);
+}
+
+$duplicateSnapshotCases = [
+    [
+        'label' => 'same block duplicate field ids',
+        'schema' => same_block_duplicate_field_ids_schema(),
+    ],
+    [
+        'label' => 'cross block duplicate field ids',
+        'schema' => cross_block_duplicate_field_ids_schema(),
+    ],
+];
+
+foreach ($duplicateSnapshotCases as $duplicateSnapshotCase) {
+    $duplicateSnapshotAdapter = new Schema_Contract_Blueprint_Adapter(
+        [20],
+        valid_test_blueprint_schema(20)
+    );
+    $duplicateSnapshotController = new WPFixPilot_Blueprint_Controller([
+        $duplicateSnapshotAdapter,
+    ]);
+    $duplicateSnapshotCapture = $duplicateSnapshotController->capture([
+        'source_page_id' => 20,
+        'name' => 'Duplicate snapshot blueprint ' . $duplicateSnapshotCase['label'],
+        'page_type' => 'service',
+        'builder' => 'acf',
+        'version' => 1,
+    ]);
+    assert(!is_wp_error($duplicateSnapshotCapture), $duplicateSnapshotCase['label']);
+    $duplicateSnapshotBlueprintId = (int) $duplicateSnapshotCapture['wordpress_blueprint_id'];
+    $duplicateSnapshotAdapter->setSchema($duplicateSnapshotCase['schema']);
+
+    $duplicateSnapshotRead = $duplicateSnapshotController->read($duplicateSnapshotBlueprintId);
+    assert(is_wp_error($duplicateSnapshotRead), $duplicateSnapshotCase['label']);
+    assert($duplicateSnapshotRead->code === 'wp_fixpilot_blueprint_invalid', $duplicateSnapshotCase['label']);
+    assert(($duplicateSnapshotRead->data['status'] ?? null) === 500, $duplicateSnapshotCase['label']);
+
+    $duplicateSnapshotDraftId = $GLOBALS['wpfixpilot_next_post_id'];
+    $duplicateSnapshotDraft = capture_without_php_warnings(
+        static fn () => $duplicateSnapshotController->create_draft(
+            $duplicateSnapshotBlueprintId,
+            [
+                'expected_version' => 1,
+                'expected_structure_hash' => $duplicateSnapshotCapture['structure_hash'],
+                'idempotency_key' => 'proposal-duplicate-' . $duplicateSnapshotCase['label'],
+                'replacements' => valid_replacements(),
+                'seo' => [
+                    'title' => 'SEO titel',
+                    'description' => 'SEO omschrijving',
+                    'keyword' => 'dsg revisie',
+                ],
+            ]
+        )
+    );
+    assert(is_wp_error($duplicateSnapshotDraft), $duplicateSnapshotCase['label']);
+    assert($duplicateSnapshotDraft->code === 'wp_fixpilot_blueprint_invalid', $duplicateSnapshotCase['label']);
+    assert(($duplicateSnapshotDraft->data['status'] ?? null) === 500, $duplicateSnapshotCase['label']);
+    assert(get_post($duplicateSnapshotDraftId) === null, $duplicateSnapshotCase['label']);
+    assert(get_post($duplicateSnapshotBlueprintId) instanceof WP_Post, $duplicateSnapshotCase['label']);
+}
 
 echo "blueprint lifecycle tests passed\n";

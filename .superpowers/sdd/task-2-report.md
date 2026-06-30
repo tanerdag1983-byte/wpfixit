@@ -541,6 +541,52 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 
 - No new scope concerns. The fix stays inside the owned Task 2 controller/cloner/tests/report surface and does not touch concrete adapters or later backend work.
 
+## Task 2 Contract Findings Fix
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: extra top-level key in /app/plugin/wp-fixpilot-bridge/tests/blueprint-test.php:853
+    ```
+
+- RED
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: duplicate field id in same block in /app/plugin/wp-fixpilot-bridge/tests/blueprint-test.php:1434
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "/Users/tanerdag/projects/wp-fixpilot-new/.worktrees/platform-build:/app" -w /app/plugin/wp-fixpilot-bridge php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Enforced an exact `create_draft()` top-level payload contract so only `expected_version`, `expected_structure_hash`, `idempotency_key`, `replacements`, and `seo` are accepted.
+- Kept request-hash semantics unchanged for allowed fields while preventing idempotent reuse of requests that smuggle in extra top-level members.
+- Added global BlueprintSchema field-ID uniqueness validation so duplicate IDs across blocks or within one block fail snapshot validation.
+- Ensured invalid snapshot clones are deleted during capture and that live read/draft inspection rejects duplicate schemas before draft creation.
+- Tightened the test harness so REST draft requests keep route parameters separate from the JSON body, matching the stricter draft payload contract.
+
 ## Task 2 Continuation 8 (Idempotent Payload Ownership Closed)
 
 ### Files
