@@ -83,6 +83,9 @@ Docker may be used when local PHP is unavailable.
 
 ## Product Roadmap That Must Be Preserved
 
+Detailed approved design:
+`docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`.
+
 After the managed-blueprint publication flow is stable and live, continue with:
 
 1. DataForSEO keyword opportunities with strict topical/category relevance.
@@ -95,7 +98,10 @@ After the managed-blueprint publication flow is stable and live, continue with:
 8. PageSpeed/CrUX checks and safe performance recommendations or changes.
 9. Yoast, Rank Math, and All in One SEO metadata support.
 10. Combined SEO priority scoring using WordPress, crawl, GSC, GA4, and DataForSEO data.
+11. Drag-and-drop Content Calendar with per-item manual or pre-approved automatic
+    publication.
+12. Project-specific Brand DNA, block/page rewrite versions, image-style proposals, and
+    explainable SEO score cards for every existing and new page.
 
 Do not collapse these into mockups. Each integration needs persisted state, real API
 calls, user-visible sync status, error handling, tests, and deployment verification.
-

@@ -18,6 +18,7 @@ Read these first:
 4. `.superpowers/sdd/task-2-report.md`
 5. `docs/superpowers/specs/2026-06-27-managed-page-blueprints-design.md`
 6. `docs/superpowers/plans/2026-06-28-managed-page-blueprints.md`
+7. `docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`
 
 ## Current Status
 
@@ -109,6 +110,11 @@ After Task 9 has been deployed and verified, continue with the preserved roadmap
 
 These items are required future product phases, not optional ideas.
 
+The detailed approved architecture, calendar safeguards, project Brand DNA, rewrite
+versioning, image styles, SEO score card, PageSpeed schedule, and one-year GSC/GA4 impact
+timeline are specified in
+`docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`.
+
 ## Deployment Context
 
 - Frontend: Vercel.
@@ -132,4 +138,3 @@ treated as exposed and rotated before production launch.
 - Builder-specific behavior belongs behind the shared adapter contract.
 - Official Google SEO changes may be activated automatically only with a short dashboard
   update and optional email notification when enabled by the user.
-
