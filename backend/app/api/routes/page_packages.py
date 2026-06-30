@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.crypto import decrypt_text
-from app.core.database import get_session
-from app.core.security import CurrentUser, get_current_user
+from app.core.database import engine, get_session
+from app. core.security import CurrentUser, get_current_user
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_packages.generation import (
@@ -274,7 +274,7 @@ def create_page_package_proposal(
     session.commit()
     background_tasks.add_task(
         _run_page_package_generation,
-        session.get_bind(),
+        engine,
         proposal.id,
     )
     return _proposal_payload(session, proposal)
