@@ -9,6 +9,7 @@ final class WPFixPilot_Post_Cloner
         '_edit_last',
         '_wp_old_slug',
         '_wp_fixpilot_idempotency_key',
+        '_wp_fixpilot_request_hash',
         '_wp_fixpilot_source_template',
         '_wp_fixpilot_source_blueprint_id',
         '_wp_fixpilot_blueprint',

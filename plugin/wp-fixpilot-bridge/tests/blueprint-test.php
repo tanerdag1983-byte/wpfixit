@@ -271,6 +271,7 @@ function seed_source_page(
         'analytics_state' => ['skip-me'],
         '_edit_lock' => ['1700000000:1'],
         '_wp_fixpilot_idempotency_key' => ['proposal-legacy'],
+        '_wp_fixpilot_request_hash' => ['legacy-request-hash'],
     ];
 }
 
@@ -845,6 +846,7 @@ assert($draft['created'] === true);
 assert(get_post($draft['wordpress_object_id'])->post_type === 'page');
 assert(get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint', true) === '');
 assert(get_post_meta($draft['wordpress_object_id'], '_yoast_wpseo_title', true) === 'SEO titel');
+assert(get_post_meta(200, '_wp_fixpilot_request_hash', true) === '');
 assert(get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_source_blueprint_id', true) === 200);
 assert((int) get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_blueprint_version', true) === 1);
 assert(
@@ -854,32 +856,93 @@ assert(
         true
     ) === $captured['structure_hash']
 );
+assert(
+    (string) get_post_meta(
+        $draft['wordpress_object_id'],
+        '_wp_fixpilot_request_hash',
+        true
+    ) !== ''
+);
+assert(
+    (string) get_post_meta(
+        $draft['wordpress_object_id'],
+        '_wp_fixpilot_request_hash',
+        true
+    ) !== 'legacy-request-hash'
+);
 assert(get_post_meta($draft['wordpress_object_id'], 'fake_blueprint_tree', true)[0]['field-title'] === 'Nieuwe titel');
 
 $repeated = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => valid_replacements('Andere titel'),
+    'replacements' => valid_replacements(),
     'seo' => [
-        'title' => 'Tweede SEO titel',
-        'description' => 'Andere omschrijving',
-        'keyword' => 'andere zoekterm',
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
     ],
 ]);
 assert($repeated['wordpress_object_id'] === $draft['wordpress_object_id']);
 assert($repeated['created'] === false);
+
+$reorderedReplay = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => [
+        'field-body' => '<p>Nieuwe inhoud</p>',
+        'field-title' => 'Nieuwe titel',
+    ],
+    'seo' => [
+        'keyword' => 'dsg revisie',
+        'description' => 'SEO omschrijving',
+        'title' => 'SEO titel',
+    ],
+]);
+assert($reorderedReplay['wordpress_object_id'] === $draft['wordpress_object_id']);
+assert($reorderedReplay['created'] === false);
+
+$changedReplacement = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => valid_replacements('Andere titel'),
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($changedReplacement));
+assert($changedReplacement->code === 'wp_fixpilot_blueprint_conflict');
+assert(($changedReplacement->data['status'] ?? null) === 409);
+
+$changedSeo = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-123',
+    'replacements' => valid_replacements(),
+    'seo' => [
+        'title' => 'Tweede SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($changedSeo));
+assert($changedSeo->code === 'wp_fixpilot_blueprint_conflict');
+assert(($changedSeo->data['status'] ?? null) === 409);
 
 get_post($draft['wordpress_object_id'])->post_status = 'publish';
 $publishedReuse = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => valid_replacements('Andere titel'),
+    'replacements' => valid_replacements(),
     'seo' => [
-        'title' => 'Tweede SEO titel',
-        'description' => 'Andere omschrijving',
-        'keyword' => 'andere zoekterm',
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
     ],
 ]);
 assert($publishedReuse['wordpress_object_id'] === $draft['wordpress_object_id']);
@@ -892,11 +955,11 @@ $sameKeyStoredVersionMismatch = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => valid_replacements('Andere titel'),
+    'replacements' => valid_replacements(),
     'seo' => [
-        'title' => 'Tweede SEO titel',
-        'description' => 'Andere omschrijving',
-        'keyword' => 'andere zoekterm',
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
     ],
 ]);
 assert(is_wp_error($sameKeyStoredVersionMismatch));
@@ -913,11 +976,11 @@ $sameKeyStoredHashMismatch = $controller->create_draft(200, [
     'expected_version' => 1,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => valid_replacements('Andere titel'),
+    'replacements' => valid_replacements(),
     'seo' => [
-        'title' => 'Tweede SEO titel',
-        'description' => 'Andere omschrijving',
-        'keyword' => 'andere zoekterm',
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
     ],
 ]);
 assert(is_wp_error($sameKeyStoredHashMismatch));
@@ -933,11 +996,11 @@ $mismatchedVersionRetry = $controller->create_draft(200, [
     'expected_version' => 2,
     'expected_structure_hash' => $captured['structure_hash'],
     'idempotency_key' => 'proposal-123',
-    'replacements' => valid_replacements('Andere titel'),
+    'replacements' => valid_replacements(),
     'seo' => [
-        'title' => 'Tweede SEO titel',
-        'description' => 'Andere omschrijving',
-        'keyword' => 'andere zoekterm',
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
     ],
 ]);
 assert(is_wp_error($mismatchedVersionRetry));

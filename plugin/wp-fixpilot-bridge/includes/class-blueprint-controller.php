@@ -274,6 +274,10 @@ final class WPFixPilot_Blueprint_Controller
         if (is_wp_error($replacements)) {
             return $replacements;
         }
+        $requestHash = $this->request_hash(
+            $replacements,
+            $validatedPayload['seo']
+        );
         $capturedSeoPlugin = $this->captured_seo_plugin($blueprintId);
         if (
             !hash_equals(
@@ -314,15 +318,22 @@ final class WPFixPilot_Blueprint_Controller
                 '_wp_fixpilot_blueprint_structure_hash',
                 true
             );
+            $existingRequestHash = (string) get_post_meta(
+                $existingDraftId,
+                '_wp_fixpilot_request_hash',
+                true
+            );
             if (
                 $existingBlueprintId !== $blueprintId
                 || $existingVersion !== $storedVersion
-            || $existingStructureHash === ''
-            || !hash_equals($currentHash, $existingStructureHash)
-        ) {
+                || $existingStructureHash === ''
+                || !hash_equals($currentHash, $existingStructureHash)
+                || $existingRequestHash === ''
+                || !hash_equals($requestHash, $existingRequestHash)
+            ) {
                 return new WP_Error(
                     'wp_fixpilot_blueprint_conflict',
-                    'De idempotency-sleutel hoort bij een andere blueprint-snapshot.',
+                    'De idempotency-sleutel hoort bij een andere blueprint- of payload-snapshot.',
                     ['status' => 409]
                 );
             }
@@ -346,6 +357,7 @@ final class WPFixPilot_Blueprint_Controller
         try {
             $draftMeta = [
                 '_wp_fixpilot_idempotency_key' => $idempotencyKey,
+                '_wp_fixpilot_request_hash' => $requestHash,
                 '_wp_fixpilot_source_blueprint_id' => $blueprintId,
                 '_wp_fixpilot_blueprint_version' => $storedVersion,
                 '_wp_fixpilot_blueprint_structure_hash' => $currentHash,
@@ -925,6 +937,61 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         return is_scalar($actual) && (string) $actual === (string) $expected;
+    }
+
+    /**
+     * @param array<string, string> $replacements
+     * @param array{title: string, description: string, keyword: string} $seo
+     */
+    private function request_hash(array $replacements, array $seo): string
+    {
+        $canonicalPayload = $this->canonicalize_value([
+            'replacements' => $replacements,
+            'seo' => $seo,
+        ]);
+        $encoded = json_encode(
+            $canonicalPayload,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+
+        return hash('sha256', $encoded === false ? '' : $encoded);
+    }
+
+    private function canonicalize_value(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if ($this->is_indexed_array($value)) {
+            foreach ($value as $index => $item) {
+                $value[$index] = $this->canonicalize_value($item);
+            }
+
+            return $value;
+        }
+
+        ksort($value);
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalize_value($item);
+        }
+
+        return $value;
+    }
+
+    /** @param array<mixed> $value */
+    private function is_indexed_array(array $value): bool
+    {
+        $expectedIndex = 0;
+        foreach (array_keys($value) as $key) {
+            if ($key !== $expectedIndex) {
+                return false;
+            }
+
+            $expectedIndex++;
+        }
+
+        return true;
     }
 
     private function cleanup_blueprint(int $blueprintId): true|WP_Error

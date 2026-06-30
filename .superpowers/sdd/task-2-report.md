@@ -540,3 +540,62 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
 ### Concerns
 
 - No new scope concerns. The fix stays inside the owned Task 2 controller/cloner/tests/report surface and does not touch concrete adapters or later backend work.
+
+## Task 2 Continuation 8 (Idempotent Payload Ownership Closed)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-post-cloner.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: assert((string)get_post_meta($draft['wordpress_object_id'], '_wp_fixpilot_request_hash', true) !== '') in /app/tests/blueprint-test.php:859
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Added a deterministic request hash over the validated `replacements` and `seo` payload:
+  - recursively sorts associative keys;
+  - preserves indexed-list order;
+  - JSON-encodes deterministically;
+  - stores the SHA-256 digest.
+- Persisted `_wp_fixpilot_request_hash` as critical draft metadata during first draft creation and verified that write the same way as the existing idempotency ownership metadata.
+- Tightened idempotent replay ownership so an existing draft is reused only when all of these match:
+  - idempotency key;
+  - source blueprint ID;
+  - blueprint version;
+  - blueprint structure hash;
+  - canonical request hash.
+- Same-key payload drift now returns HTTP 409 instead of silently reusing stale content:
+  - changed replacements are rejected;
+  - changed SEO payloads are rejected.
+- Added `_wp_fixpilot_request_hash` to the post-cloner exclusion list so legacy draft/request ownership metadata cannot leak through cloning.
+- Replaced the old permissive same-key reuse test with regressions for:
+  - exact replay reuse;
+  - reordered-key replay reuse;
+  - changed replacement rejection;
+  - changed SEO rejection.
+
+### Concerns
+
+- No new scope concerns. The fix stays inside the owned Task 2 controller/cloner/tests/report surface and does not touch concrete adapters or later backend work.
