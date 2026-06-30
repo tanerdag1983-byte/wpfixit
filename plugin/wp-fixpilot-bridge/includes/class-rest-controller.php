@@ -20,8 +20,21 @@ final class WPFixPilot_REST_Controller
         $this->pagePackageController = $pagePackageController
             ?? new WPFixPilot_Page_Package_Controller();
         $this->blueprintController = $blueprintController
-            ?? new WPFixPilot_Blueprint_Controller();
+            ?? new WPFixPilot_Blueprint_Controller($this->default_blueprint_adapters());
         $this->auth = $auth ?? $this->build_default_auth();
+    }
+
+    /** @return array<int, WPFixPilot_Blueprint_Adapter> */
+    private function default_blueprint_adapters(): array
+    {
+        return [
+            new WPFixPilot_ACF_Blueprint_Adapter(),
+            // TODO: Add other adapters as they are implemented
+            // new WPFixPilot_Elementor_Blueprint_Adapter(),
+            // new WPFixPilot_WPBakery_Blueprint_Adapter(),
+            // new WPFixPilot_Bricks_Blueprint_Adapter(),
+            // new WPFixPilot_Gutenberg_Blueprint_Adapter(),
+        ];
     }
 
     public function register_routes(): void

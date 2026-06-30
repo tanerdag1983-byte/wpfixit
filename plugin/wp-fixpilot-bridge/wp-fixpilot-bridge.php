@@ -30,6 +30,7 @@ require_once __DIR__ . '/includes/builder-adapters/class-elementor-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-bricks-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-wpbakery-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-acf-adapter.php';
+require_once __DIR__ . '/includes/builder-adapters/class-acf-blueprint-adapter.php';
 require_once __DIR__ . '/includes/class-post-cloner.php';
 require_once __DIR__ . '/includes/class-page-package-controller.php';
 require_once __DIR__ . '/includes/class-blueprint-controller.php';
