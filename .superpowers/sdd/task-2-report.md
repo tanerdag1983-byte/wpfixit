@@ -218,6 +218,56 @@ Fatal error: Uncaught Error: Failed opening required '/app/tests/../includes/bui
   - source blueprint ID;
   - blueprint version;
   - blueprint structure hash.
+
+## Task 2 Continuation 4 (Generic Controller Safety Fixes)
+
+### Files
+
+- Modified `plugin/wp-fixpilot-bridge/includes/class-blueprint-controller.php`
+- Modified `plugin/wp-fixpilot-bridge/includes/class-post-cloner.php`
+- Modified `plugin/wp-fixpilot-bridge/tests/blueprint-test.php`
+- Modified `.superpowers/sdd/task-2-report.md`
+
+### RED / GREEN Evidence
+
+- RED
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result:
+
+    ```text
+    Fatal error: Uncaught AssertionError: publish status mutation after insert in /app/tests/blueprint-test.php:633
+    ```
+
+- GREEN
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/blueprint-test.php`
+  - Result: PASS `blueprint lifecycle tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/auth-test.php`
+  - Result: PASS `auth tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/change-controller-test.php`
+  - Result: PASS `change controller tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli php -d zend.assertions=1 -d assert.exception=1 tests/page-package-test.php`
+  - Result: PASS `page package adapter tests passed`
+  - Command: `docker run --rm -v "$PWD/plugin/wp-fixpilot-bridge:/app" -w /app php:8.2-cli sh -lc "find . -name '*.php' -print0 | xargs -0 -n1 php -l"`
+  - Result: PASS all plugin PHP files lint clean
+
+### Fix Summary
+
+- Tightened the capture contract so `capture()` accepts exactly `source_page_id`, `name`, `page_type`, `builder`, and `version`, rejecting extras before adapter lookup or cloning.
+- Extended the generic draft payload contract with optional `approved_urls`, defaulting to `[]`, validating every entry as a non-empty safe URL string, and folding the normalized list into the canonical idempotency request hash.
+- Enforced field-type validation at the generic controller boundary:
+  - `plain_text`, `heading`, and `button_text` reject HTML markup instead of silently stripping it;
+  - `rich_text` must already equal its safe `wp_kses_post` output;
+  - `url` replacements may change only to approved sanitized URLs, while unchanged URL fields still work without an approval list.
+- Hardened draft-only guarantees:
+  - post clones now verify the created object is still a WordPress `page` with `draft` status immediately after `wp_insert_post`;
+  - draft creation now checks `wp_update_post()` for `WP_Error` or `0`, re-reads the saved post, and deletes the clone if hooks or other mutations leave it non-draft;
+  - idempotent reuse no longer reports success for published or private generated pages.
+- Expanded the fake lifecycle schema and regressions to cover:
+  - heading/plain-text/button-text HTML injection;
+  - unsafe rich-text markup;
+  - unapproved and approved URL replacements;
+  - strict capture extras rejection;
+  - insert/update hook status mutations and draft-enforcement failures.
 - Tightened idempotent reuse so the existing draft is reused only when its stored blueprint ID, version, and structure hash match the current validated snapshot; mismatches now return HTTP 409 instead of stale content.
 - Enforced draft-only managed blueprint operations across `read()`, `create_draft()`, and `delete()` by rejecting marked blueprints whose live WordPress `post_status` is no longer `draft`.
 - Validated adapter capture output before returning `ready`:

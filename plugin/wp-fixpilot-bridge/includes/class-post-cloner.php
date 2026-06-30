@@ -51,6 +51,9 @@ final class WPFixPilot_Post_Cloner
         if (is_wp_error($newId)) {
             return $newId;
         }
+        if (!$this->is_valid_draft_page(get_post((int) $newId))) {
+            return $this->failed_clone_error((int) $newId);
+        }
 
         $allowed = array_unique(array_merge(
             ['_thumbnail_id', '_wp_page_template'],
@@ -84,6 +87,13 @@ final class WPFixPilot_Post_Cloner
         }
 
         return (int) $newId;
+    }
+
+    private function is_valid_draft_page(mixed $post): bool
+    {
+        return $post instanceof WP_Post
+            && $post->post_type === 'page'
+            && $post->post_status === 'draft';
     }
 
     private function failed_clone_error(int $cloneId): WP_Error

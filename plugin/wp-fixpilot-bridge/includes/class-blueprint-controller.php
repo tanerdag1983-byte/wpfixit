@@ -58,6 +58,13 @@ final class WPFixPilot_Blueprint_Controller
     public function capture(array $payload): array|WP_Error
     {
         $required = ['source_page_id', 'name', 'page_type', 'builder', 'version'];
+        if (!$this->has_exact_keys($payload, $required)) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_invalid',
+                'De blueprint-aanvraag is niet compleet.',
+                ['status' => 400]
+            );
+        }
         foreach ($required as $key) {
             if (!isset($payload[$key]) || $payload[$key] === '') {
                 return new WP_Error(
@@ -269,14 +276,16 @@ final class WPFixPilot_Blueprint_Controller
         $schema = $snapshot['schema'];
         $replacements = $this->validate_replacements_against_schema(
             $validatedPayload['replacements'],
-            $schema
+            $schema,
+            $validatedPayload['approved_urls']
         );
         if (is_wp_error($replacements)) {
             return $replacements;
         }
         $requestHash = $this->request_hash(
             $replacements,
-            $validatedPayload['seo']
+            $validatedPayload['seo'],
+            $validatedPayload['approved_urls']
         );
         $capturedSeoPlugin = $this->captured_seo_plugin($blueprintId);
         if (
@@ -338,6 +347,14 @@ final class WPFixPilot_Blueprint_Controller
                 );
             }
 
+            if (!$this->is_page_draft(get_post($existingDraftId))) {
+                return new WP_Error(
+                    'wp_fixpilot_blueprint_conflict',
+                    'Het bestaande WordPress-concept is geen concept meer.',
+                    ['status' => 409]
+                );
+            }
+
             return $this->draft_response($existingDraftId, $currentHash, false);
         }
 
@@ -395,7 +412,22 @@ final class WPFixPilot_Blueprint_Controller
                 return $seoWrite;
             }
 
-            wp_update_post(['ID' => $draftId, 'post_status' => 'draft']);
+            $draftStatusResult = wp_update_post(
+                ['ID' => $draftId, 'post_status' => 'draft'],
+                true
+            );
+            if (
+                is_wp_error($draftStatusResult)
+                || $draftStatusResult === 0
+                || !$this->is_page_draft(get_post($draftId))
+            ) {
+                $cleanup = $this->cleanup_draft($draftId);
+                if (is_wp_error($cleanup)) {
+                    return $cleanup;
+                }
+
+                return $this->draft_failed_error();
+            }
 
             return $this->draft_response($draftId, $currentHash, true);
         } catch (Throwable $error) {
@@ -506,7 +538,7 @@ final class WPFixPilot_Blueprint_Controller
         return $normalized;
     }
 
-    /** @return array{expected_version: int, expected_structure_hash: string, idempotency_key: string, replacements: array<string, string>, seo: array{title: string, description: string, keyword: string}}|WP_Error */
+    /** @return array{expected_version: int, expected_structure_hash: string, idempotency_key: string, replacements: array<string, string>, approved_urls: array<int, string>, seo: array{title: string, description: string, keyword: string}}|WP_Error */
     private function validate_create_draft_payload(array $payload): array|WP_Error
     {
         $required = [
@@ -516,7 +548,11 @@ final class WPFixPilot_Blueprint_Controller
             'replacements',
             'seo',
         ];
-        if (!$this->has_exact_keys($payload, $required)) {
+        $allowed = array_merge($required, ['approved_urls']);
+        if (
+            array_diff(array_keys($payload), $allowed) !== []
+            || array_diff($required, array_keys($payload)) !== []
+        ) {
             return $this->invalid_request_error();
         }
 
@@ -549,6 +585,13 @@ final class WPFixPilot_Blueprint_Controller
             return $replacements;
         }
 
+        $approvedUrls = $this->validate_approved_urls(
+            $payload['approved_urls'] ?? []
+        );
+        if (is_wp_error($approvedUrls)) {
+            return $approvedUrls;
+        }
+
         $seo = $this->validate_seo_payload($payload['seo']);
         if (is_wp_error($seo)) {
             return $seo;
@@ -559,6 +602,7 @@ final class WPFixPilot_Blueprint_Controller
             'expected_structure_hash' => $payload['expected_structure_hash'],
             'idempotency_key' => $idempotencyKey,
             'replacements' => $replacements,
+            'approved_urls' => $approvedUrls,
             'seo' => $seo,
         ];
     }
@@ -674,11 +718,13 @@ final class WPFixPilot_Blueprint_Controller
     /**
      * @param array<string, string> $replacements
      * @param array<string, mixed> $schema
+     * @param array<int, string> $approvedUrls
      * @return array<string, string>|WP_Error
      */
     private function validate_replacements_against_schema(
         array $replacements,
-        array $schema
+        array $schema,
+        array $approvedUrls
     ): array|WP_Error {
         $fields = $this->schema_fields($schema);
         foreach ($fields as $fieldId => $field) {
@@ -705,6 +751,28 @@ final class WPFixPilot_Blueprint_Controller
             }
 
             if (strlen($value) > (int) $field['max_length']) {
+                return $this->invalid_request_error();
+            }
+
+            $valueType = (string) ($field['value_type'] ?? '');
+            if (
+                in_array($valueType, ['plain_text', 'heading', 'button_text'], true)
+                && $this->contains_html_markup($value)
+            ) {
+                return $this->invalid_request_error();
+            }
+
+            if (
+                $valueType === 'rich_text'
+                && $value !== wp_kses_post($value)
+            ) {
+                return $this->invalid_request_error();
+            }
+
+            if (
+                $valueType === 'url'
+                && !$this->is_allowed_url_replacement($value, $field, $approvedUrls)
+            ) {
                 return $this->invalid_request_error();
             }
         }
@@ -945,11 +1013,17 @@ final class WPFixPilot_Blueprint_Controller
     /**
      * @param array<string, string> $replacements
      * @param array{title: string, description: string, keyword: string} $seo
+     * @param array<int, string> $approvedUrls
      */
-    private function request_hash(array $replacements, array $seo): string
+    private function request_hash(
+        array $replacements,
+        array $seo,
+        array $approvedUrls
+    ): string
     {
         $canonicalPayload = $this->canonicalize_value([
             'replacements' => $replacements,
+            'approved_urls' => $approvedUrls,
             'seo' => $seo,
         ]);
         $encoded = json_encode(
@@ -1155,5 +1229,91 @@ final class WPFixPilot_Blueprint_Controller
             'De blueprint-aanvraag is niet compleet.',
             ['status' => 400]
         );
+    }
+
+    /** @return array<int, string>|WP_Error */
+    private function validate_approved_urls(mixed $approvedUrls): array|WP_Error
+    {
+        if (!is_array($approvedUrls)) {
+            return $this->invalid_request_error();
+        }
+
+        $normalized = [];
+        foreach ($approvedUrls as $approvedUrl) {
+            if (!is_string($approvedUrl)) {
+                return $this->invalid_request_error();
+            }
+
+            $safeUrl = $this->safe_url_string($approvedUrl);
+            if ($safeUrl === null) {
+                return $this->invalid_request_error();
+            }
+
+            $normalized[] = $safeUrl;
+        }
+
+        $normalized = array_values(array_unique($normalized));
+        sort($normalized, SORT_STRING);
+
+        return $normalized;
+    }
+
+    private function contains_html_markup(string $value): bool
+    {
+        return preg_match('/<[^>]+>/', $value) === 1;
+    }
+
+    /** @param array<string, mixed> $field */
+    private function is_allowed_url_replacement(
+        string $value,
+        array $field,
+        array $approvedUrls
+    ): bool {
+        if (
+            isset($field['current_value'])
+            && is_string($field['current_value'])
+            && $value === $field['current_value']
+        ) {
+            return true;
+        }
+
+        $safeUrl = $this->safe_url_string($value);
+        if ($safeUrl === null) {
+            return false;
+        }
+
+        return in_array($safeUrl, $approvedUrls, true);
+    }
+
+    private function safe_url_string(string $value): ?string
+    {
+        $sanitized = esc_url_raw($value);
+        if ($sanitized === '' || $sanitized !== $value) {
+            return null;
+        }
+
+        if (preg_match('/\s/u', $value) === 1) {
+            return null;
+        }
+
+        if (preg_match('#^/(?!/)[^\s]*$#u', $value) === 1) {
+            return $value;
+        }
+
+        $scheme = parse_url($value, PHP_URL_SCHEME);
+        if (!is_string($scheme) || !in_array(strtolower($scheme), ['http', 'https'], true)) {
+            return null;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_URL) === false
+            ? null
+            : $value;
+    }
+
+    private function is_page_draft(mixed $post): bool
+    {
+        return $post instanceof WP_Post
+            && $post->post_type === 'page'
+            && $post->post_status === 'draft';
     }
 }
