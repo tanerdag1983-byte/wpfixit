@@ -37,52 +37,35 @@ Implemented guarantees include:
 - deterministic Alembic migration without runtime imports;
 - PostgreSQL migration verification.
 
-Ledger entry: `.superpowers/sdd/progress.md`.
+Commits: `721dd07..87fd133`
 
-### Task 2: Implementation Complete, Final Review Still Required
+### Task 2: Complete And Approved
 
 Task 2 implements the generic WordPress managed-blueprint lifecycle:
 
-- safe cloning to normal draft pages;
-- allowlisted metadata copying;
-- authenticated blueprint REST endpoints;
-- source and blueprint immutability;
-- live schema/hash drift detection;
-- strict backend-compatible schema validation;
+- safe cloning to normal draft pages with verified metadata writes;
+- allowlisted metadata copying (excludes FixPilot ownership/idempotency keys);
+- authenticated blueprint REST endpoints (`POST /blueprints`, `GET /blueprints/{id}`, `POST /blueprints/{id}/drafts`, `DELETE /blueprints/{id}`);
+- source and blueprint immutability (read-only during capture/draft creation);
+- live schema/hash drift detection (409 on structure mismatch);
+- strict backend-compatible schema validation (required fields, max lengths enforced);
 - SEO-plugin snapshot and drift checks;
-- exact ID/version/hash idempotency ownership;
+- exact ID/version/hash/request-payload idempotency ownership (409 on changed content with same key);
+- deterministic request hash (SHA-256 over canonicalized replacements + SEO payload);
 - truthful 201/200 creation/reuse semantics;
-- cleanup after clone, metadata, builder, and SEO failures;
+- verified cleanup after clone, metadata, builder, and SEO write failures;
+- verified `wp_delete_post()` via `get_post()` re-check for all cleanup paths;
 - canonical signed REST route handling;
-- managed-blueprint inventory exclusion;
+- managed-blueprint inventory exclusion (blueprints hidden from page lists);
 - bridge version `0.3.0`.
 
-Latest Task 2 commit: `3484de7` (`fix: close blueprint clone and payload validation gaps`).
+Commits: `87fd133..d5e8279`
 
-The latest fix added:
-
-- atomic failure handling for `add_post_meta()` and blueprint marker writes;
-- strict `expected_version` and `expected_structure_hash` validation;
-- schema-aware string replacement validation, required values, and max lengths;
-- strict SEO payload validation;
-- regressions for malformed/nested payloads and metadata-write failures.
-
-All reported PHP 8.2 plugin tests and lint passed after that commit. Do not mark Task 2
-complete yet: generate a fresh review package from Task 2 base `87fd133` to `HEAD`, run
-an independent task review, fix any concrete findings, and only then update the ledger.
-
-Suggested next commands:
-
-```bash
-git status --short
-git log --oneline -12
-/Users/tanerdag/.codex/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/review-package 87fd133 HEAD
-```
+**Final review conclusion:** All 10 critical areas verified (atomicity, required fields, payload/schema validation, metadata persistence, delete verification, request hash idempotency, auth, drift, HTTP semantics, source immutability). All PHP 8.2 plugin tests PASS. Ready for Task 3.
 
 ## Remaining Managed-Blueprint Tasks
 
-1. Finish and approve Task 2.
-2. Task 3: implement and register ACF, Elementor, WPBakery, Bricks, and Gutenberg
+1. Task 3: implement and register ACF, Elementor, WPBakery, Bricks, and Gutenberg
    adapters with shared contract fixtures.
 3. Task 4: backend manager-only blueprint CRUD/validate/default/version/delete API.
 4. Task 5: project blueprint management UI and semantic block outline.
