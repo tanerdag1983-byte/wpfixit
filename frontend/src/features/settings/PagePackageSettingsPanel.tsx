@@ -21,6 +21,7 @@ type WordPressPage = {
 type TemplateSlot = {
   path: string;
   label: string;
+  preview?: string;
   value_type: string;
 };
 
@@ -117,7 +118,7 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
         { method: "POST" },
       );
       setSlots(inspection.slots);
-      setMessage(`${inspection.slots.length} bewerkbare blokken gevonden.`);
+      setMessage(`${inspection.slots.length} echte templateblokken gevonden.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Template inspecteren mislukt.");
     } finally {
@@ -147,9 +148,16 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
   const mappedRequiredPaths = semanticSlots
     .map(([key]) => mapping[key])
     .filter(Boolean);
+  const duplicatePaths = new Set(
+    mappedRequiredPaths.filter(
+      (path, index) => mappedRequiredPaths.indexOf(path) !== index,
+    ),
+  );
+  const duplicatePathsAreSafe =
+    duplicatePaths.size === 0 ||
+    (builder === "acf" && [...duplicatePaths].every((path) => path.startsWith("acf-block:")));
   const completeMapping =
-    mappedRequiredPaths.length === semanticSlots.length &&
-    new Set(mappedRequiredPaths).size === semanticSlots.length;
+    mappedRequiredPaths.length === semanticSlots.length && duplicatePathsAreSafe;
 
   return (
     <section>
@@ -190,26 +198,49 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
             ))}
           </select>
         </label>
-        {slots.length > 0 &&
-          semanticSlots.map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <select
-                value={mapping[key] ?? ""}
-                onChange={(event) =>
-                  setMapping((current) => ({ ...current, [key]: event.target.value }))
-                }
-              >
-                <option value="">Kies een templateblok</option>
-                {slots.map((slot) => (
-                  <option key={slot.path} value={slot.path}>
-                    {slot.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
       </div>
+      {slots.length > 0 && (
+        <div className="template-block-section">
+          <div className="template-block-heading">
+            <h3>Blokken op de templatepagina</h3>
+            <span>{slots.length} blokken</span>
+          </div>
+          <div className="template-block-list">
+            {slots.map((slot, index) => (
+              <article className="template-block-item" key={slot.path}>
+                <span className="template-block-number">{index + 1}</span>
+                <div>
+                  <h4>{blockTitle(slot.label)}</h4>
+                  {slot.preview && <p>{slot.preview}</p>}
+                </div>
+              </article>
+            ))}
+          </div>
+          <details className="template-slot-mapping">
+            <summary>AI-inhoud aan templateblokken koppelen</summary>
+            <div className="settings-field-grid">
+              {semanticSlots.map(([key, label]) => (
+                <label key={key}>
+                  {label}
+                  <select
+                    value={mapping[key] ?? ""}
+                    onChange={(event) =>
+                      setMapping((current) => ({ ...current, [key]: event.target.value }))
+                    }
+                  >
+                    <option value="">Kies een templateblok</option>
+                    {slots.map((slot) => (
+                      <option key={slot.path} value={slot.path}>
+                        {slot.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
       <div className="settings-actions">
         <button
           className="primary-button"
@@ -261,4 +292,9 @@ function builderLabel(builder: string) {
     wpbakery: "WPBakery",
     acf: "ACF",
   }[builder] ?? builder;
+}
+
+function blockTitle(label: string) {
+  const parts = label.split(" · ");
+  return parts.at(-1) || label;
 }

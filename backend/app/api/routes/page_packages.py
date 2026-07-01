@@ -168,12 +168,23 @@ def validate_page_package_settings(
     mapped_required = {
         slot for slot in REQUIRED_SLOTS if settings.slot_mapping.get(slot)
     }
-    mapped_paths = {settings.slot_mapping[slot] for slot in mapped_required}
+    mapped_path_values = [settings.slot_mapping[slot] for slot in mapped_required]
+    mapped_paths = set(mapped_path_values)
+    duplicate_paths = {
+        path for path in mapped_paths if mapped_path_values.count(path) > 1
+    }
+    duplicate_paths_are_safe = (
+        not duplicate_paths
+        or (
+            settings.builder == "acf"
+            and all(path.startswith("acf-block:") for path in duplicate_paths)
+        )
+    )
     valid = (
         inspection.get("builder") == settings.builder
         and inspection.get("seo_plugin") == settings.seo_plugin
         and mapped_required == REQUIRED_SLOTS
-        and len(mapped_paths) == len(REQUIRED_SLOTS)
+        and duplicate_paths_are_safe
         and mapped_paths.issubset(available_paths)
         and bool(inspection.get("template_hash"))
     )

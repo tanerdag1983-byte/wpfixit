@@ -123,11 +123,16 @@ $GLOBALS['wpfixpilot_acf_fields'][10] = [
         'name' => 'page_blocks',
         'label' => 'Paginablokken',
         'type' => 'flexible_content',
+        'layouts' => [
+            ['name' => 'hero', 'label' => 'Hero (algemeen)', 'sub_fields' => []],
+            ['name' => 'content', 'label' => 'Content Section', 'sub_fields' => []],
+            ['name' => 'faq', 'label' => 'FAQ Section', 'sub_fields' => []],
+        ],
         'value' => [
             [
                 'acf_fc_layout' => 'hero',
-                'title' => 'Transmissie onderhoud Schiedam',
-                'description' => '<p>Voorkom dure reparaties met tijdig onderhoud.</p>',
+                'hero_heading' => 'Transmissie onderhoud Schiedam',
+                'hero_copy' => '<p>Voorkom dure reparaties met tijdig onderhoud.</p>',
             ],
             [
                 'acf_fc_layout' => 'content',
@@ -144,15 +149,23 @@ $GLOBALS['wpfixpilot_acf_fields'][10] = [
 ];
 $acfAdapter = new WPFixPilot_ACF_Adapter();
 $acfSlots = $acfAdapter->inspect(10);
-assert(count($acfSlots) === 6);
-assert($acfSlots[0]['path'] === 'acf-value:field_page_blocks:0/title');
-assert($acfSlots[0]['label'] === 'Paginablokken · Transmissie onderhoud Schiedam');
-assert($acfSlots[1]['value_type'] === 'html');
+assert(count($acfSlots) === 3);
+assert($acfSlots[0]['path'] === 'acf-block:field_page_blocks:0');
+assert($acfSlots[0]['label'] === 'Paginablokken · Hero (algemeen)');
+assert(
+    $acfSlots[0]['preview']
+    === 'Transmissie onderhoud Schiedam · Voorkom dure reparaties met tijdig onderhoud.'
+);
+assert($acfSlots[1]['label'] === 'Paginablokken · Content Section');
+assert(
+    $acfSlots[1]['preview']
+    === 'Zo werkt transmissie onderhoud · Onze specialisten controleren olie en slijtage.'
+);
 $acfWrite = $acfAdapter->write(
     10,
     [
-        'hero_title' => 'acf-value:field_page_blocks:0/title',
-        'introduction' => 'acf-value:field_page_blocks:0/description',
+        'hero_title' => 'acf-block:field_page_blocks:0',
+        'introduction' => 'acf-block:field_page_blocks:0',
     ],
     [
         'hero_title' => 'Nieuwe hero',
@@ -161,13 +174,43 @@ $acfWrite = $acfAdapter->write(
 );
 assert($acfWrite === true);
 assert(
-    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['title']
+    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['hero_heading']
     === 'Nieuwe hero'
 );
 assert(
-    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['description']
+    $GLOBALS['wpfixpilot_updated_fields'][10]['field_page_blocks'][0]['hero_copy']
     === '<p>Nieuwe introductie.</p>'
 );
+
+$GLOBALS['wpfixpilot_acf_fields'][11] = [
+    'page_blocks' => [
+        'key' => 'field_page_blocks',
+        'name' => 'page_blocks',
+        'label' => 'Paginablokken',
+        'type' => 'flexible_content',
+        'value' => [[
+            'acf_fc_layout' => 'cta',
+            'heading' => 'Plan een afspraak',
+            'button_label' => 'Contact opnemen',
+            'button_url' => 'https://example.com/contact/',
+            'text_color' => '#ffffff',
+        ]],
+    ],
+];
+$unsafeFallback = $acfAdapter->write(
+    11,
+    [
+        'cta_title' => 'acf-block:field_page_blocks:0',
+        'cta_text' => 'acf-block:field_page_blocks:0',
+    ],
+    [
+        'cta_title' => 'Nieuwe CTA',
+        'cta_text' => '<p>Neem contact op.</p>',
+    ]
+);
+assert(is_wp_error($unsafeFallback));
+assert($unsafeFallback->code === 'wp_fixpilot_slot_missing');
+assert(!isset($GLOBALS['wpfixpilot_updated_fields'][11]));
 
 final class Test_Page_Package_Adapter implements WPFixPilot_Builder_Adapter
 {

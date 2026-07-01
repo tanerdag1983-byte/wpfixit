@@ -42,6 +42,7 @@ final class WPFixPilot_ACF_Adapter implements
         foreach ($mapping as $path) {
             if (
                 str_starts_with((string) $path, 'acf:')
+                || str_starts_with((string) $path, 'acf-block:')
                 || str_starts_with((string) $path, 'acf-value:')
             ) {
                 return $this->legacy_write($postId, $mapping, $values);
@@ -271,6 +272,11 @@ final class WPFixPilot_ACF_Adapter implements
             $fieldKey = (string) ($field['key'] ?? '');
             $label = $this->field_label($field);
             $type = (string) ($field['type'] ?? '');
+            if ($type === 'flexible_content') {
+                $slots = array_merge($slots, $this->legacy_flexible_block_slots($field));
+                continue;
+            }
+
             if (in_array($type, ['text', 'textarea', 'wysiwyg', 'url'], true)) {
                 $slots[] = [
                     'path' => 'acf:' . $fieldKey,
@@ -311,6 +317,7 @@ final class WPFixPilot_ACF_Adapter implements
 
         $fields = $this->field_objects($postId);
         $nestedUpdates = [];
+        $blockTargets = [];
         foreach ($mapping as $semantic => $path) {
             if (!isset($values[$semantic])) {
                 return new WP_Error(
@@ -320,6 +327,65 @@ final class WPFixPilot_ACF_Adapter implements
             }
 
             $path = (string) $path;
+            if (str_starts_with($path, 'acf-block:')) {
+                if (preg_match('/^acf-block:([^:]+):([0-9]+)$/', $path, $match) !== 1) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_invalid',
+                        'Ongeldige ACF-mapping.'
+                    );
+                }
+
+                $fieldKey = (string) $match[1];
+                $rowIndex = (string) $match[2];
+                if (!array_key_exists($fieldKey, $nestedUpdates)) {
+                    $field = $this->field_by_key($fields, $fieldKey);
+                    if ($field === null || !is_array($field['value'] ?? null)) {
+                        return new WP_Error(
+                            'wp_fixpilot_slot_missing',
+                            'ACF-blok kon niet worden bijgewerkt.'
+                        );
+                    }
+                    $nestedUpdates[$fieldKey] = $field['value'];
+                }
+
+                if (
+                    !isset($nestedUpdates[$fieldKey][$rowIndex])
+                    || !is_array($nestedUpdates[$fieldKey][$rowIndex])
+                ) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_missing',
+                        'ACF-blok kon niet worden bijgewerkt.'
+                    );
+                }
+
+                $targetSegments = $this->legacy_block_target_segments(
+                    $nestedUpdates[$fieldKey][$rowIndex],
+                    (string) $semantic,
+                    $blockTargets[$path] ?? []
+                );
+                if ($targetSegments === null) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_missing',
+                        'ACF-blok heeft geen passend tekstveld.'
+                    );
+                }
+
+                if (
+                    !$this->legacy_replace_nested_value(
+                        $nestedUpdates[$fieldKey],
+                        [$rowIndex, ...$targetSegments],
+                        (string) $values[$semantic]
+                    )
+                ) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_missing',
+                        'ACF-blok kon niet worden bijgewerkt.'
+                    );
+                }
+                $blockTargets[$path][] = implode('/', $targetSegments);
+                continue;
+            }
+
             if (str_starts_with($path, 'acf-value:')) {
                 if (preg_match('/^acf-value:([^:]+):(.+)$/', $path, $match) !== 1) {
                     return new WP_Error(
@@ -1034,6 +1100,223 @@ final class WPFixPilot_ACF_Adapter implements
             'label' => $label . ' · ' . $this->short_label($preview),
             'value_type' => wp_strip_all_tags($value) !== $value ? 'html' : 'text',
         ];
+    }
+
+    /** @return array<int, array{path: string, label: string, value_type: string}> */
+    private function legacy_flexible_block_slots(array $field): array
+    {
+        $fieldKey = (string) ($field['key'] ?? '');
+        if ($fieldKey === '') {
+            return [];
+        }
+
+        $rows = is_array($field['value'] ?? null) ? $field['value'] : [];
+        $layouts = $this->layouts_by_name($field);
+        $slots = [];
+        foreach ($rows as $rowIndex => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $layoutName = (string) ($row['acf_fc_layout'] ?? '');
+            $layout = $layouts[$layoutName] ?? null;
+            $blockLabel = $layout !== null
+                ? $this->field_label($layout)
+                : ($layoutName !== '' ? $layoutName : $this->legacy_first_text_preview($row));
+            if ($blockLabel === '') {
+                $blockLabel = 'Blok ' . ((int) $rowIndex + 1);
+            }
+
+            $slots[] = [
+                'path' => 'acf-block:' . $fieldKey . ':' . (string) $rowIndex,
+                'label' => $this->field_label($field) . ' · ' . $blockLabel,
+                'preview' => $this->legacy_block_preview($row),
+                'value_type' => $this->legacy_row_contains_html($row) ? 'html' : 'text',
+            ];
+        }
+
+        return $slots;
+    }
+
+    private function legacy_block_preview(array $row): string
+    {
+        $parts = [];
+        $this->legacy_collect_preview_parts($row, $parts);
+
+        return implode(' · ', array_slice(array_values(array_unique($parts)), 0, 2));
+    }
+
+    /** @param array<int, string> $parts */
+    private function legacy_collect_preview_parts(array $value, array &$parts): void
+    {
+        foreach ($value as $key => $child) {
+            if ($key === 'acf_fc_layout' || str_starts_with((string) $key, '_')) {
+                continue;
+            }
+            if (is_array($child)) {
+                $this->legacy_collect_preview_parts($child, $parts);
+                continue;
+            }
+            if (!is_string($child)) {
+                continue;
+            }
+
+            $text = trim(wp_strip_all_tags($child));
+            if (
+                $text === ''
+                || filter_var($text, FILTER_VALIDATE_URL) !== false
+                || preg_match('/^#[0-9a-f]{3,8}$/i', $text) === 1
+                || preg_match('/^(fa-|image\/|svg\+xml)/i', $text) === 1
+            ) {
+                continue;
+            }
+            $parts[] = $this->short_label($text);
+            if (count($parts) >= 2) {
+                return;
+            }
+        }
+    }
+
+    /** @return array<int, string>|null */
+    private function legacy_block_target_segments(
+        array $row,
+        string $semantic,
+        array $usedPaths = []
+    ): ?array
+    {
+        $candidates = match ($semantic) {
+            'hero_title', 'cta_title' => [
+                'title', 'heading', 'headline', 'kop', 'titel', 'label',
+            ],
+            'faq' => [
+                'answer', 'antwoord', 'body', 'content', 'description', 'text', 'copy',
+            ],
+            'introduction' => [
+                'description', 'intro', 'introduction', 'subheading', 'body', 'copy', 'content', 'text',
+            ],
+            'main_content', 'cta_text' => [
+                'body', 'content', 'description', 'copy', 'text', 'answer',
+            ],
+            default => [],
+        };
+
+        $textPaths = $this->legacy_text_paths($row);
+        foreach ($candidates as $candidate) {
+            foreach ($textPaths as $path) {
+                $key = (string) end($path);
+                $pathKey = implode('/', $path);
+                if (
+                    !in_array($pathKey, $usedPaths, true)
+                    && ($key === $candidate || preg_match(
+                        '/(?:^|[_-])' . preg_quote($candidate, '/') . '$/',
+                        $key
+                    ) === 1)
+                ) {
+                    return $path;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array<int, array<int, string>> */
+    private function legacy_text_paths(array $value, array $prefix = []): array
+    {
+        $paths = [];
+        foreach ($value as $key => $child) {
+            $key = (string) $key;
+            if ($key === 'acf_fc_layout' || str_starts_with($key, '_')) {
+                continue;
+            }
+            if (is_array($child)) {
+                $paths = array_merge(
+                    $paths,
+                    $this->legacy_text_paths($child, [...$prefix, $key])
+                );
+                continue;
+            }
+            if (is_string($child) && $this->legacy_is_editable_text_leaf($key, $child)) {
+                $paths[] = [...$prefix, $key];
+            }
+        }
+
+        return $paths;
+    }
+
+    private function legacy_is_editable_text_leaf(string $key, string $value): bool
+    {
+        $key = strtolower($key);
+        $text = trim(wp_strip_all_tags($value));
+
+        return $text !== ''
+            && preg_match(
+                '/(?:^|_)(?:url|link|color|icon|image|class|id|style|setting|target|mime|type)(?:$|_)/',
+                $key
+            ) !== 1
+            && filter_var($text, FILTER_VALIDATE_URL) === false
+            && preg_match('/^#[0-9a-f]{3,8}$/i', $text) !== 1
+            && preg_match('/^(?:fa-|image\/|svg\+xml)/i', $text) !== 1;
+    }
+
+    /** @return array<int, string>|null */
+    private function legacy_first_text_path(array $value): ?array
+    {
+        foreach ($value as $key => $child) {
+            $key = (string) $key;
+            if ($key === 'acf_fc_layout' || str_starts_with($key, '_')) {
+                continue;
+            }
+            if (is_array($child)) {
+                $nested = $this->legacy_first_text_path($child);
+                if ($nested !== null) {
+                    return [$key, ...$nested];
+                }
+                continue;
+            }
+            if (is_string($child)) {
+                return [$key];
+            }
+        }
+
+        return null;
+    }
+
+    private function legacy_first_text_preview(array $value): string
+    {
+        $path = $this->legacy_first_text_path($value);
+        if ($path === null) {
+            return '';
+        }
+
+        $cursor = $value;
+        foreach ($path as $segment) {
+            if (!is_array($cursor) || !array_key_exists($segment, $cursor)) {
+                return '';
+            }
+            $cursor = $cursor[$segment];
+        }
+
+        return is_string($cursor)
+            ? $this->short_label(trim(wp_strip_all_tags($cursor)))
+            : '';
+    }
+
+    private function legacy_row_contains_html(array $value): bool
+    {
+        foreach ($value as $key => $child) {
+            if ($key === 'acf_fc_layout' || str_starts_with((string) $key, '_')) {
+                continue;
+            }
+            if (is_array($child) && $this->legacy_row_contains_html($child)) {
+                return true;
+            }
+            if (is_string($child) && wp_strip_all_tags($child) !== $child) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function legacy_replace_nested_value(

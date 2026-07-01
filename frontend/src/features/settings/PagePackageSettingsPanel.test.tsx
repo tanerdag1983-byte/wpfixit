@@ -33,15 +33,19 @@ describe("PagePackageSettingsPanel", () => {
         });
       }
       if (!init && path.endsWith("/page-package-settings/options")) {
-        return Promise.resolve({ builders: ["gutenberg", "elementor"], seo_plugin: "yoast" });
+        return Promise.resolve({ builders: ["gutenberg", "elementor", "acf"], seo_plugin: "yoast" });
       }
       if (path.endsWith("/inspect-template")) {
         return Promise.resolve({
-          builder: "elementor",
+          builder: "acf",
           seo_plugin: "yoast",
           template_hash: "hash-1",
           slots: [
-            { path: "element:hero:title", label: "Hero", value_type: "text" },
+            { path: "acf-block:field_page_blocks:0", label: "Paginablokken · Hero (algemeen)", value_type: "html", preview: "Abarth Versnellingsbak Reparatie Schiedam · Specialistische diagnose en reparatie." },
+            { path: "acf-block:field_page_blocks:1", label: "Paginablokken · Symptom Pain Section", value_type: "html", preview: "Herkent u deze klachten? · Knipperende N en schakelproblemen." },
+            { path: "acf-block:field_page_blocks:2", label: "Paginablokken · Team Section", value_type: "html", preview: "Ons transmissieteam in Schiedam." },
+            { path: "acf-block:field_page_blocks:3", label: "Paginablokken · Waarom SHM", value_type: "html", preview: "Waarom kiezen voor SHM Transmissie?" },
+            { path: "acf-block:field_page_blocks:4", label: "Paginablokken · FAQ Section", value_type: "html", preview: "Veelgestelde vragen over Abarth reparatie." },
           ],
         });
       }
@@ -90,8 +94,98 @@ describe("PagePackageSettingsPanel", () => {
     await screen.findByText("Paginapakket is opgeslagen en moet worden gevalideerd.");
     fireEvent.click(screen.getByRole("button", { name: "Blokken ophalen" }));
 
+    fireEvent.click(await screen.findByText("AI-inhoud aan templateblokken koppelen"));
     const heroSelect = await screen.findByLabelText("Hero-titel");
     expect(heroSelect).toBeVisible();
-    expect(heroSelect).toHaveTextContent("Hero");
+    expect(heroSelect).toHaveTextContent("Paginablokken · Hero (algemeen)");
+    expect(screen.getByRole("heading", { name: "Hero (algemeen)" })).toBeVisible();
+    expect(screen.getByText("Abarth Versnellingsbak Reparatie Schiedam · Specialistische diagnose en reparatie.")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Symptom Pain Section" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Team Section" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Waarom SHM" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "FAQ Section" })).toBeVisible();
+    expect(screen.getByText("5 echte templateblokken gevonden.")).toBeVisible();
+  });
+
+  it("allows multiple semantic fields to use the same ACF block", async () => {
+    render(<PagePackageSettingsPanel projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Page builder"), {
+      target: { value: "acf" },
+    });
+    fireEvent.change(screen.getByLabelText("Standaard templatepagina"), {
+      target: { value: "template-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Paginapakket opslaan" }));
+    await screen.findByText("Paginapakket is opgeslagen en moet worden gevalideerd.");
+    fireEvent.click(screen.getByRole("button", { name: "Blokken ophalen" }));
+
+    fireEvent.click(await screen.findByText("AI-inhoud aan templateblokken koppelen"));
+    fireEvent.change(await screen.findByLabelText("Hero-titel"), {
+      target: { value: "acf-block:field_page_blocks:0" },
+    });
+    fireEvent.change(screen.getByLabelText("Introductie"), {
+      target: { value: "acf-block:field_page_blocks:0" },
+    });
+    fireEvent.change(screen.getByLabelText("Hoofdinhoud"), {
+      target: { value: "acf-block:field_page_blocks:1" },
+    });
+    fireEvent.change(screen.getByLabelText("FAQ"), {
+      target: { value: "acf-block:field_page_blocks:2" },
+    });
+    fireEvent.change(screen.getByLabelText("CTA-titel"), {
+      target: { value: "acf-block:field_page_blocks:3" },
+    });
+    fireEvent.change(screen.getByLabelText("CTA-tekst"), {
+      target: { value: "acf-block:field_page_blocks:3" },
+    });
+
+    expect(screen.getByRole("button", { name: "Paginapakket valideren" })).toBeEnabled();
+  });
+
+  it("keeps duplicate mappings disabled for non-ACF builders", async () => {
+    render(<PagePackageSettingsPanel projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Page builder"), {
+      target: { value: "elementor" },
+    });
+    fireEvent.change(screen.getByLabelText("Standaard templatepagina"), {
+      target: { value: "template-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Paginapakket opslaan" }));
+    await screen.findByText("Paginapakket is opgeslagen en moet worden gevalideerd.");
+    fireEvent.click(screen.getByRole("button", { name: "Blokken ophalen" }));
+    fireEvent.click(await screen.findByText("AI-inhoud aan templateblokken koppelen"));
+
+    for (const label of ["Hero-titel", "Introductie", "Hoofdinhoud", "FAQ", "CTA-titel", "CTA-tekst"]) {
+      fireEvent.change(screen.getByLabelText(label), {
+        target: { value: "acf-block:field_page_blocks:0" },
+      });
+    }
+
+    expect(screen.getByRole("button", { name: "Paginapakket valideren" })).toBeDisabled();
+  });
+
+  it("allows unique classic ACF fields next to duplicated ACF blocks", async () => {
+    apiRequest
+      .mockImplementationOnce(() => Promise.resolve({
+        configured: true,
+        builder: "acf",
+        template_wordpress_page_id: "template-1",
+        seo_plugin: "yoast",
+        slot_mapping: {
+          hero_title: "acf-block:field_page_blocks:0",
+          introduction: "acf-block:field_page_blocks:0",
+          main_content: "acf:field_summary",
+          faq: "acf-block:field_page_blocks:2",
+          cta_title: "acf-block:field_page_blocks:3",
+          cta_text: "acf-block:field_page_blocks:3",
+        },
+        validation_state: "unvalidated",
+      }))
+      .mockImplementationOnce(() => Promise.resolve({ items: [] }))
+      .mockImplementationOnce(() => Promise.resolve({ builders: ["acf"], seo_plugin: "yoast" }));
+
+    render(<PagePackageSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByRole("button", { name: "Paginapakket valideren" })).toBeEnabled();
   });
 });
