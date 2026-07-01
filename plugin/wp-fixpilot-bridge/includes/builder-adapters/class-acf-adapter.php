@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
+final class WPFixPilot_ACF_Adapter implements
+    WPFixPilot_Builder_Adapter,
+    WPFixPilot_Blueprint_Adapter
 {
     public function key(): string
     {
@@ -11,32 +13,275 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
 
     public function is_active(): bool
     {
-        return function_exists('get_field_objects');
+        return function_exists('get_field_objects') && function_exists('update_field');
     }
 
+    public function uses_page(int $postId): bool
+    {
+        return $this->field_objects($postId) !== [];
+    }
+
+    /** @return array<int, array{path: string, label: string, value_type: string}> */
     public function inspect(int $postId): array
     {
-        if (!function_exists('get_field_objects')) {
+        return $this->legacy_inspect($postId);
+    }
+
+    public function template_hash(int $postId): string
+    {
+        $fields = $this->field_objects($postId);
+        if ($fields === []) {
+            return '';
+        }
+
+        return hash('sha256', (string) wp_json_encode($fields));
+    }
+
+    public function write(int $postId, array $mapping, array $values): bool|WP_Error
+    {
+        foreach ($mapping as $path) {
+            if (
+                str_starts_with((string) $path, 'acf:')
+                || str_starts_with((string) $path, 'acf-value:')
+            ) {
+                return $this->legacy_write($postId, $mapping, $values);
+            }
+        }
+
+        $schema = $this->schema($postId);
+        if (is_wp_error($schema)) {
+            return $schema;
+        }
+
+        $replacements = [];
+        foreach ($mapping as $semantic => $path) {
+            if (!isset($values[$semantic])) {
+                return new WP_Error(
+                    'wp_fixpilot_slot_invalid',
+                    'Ongeldige ACF-mapping.'
+                );
+            }
+
+            $fieldId = $this->field_id_for_path($schema, (string) $path);
+            if ($fieldId === null) {
+                return new WP_Error(
+                    'wp_fixpilot_slot_missing',
+                    'ACF-veld kon niet worden bijgewerkt.'
+                );
+            }
+
+            $replacements[$fieldId] = (string) $values[$semantic];
+        }
+
+        return $this->apply_replacements($postId, $schema, $replacements);
+    }
+
+    /** @return array<int, string> */
+    public function clone_meta_keys(int $postId): array
+    {
+        $fields = $this->field_objects($postId);
+        if ($fields === []) {
             return [];
         }
-        $fields = get_field_objects($postId) ?: [];
-        $slots = [];
+
+        $keys = [];
+        $prefixes = [];
         foreach ($fields as $field) {
-            if (!is_array($field)) {
+            $name = (string) ($field['name'] ?? '');
+            if ($name === '') {
                 continue;
             }
+
+            $keys[] = $name;
+            $keys[] = '_' . $name;
+            $prefixes[] = $name;
+            $prefixes[] = '_' . $name;
+        }
+
+        if (function_exists('get_post_meta')) {
+            foreach (array_keys((array) get_post_meta($postId)) as $metaKey) {
+                $metaKey = (string) $metaKey;
+                if ($this->is_excluded_meta_key($metaKey)) {
+                    continue;
+                }
+
+                foreach ($prefixes as $prefix) {
+                    if (
+                        $metaKey === $prefix
+                        || str_starts_with($metaKey, $prefix . '_')
+                    ) {
+                        $keys[] = $metaKey;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $keys = array_values(array_unique($keys));
+        sort($keys);
+
+        return $keys;
+    }
+
+    /** @return array<string, mixed>|WP_Error */
+    public function schema(int $postId): array|WP_Error
+    {
+        if (!$this->is_active()) {
+            return new WP_Error(
+                'wp_fixpilot_builder_inactive',
+                'ACF is niet actief.',
+                ['status' => 409]
+            );
+        }
+
+        $fields = $this->field_objects($postId);
+        if ($fields === []) {
+            return new WP_Error(
+                'wp_fixpilot_no_editable_content',
+                'Geen bewerkbare tekstinhoud gevonden.',
+                ['status' => 400]
+            );
+        }
+
+        $blocks = [];
+        foreach ($fields as $field) {
+            $blocks = array_merge($blocks, $this->schema_blocks_for_field($field));
+        }
+
+        if ($blocks === []) {
+            return new WP_Error(
+                'wp_fixpilot_no_editable_content',
+                'Geen bewerkbare tekstinhoud gevonden.',
+                ['status' => 400]
+            );
+        }
+
+        return [
+            'schema_version' => 'blueprint-v1',
+            'blocks' => $blocks,
+        ];
+    }
+
+    public function structure_hash(int $postId): string
+    {
+        $fields = $this->field_objects($postId);
+        if ($fields === []) {
+            return '';
+        }
+
+        $normalized = [];
+        foreach ($fields as $field) {
+            $normalized[] = $this->normalize_field_structure(
+                $field,
+                $field['value'] ?? null
+            );
+        }
+
+        return hash('sha256', (string) wp_json_encode($normalized));
+    }
+
+    public function apply_replacements(
+        int $postId,
+        array $schema,
+        array $replacements
+    ): bool|WP_Error {
+        if (!$this->is_active()) {
+            return new WP_Error(
+                'wp_fixpilot_builder_inactive',
+                'ACF is niet actief.',
+                ['status' => 409]
+            );
+        }
+
+        $fields = $this->schema_fields($schema);
+        foreach ($replacements as $fieldId => $value) {
+            if (!isset($fields[$fieldId])) {
+                return new WP_Error(
+                    'wp_fixpilot_blueprint_field_unknown',
+                    'Onbekend blueprint-veld.',
+                    ['status' => 400]
+                );
+            }
+        }
+
+        $updates = [];
+        foreach ($replacements as $fieldId => $replacement) {
+            $field = $fields[$fieldId];
+            $target = $this->parse_path((string) $field['path']);
+            if ($target === null) {
+                return new WP_Error(
+                    'wp_fixpilot_field_invalid',
+                    'ACF-veld heeft ongeldige structuur.',
+                    ['status' => 500]
+                );
+            }
+
+            $topFieldKey = $target['top_field_key'];
+            if (!isset($updates[$topFieldKey])) {
+                $current = get_field($topFieldKey, $postId);
+                if ($current === null) {
+                    $current = get_field($target['top_field_name'], $postId);
+                }
+                if ($current === null) {
+                    $current = $this->top_level_field_value(
+                        $postId,
+                        $topFieldKey,
+                        $target['top_field_name']
+                    );
+                }
+                $updates[$topFieldKey] = [
+                    'value' => $current,
+                    'top_field_name' => $target['top_field_name'],
+                ];
+            }
+
+            if (
+                !$this->replace_value_at_segments(
+                    $updates[$topFieldKey]['value'],
+                    $target['segments'],
+                    (string) $replacement
+                )
+            ) {
+                return new WP_Error(
+                    'wp_fixpilot_field_invalid',
+                    'ACF-veld heeft ongeldige structuur.',
+                    ['status' => 500]
+                );
+            }
+        }
+
+        foreach ($updates as $topFieldKey => $update) {
+            if (update_field((string) $topFieldKey, $update['value'], $postId) === false) {
+                return new WP_Error(
+                    'wp_fixpilot_field_write_failed',
+                    'ACF-veld kon niet worden bijgewerkt.',
+                    ['status' => 500]
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /** @return array<int, array{path: string, label: string, value_type: string}> */
+    private function legacy_inspect(int $postId): array
+    {
+        $slots = [];
+        foreach ($this->field_objects($postId) as $field) {
             $fieldKey = (string) ($field['key'] ?? '');
-            $label = (string) ($field['label'] ?? $field['name'] ?? 'ACF field');
-            if (in_array($field['type'] ?? '', ['text', 'textarea', 'wysiwyg', 'url'], true)) {
+            $label = $this->field_label($field);
+            $type = (string) ($field['type'] ?? '');
+            if (in_array($type, ['text', 'textarea', 'wysiwyg', 'url'], true)) {
                 $slots[] = [
                     'path' => 'acf:' . $fieldKey,
                     'label' => $label,
-                    'value_type' => ($field['type'] ?? '') === 'wysiwyg' ? 'html' : 'text',
+                    'value_type' => $type === 'wysiwyg' ? 'html' : 'text',
                 ];
                 continue;
             }
+
             if ($fieldKey !== '' && is_array($field['value'] ?? null)) {
-                $this->nested_slots(
+                $this->legacy_nested_slots(
                     $field['value'],
                     $fieldKey,
                     [],
@@ -45,68 +290,710 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
                 );
             }
         }
+
         return array_values(array_filter(
             $slots,
             static fn (array $slot): bool => $slot['path'] !== 'acf:'
         ));
     }
 
-    public function template_hash(int $postId): string
-    {
-        $fields = function_exists('get_field_objects') ? (get_field_objects($postId) ?: []) : [];
-        return hash('sha256', (string) wp_json_encode($fields));
-    }
-
-    public function write(int $postId, array $mapping, array $values): bool|WP_Error
-    {
+    private function legacy_write(
+        int $postId,
+        array $mapping,
+        array $values
+    ): bool|WP_Error {
         if (!function_exists('update_field')) {
-            return new WP_Error('wp_fixpilot_builder_inactive', 'ACF is niet actief.');
+            return new WP_Error(
+                'wp_fixpilot_builder_inactive',
+                'ACF is niet actief.'
+            );
         }
-        $fields = get_field_objects($postId) ?: [];
+
+        $fields = $this->field_objects($postId);
         $nestedUpdates = [];
         foreach ($mapping as $semantic => $path) {
             if (!isset($values[$semantic])) {
-                return new WP_Error('wp_fixpilot_slot_invalid', 'Ongeldige ACF-mapping.');
+                return new WP_Error(
+                    'wp_fixpilot_slot_invalid',
+                    'Ongeldige ACF-mapping.'
+                );
             }
+
+            $path = (string) $path;
             if (str_starts_with($path, 'acf-value:')) {
-                if (!preg_match('/^acf-value:([^:]+):(.+)$/', $path, $match)) {
-                    return new WP_Error('wp_fixpilot_slot_invalid', 'Ongeldige ACF-mapping.');
+                if (preg_match('/^acf-value:([^:]+):(.+)$/', $path, $match) !== 1) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_invalid',
+                        'Ongeldige ACF-mapping.'
+                    );
                 }
+
                 $fieldKey = (string) $match[1];
                 if (!array_key_exists($fieldKey, $nestedUpdates)) {
                     $field = $this->field_by_key($fields, $fieldKey);
                     if ($field === null || !is_array($field['value'] ?? null)) {
-                        return new WP_Error('wp_fixpilot_slot_missing', 'ACF-veld kon niet worden bijgewerkt.');
+                        return new WP_Error(
+                            'wp_fixpilot_slot_missing',
+                            'ACF-veld kon niet worden bijgewerkt.'
+                        );
                     }
                     $nestedUpdates[$fieldKey] = $field['value'];
                 }
+
                 $segments = array_map('rawurldecode', explode('/', (string) $match[2]));
-                if (!$this->replace_nested_value(
-                    $nestedUpdates[$fieldKey],
-                    $segments,
-                    (string) $values[$semantic]
-                )) {
-                    return new WP_Error('wp_fixpilot_slot_missing', 'ACF-veld kon niet worden bijgewerkt.');
+                if (
+                    !$this->legacy_replace_nested_value(
+                        $nestedUpdates[$fieldKey],
+                        $segments,
+                        (string) $values[$semantic]
+                    )
+                ) {
+                    return new WP_Error(
+                        'wp_fixpilot_slot_missing',
+                        'ACF-veld kon niet worden bijgewerkt.'
+                    );
                 }
                 continue;
             }
+
             if (!str_starts_with($path, 'acf:')) {
-                return new WP_Error('wp_fixpilot_slot_invalid', 'Ongeldige ACF-mapping.');
+                return new WP_Error(
+                    'wp_fixpilot_slot_invalid',
+                    'Ongeldige ACF-mapping.'
+                );
             }
+
             $fieldKey = substr($path, 4);
-            if ($fieldKey === '' || update_field($fieldKey, (string) $values[$semantic], $postId) === false) {
-                return new WP_Error('wp_fixpilot_slot_missing', 'ACF-veld kon niet worden bijgewerkt.');
+            if (
+                $fieldKey === ''
+                || update_field($fieldKey, (string) $values[$semantic], $postId) === false
+            ) {
+                return new WP_Error(
+                    'wp_fixpilot_slot_missing',
+                    'ACF-veld kon niet worden bijgewerkt.'
+                );
             }
         }
+
         foreach ($nestedUpdates as $fieldKey => $value) {
             if (update_field((string) $fieldKey, $value, $postId) === false) {
-                return new WP_Error('wp_fixpilot_slot_missing', 'ACF-veld kon niet worden bijgewerkt.');
+                return new WP_Error(
+                    'wp_fixpilot_slot_missing',
+                    'ACF-veld kon niet worden bijgewerkt.'
+                );
             }
         }
+
         return true;
     }
 
-    private function nested_slots(
+    /** @return array<int, array<string, mixed>> */
+    private function field_objects(int $postId): array
+    {
+        if (!function_exists('get_field_objects')) {
+            return [];
+        }
+
+        $fields = get_field_objects($postId);
+        if (!is_array($fields)) {
+            return [];
+        }
+
+        return array_values(array_filter($fields, 'is_array'));
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function schema_blocks_for_field(array $field): array
+    {
+        $type = (string) ($field['type'] ?? '');
+        $value = $field['value'] ?? null;
+        $name = (string) ($field['name'] ?? '');
+        $key = (string) ($field['key'] ?? '');
+        $label = $this->field_label($field);
+
+        if ($type === 'flexible_content') {
+            $blocks = [];
+            $rows = is_array($value) ? $value : [];
+            $layouts = $this->layouts_by_name($field);
+            if ($layouts === []) {
+                return $this->schema_blocks_from_flexible_values(
+                    $rows,
+                    $key,
+                    $name,
+                    $label
+                );
+            }
+            foreach ($rows as $rowIndex => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $layoutName = (string) ($row['acf_fc_layout'] ?? '');
+                if ($layoutName === '' || !isset($layouts[$layoutName])) {
+                    continue;
+                }
+                $layout = $layouts[$layoutName];
+                $fields = [];
+                foreach ($this->sub_fields($layout) as $subField) {
+                    $subName = (string) ($subField['name'] ?? '');
+                    $fields = array_merge(
+                        $fields,
+                        $this->schema_fields_from_definition(
+                            $subField,
+                            $row[$subName] ?? null,
+                            $key,
+                            $name,
+                            [(string) $rowIndex, $subName],
+                            [
+                                $name . ':' . $key,
+                                'layout:' . $layoutName,
+                                'row:' . $rowIndex,
+                                $subName . ':' . (string) ($subField['key'] ?? ''),
+                            ],
+                            [$label, $this->field_label($layout)]
+                        )
+                    );
+                }
+                if ($fields === []) {
+                    continue;
+                }
+                $blocks[] = [
+                    'id' => wpfixpilot_field_id(
+                        'acf',
+                        implode('/', [$key, $name, 'layout', $layoutName, 'row', (string) $rowIndex])
+                    ),
+                    'layout' => $layoutName,
+                    'label' => $label . ' (' . $this->field_label($layout) . ')',
+                    'semantic_role' => $this->infer_semantic_role($layoutName, $label),
+                    'fields' => $fields,
+                ];
+            }
+
+            return $blocks;
+        }
+
+        if ($type === 'repeater') {
+            $rows = is_array($value) ? $value : [];
+            $blocks = [];
+            foreach ($rows as $rowIndex => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                $fields = [];
+                foreach ($this->sub_fields($field) as $subField) {
+                    $subName = (string) ($subField['name'] ?? '');
+                    $fields = array_merge(
+                        $fields,
+                        $this->schema_fields_from_definition(
+                            $subField,
+                            $row[$subName] ?? null,
+                            $key,
+                            $name,
+                            [(string) $rowIndex, $subName],
+                            [
+                                $name . ':' . $key,
+                                'row:' . $rowIndex,
+                                $subName . ':' . (string) ($subField['key'] ?? ''),
+                            ],
+                            [$label]
+                        )
+                    );
+                }
+                if ($fields === []) {
+                    continue;
+                }
+                $blocks[] = [
+                    'id' => wpfixpilot_field_id(
+                        'acf',
+                        implode('/', [$key, $name, 'row', (string) $rowIndex])
+                    ),
+                    'layout' => $name !== '' ? $name : 'repeater',
+                    'label' => $label,
+                    'semantic_role' => $this->infer_semantic_role($name, $label),
+                    'fields' => $fields,
+                ];
+            }
+
+            return $blocks;
+        }
+
+        $fields = $this->schema_fields_from_definition(
+            $field,
+            $value,
+            $key,
+            $name,
+            [],
+            [$name . ':' . $key],
+            [$label]
+        );
+        if ($fields === []) {
+            return [];
+        }
+
+        return [[
+            'id' => wpfixpilot_field_id('acf', implode('/', [$key, $name, 'block'])),
+            'layout' => $name !== '' ? $name : $type,
+            'label' => $label,
+            'semantic_role' => $this->infer_semantic_role($name, $label),
+            'fields' => $fields,
+        ]];
+    }
+
+    /**
+     * @param array<int, string> $valueSegments
+     * @param array<int, string> $idSegments
+     * @param array<int, string> $labelSegments
+     * @return array<int, array<string, mixed>>
+     */
+    private function schema_fields_from_definition(
+        array $field,
+        mixed $value,
+        string $topFieldKey,
+        string $topFieldName,
+        array $valueSegments,
+        array $idSegments,
+        array $labelSegments
+    ): array {
+        $type = (string) ($field['type'] ?? '');
+        $name = (string) ($field['name'] ?? '');
+
+        if ($type === 'group') {
+            $groupValue = is_array($value) ? $value : [];
+            $fields = [];
+            foreach ($this->sub_fields($field) as $subField) {
+                $subName = (string) ($subField['name'] ?? '');
+                $fields = array_merge(
+                    $fields,
+                    $this->schema_fields_from_definition(
+                        $subField,
+                        $groupValue[$subName] ?? null,
+                        $topFieldKey,
+                        $topFieldName,
+                        [...$valueSegments, $subName],
+                        [...$idSegments, $subName . ':' . (string) ($subField['key'] ?? '')],
+                        [...$labelSegments, $this->field_label($field)]
+                    )
+                );
+            }
+
+            return $fields;
+        }
+
+        if ($type === 'repeater') {
+            $rows = is_array($value) ? $value : [];
+            $fields = [];
+            foreach ($rows as $rowIndex => $row) {
+                $rowValues = is_array($row) ? $row : [];
+                foreach ($this->sub_fields($field) as $subField) {
+                    $subName = (string) ($subField['name'] ?? '');
+                    $fields = array_merge(
+                        $fields,
+                        $this->schema_fields_from_definition(
+                            $subField,
+                            $rowValues[$subName] ?? null,
+                            $topFieldKey,
+                            $topFieldName,
+                            [...$valueSegments, (string) $rowIndex, $subName],
+                            [...$idSegments, 'row:' . $rowIndex, $subName . ':' . (string) ($subField['key'] ?? '')],
+                            $labelSegments
+                        )
+                    );
+                }
+            }
+
+            return $fields;
+        }
+
+        if ($type === 'flexible_content') {
+            $rows = is_array($value) ? $value : [];
+            $layouts = $this->layouts_by_name($field);
+            $fields = [];
+            foreach ($rows as $rowIndex => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $layoutName = (string) ($row['acf_fc_layout'] ?? '');
+                if ($layoutName === '' || !isset($layouts[$layoutName])) {
+                    continue;
+                }
+                foreach ($this->sub_fields($layouts[$layoutName]) as $subField) {
+                    $subName = (string) ($subField['name'] ?? '');
+                    $fields = array_merge(
+                        $fields,
+                        $this->schema_fields_from_definition(
+                            $subField,
+                            $row[$subName] ?? null,
+                            $topFieldKey,
+                            $topFieldName,
+                            [...$valueSegments, (string) $rowIndex, $subName],
+                            [...$idSegments, 'layout:' . $layoutName, 'row:' . $rowIndex, $subName . ':' . (string) ($subField['key'] ?? '')],
+                            $labelSegments
+                        )
+                    );
+                }
+            }
+
+            return $fields;
+        }
+
+        if ($type === 'link') {
+            $linkValue = is_array($value) ? $value : [];
+
+            return [[
+                'id' => wpfixpilot_field_id(
+                    'acf',
+                    implode('/', [...$idSegments, 'url'])
+                ),
+                'path' => $this->field_path(
+                    $topFieldKey,
+                    $topFieldName,
+                    [...$valueSegments, 'url']
+                ),
+                'label' => $this->field_output_label($labelSegments, $field),
+                'value_type' => 'url',
+                'current_value' => isset($linkValue['url']) && is_string($linkValue['url'])
+                    ? $linkValue['url']
+                    : '',
+                'required' => !empty($field['required']),
+                'max_length' => 2000,
+            ]];
+        }
+
+        if (!$this->is_editable_leaf_type($type)) {
+            return [];
+        }
+
+        return [[
+            'id' => wpfixpilot_field_id('acf', implode('/', $idSegments)),
+            'path' => $this->field_path($topFieldKey, $topFieldName, $valueSegments),
+            'label' => $this->field_output_label($labelSegments, $field),
+            'value_type' => $this->acf_value_type($field),
+            'current_value' => is_string($value) ? $value : '',
+            'required' => !empty($field['required']),
+            'max_length' => $this->max_length_for_type($type),
+        ]];
+    }
+
+    /**
+     * @param array<int|string, mixed> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function schema_blocks_from_flexible_values(
+        array $rows,
+        string $topFieldKey,
+        string $topFieldName,
+        string $label
+    ): array {
+        $blocks = [];
+        foreach ($rows as $rowIndex => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $layoutName = (string) ($row['acf_fc_layout'] ?? 'content');
+            $fields = $this->schema_fields_from_value(
+                $row,
+                $topFieldKey,
+                $topFieldName,
+                [(string) $rowIndex],
+                [$topFieldName . ':' . $topFieldKey, 'layout:' . $layoutName, 'row:' . $rowIndex],
+                [$label]
+            );
+            if ($fields === []) {
+                continue;
+            }
+
+            $blocks[] = [
+                'id' => wpfixpilot_field_id(
+                    'acf',
+                    implode('/', [$topFieldKey, $topFieldName, 'layout', $layoutName, 'row', (string) $rowIndex])
+                ),
+                'layout' => $layoutName,
+                'label' => $label . ' (' . $layoutName . ')',
+                'semantic_role' => $this->infer_semantic_role($layoutName, $label),
+                'fields' => $fields,
+            ];
+        }
+
+        return $blocks;
+    }
+
+    /**
+     * @param array<int|string, mixed> $value
+     * @param array<int, string> $valueSegments
+     * @param array<int, string> $idSegments
+     * @param array<int, string> $labelSegments
+     * @return array<int, array<string, mixed>>
+     */
+    private function schema_fields_from_value(
+        array $value,
+        string $topFieldKey,
+        string $topFieldName,
+        array $valueSegments,
+        array $idSegments,
+        array $labelSegments
+    ): array {
+        $fields = [];
+        foreach ($value as $key => $child) {
+            if ($key === 'acf_fc_layout' || str_starts_with((string) $key, '_')) {
+                continue;
+            }
+
+            $segments = [...$valueSegments, (string) $key];
+            $childIdSegments = [...$idSegments, (string) $key];
+            if (is_array($child)) {
+                $fields = array_merge(
+                    $fields,
+                    $this->schema_fields_from_value(
+                        $child,
+                        $topFieldKey,
+                        $topFieldName,
+                        $segments,
+                        $childIdSegments,
+                        $labelSegments
+                    )
+                );
+                continue;
+            }
+
+            if (!is_string($child) || trim($child) === '') {
+                continue;
+            }
+
+            $valueType = wp_strip_all_tags($child) !== $child
+                ? 'rich_text'
+                : (filter_var($child, FILTER_VALIDATE_URL) === false ? 'plain_text' : 'url');
+            $fields[] = [
+                'id' => wpfixpilot_field_id('acf', implode('/', $childIdSegments)),
+                'path' => $this->field_path($topFieldKey, $topFieldName, $segments),
+                'label' => implode(' · ', [...$labelSegments, (string) $key]),
+                'value_type' => $valueType,
+                'current_value' => $child,
+                'required' => true,
+                'max_length' => match ($valueType) {
+                    'rich_text' => 20000,
+                    'url' => 2000,
+                    default => 5000,
+                },
+            ];
+        }
+
+        return $fields;
+    }
+
+    /** @return array<string, mixed> */
+    private function normalize_field_structure(array $field, mixed $value): array
+    {
+        $type = (string) ($field['type'] ?? '');
+        $normalized = [
+            'key' => (string) ($field['key'] ?? ''),
+            'name' => (string) ($field['name'] ?? ''),
+            'type' => $type,
+        ];
+
+        if ($type === 'flexible_content') {
+            $rows = is_array($value) ? $value : [];
+            $layouts = $this->layouts_by_name($field);
+            $normalized['rows'] = [];
+            foreach ($rows as $rowIndex => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $layoutName = (string) ($row['acf_fc_layout'] ?? '');
+                $layout = $layouts[$layoutName] ?? null;
+                $normalized['rows'][] = [
+                    'index' => $rowIndex,
+                    'layout' => $layoutName,
+                    'fields' => $layout === null
+                        ? []
+                        : $this->normalize_sub_field_structures(
+                            $this->sub_fields($layout),
+                            $row
+                        ),
+                ];
+            }
+
+            return $normalized;
+        }
+
+        if ($type === 'repeater') {
+            $rows = is_array($value) ? $value : [];
+            $normalized['rows'] = [];
+            foreach ($rows as $rowIndex => $row) {
+                $normalized['rows'][] = [
+                    'index' => $rowIndex,
+                    'fields' => $this->normalize_sub_field_structures(
+                        $this->sub_fields($field),
+                        is_array($row) ? $row : []
+                    ),
+                ];
+            }
+
+            return $normalized;
+        }
+
+        if ($type === 'group') {
+            $normalized['fields'] = $this->normalize_sub_field_structures(
+                $this->sub_fields($field),
+                is_array($value) ? $value : []
+            );
+
+            return $normalized;
+        }
+
+        if ($type === 'link') {
+            $linkValue = is_array($value) ? $value : [];
+            $normalized['editable'] = 'url';
+            $normalized['locked'] = [
+                'title' => (string) ($linkValue['title'] ?? ''),
+                'target' => (string) ($linkValue['target'] ?? ''),
+            ];
+
+            return $normalized;
+        }
+
+        if ($this->is_editable_leaf_type($type)) {
+            $normalized['editable'] = $this->acf_value_type($field);
+
+            return $normalized;
+        }
+
+        $normalized['locked'] = $this->normalize_locked_value($value);
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $subFields
+     * @param array<string, mixed> $values
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_sub_field_structures(
+        array $subFields,
+        array $values
+    ): array {
+        $normalized = [];
+        foreach ($subFields as $subField) {
+            $name = (string) ($subField['name'] ?? '');
+            $normalized[] = $this->normalize_field_structure(
+                $subField,
+                $values[$name] ?? null
+            );
+        }
+
+        return $normalized;
+    }
+
+    /** @return array<string, string>|null */
+    private function parse_path(string $path): ?array
+    {
+        if (!str_starts_with($path, 'acf:')) {
+            return null;
+        }
+
+        $segments = array_map(
+            'rawurldecode',
+            explode('/', substr($path, 4))
+        );
+        if (count($segments) < 2) {
+            return null;
+        }
+
+        $topFieldKey = (string) array_shift($segments);
+        $topFieldName = (string) array_shift($segments);
+        if ($topFieldKey === '' || $topFieldName === '') {
+            return null;
+        }
+
+        return [
+            'top_field_key' => $topFieldKey,
+            'top_field_name' => $topFieldName,
+            'segments' => $segments,
+        ];
+    }
+
+    /**
+     * @param array<int, string> $segments
+     */
+    private function field_path(
+        string $topFieldKey,
+        string $topFieldName,
+        array $segments
+    ): string {
+        $parts = array_merge(
+            [$topFieldKey, $topFieldName],
+            array_map('rawurlencode', $segments)
+        );
+
+        return 'acf:' . implode('/', $parts);
+    }
+
+    private function top_level_field_value(
+        int $postId,
+        string $topFieldKey,
+        string $topFieldName
+    ): mixed {
+        foreach ($this->field_objects($postId) as $field) {
+            if (
+                (string) ($field['key'] ?? '') === $topFieldKey
+                || (string) ($field['name'] ?? '') === $topFieldName
+            ) {
+                return $field['value'] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    private function field_by_key(array $fields, string $fieldKey): ?array
+    {
+        foreach ($fields as $field) {
+            if (is_array($field) && ($field['key'] ?? null) === $fieldKey) {
+                return $field;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int, string> $segments
+     */
+    private function replace_value_at_segments(
+        mixed &$value,
+        array $segments,
+        string $replacement
+    ): bool {
+        if ($segments === []) {
+            $value = $replacement;
+
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        $cursor = &$value;
+        foreach ($segments as $index => $segment) {
+            $isLast = $index === array_key_last($segments);
+            if ($isLast) {
+                $cursor[$segment] = $replacement;
+
+                return true;
+            }
+
+            if (!isset($cursor[$segment]) || !is_array($cursor[$segment])) {
+                $cursor[$segment] = [];
+            }
+
+            $cursor = &$cursor[$segment];
+        }
+
+        return false;
+    }
+
+    private function legacy_nested_slots(
         mixed $value,
         string $fieldKey,
         array $segments,
@@ -118,7 +1005,7 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
                 if ($key === 'acf_fc_layout' || str_starts_with((string) $key, '_')) {
                     continue;
                 }
-                $this->nested_slots(
+                $this->legacy_nested_slots(
                     $child,
                     $fieldKey,
                     [...$segments, (string) $key],
@@ -126,36 +1013,30 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
                     $slots
                 );
             }
+
             return;
         }
+
         if (!is_string($value) || trim($value) === '') {
             return;
         }
+
         $preview = trim(wp_strip_all_tags($value));
         if ($preview === '') {
             $preview = (string) end($segments);
         }
+
         $slots[] = [
             'path' => 'acf-value:' . $fieldKey . ':' . implode(
                 '/',
                 array_map('rawurlencode', $segments)
             ),
-            'label' => $label . ' · ' . mb_substr($preview, 0, 80),
+            'label' => $label . ' · ' . $this->short_label($preview),
             'value_type' => wp_strip_all_tags($value) !== $value ? 'html' : 'text',
         ];
     }
 
-    private function field_by_key(array $fields, string $fieldKey): ?array
-    {
-        foreach ($fields as $field) {
-            if (is_array($field) && ($field['key'] ?? null) === $fieldKey) {
-                return $field;
-            }
-        }
-        return null;
-    }
-
-    private function replace_nested_value(
+    private function legacy_replace_nested_value(
         array &$value,
         array $segments,
         string $replacement
@@ -163,6 +1044,7 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
         if ($segments === []) {
             return false;
         }
+
         $cursor = &$value;
         foreach ($segments as $index => $segment) {
             if (!is_array($cursor) || !array_key_exists($segment, $cursor)) {
@@ -170,10 +1052,197 @@ final class WPFixPilot_ACF_Adapter implements WPFixPilot_Builder_Adapter
             }
             if ($index === array_key_last($segments)) {
                 $cursor[$segment] = $replacement;
+
                 return true;
             }
             $cursor = &$cursor[$segment];
         }
+
         return false;
+    }
+
+    private function short_label(string $value): string
+    {
+        return function_exists('mb_substr')
+            ? mb_substr($value, 0, 80)
+            : substr($value, 0, 80);
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function schema_fields(array $schema): array
+    {
+        $fields = [];
+        foreach ((array) ($schema['blocks'] ?? []) as $block) {
+            foreach ((array) ($block['fields'] ?? []) as $field) {
+                if (
+                    is_array($field)
+                    && isset($field['id'])
+                    && is_string($field['id'])
+                ) {
+                    $fields[$field['id']] = $field;
+                }
+            }
+        }
+
+        return $fields;
+    }
+
+    private function field_id_for_path(array $schema, string $path): ?string
+    {
+        foreach ($this->schema_fields($schema) as $fieldId => $field) {
+            if (($field['path'] ?? null) === $path) {
+                return $fieldId;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function sub_fields(array $field): array
+    {
+        $subFields = $field['sub_fields'] ?? [];
+        if (!is_array($subFields)) {
+            return [];
+        }
+
+        return array_values(array_filter($subFields, 'is_array'));
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function layouts_by_name(array $field): array
+    {
+        $layouts = [];
+        foreach ((array) ($field['layouts'] ?? []) as $layout) {
+            if (!is_array($layout)) {
+                continue;
+            }
+            $name = (string) ($layout['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $layouts[$name] = $layout;
+        }
+
+        return $layouts;
+    }
+
+    private function field_label(array $field): string
+    {
+        $label = (string) ($field['label'] ?? '');
+        if ($label !== '') {
+            return $label;
+        }
+
+        $name = (string) ($field['name'] ?? '');
+
+        return $name !== '' ? $name : 'ACF field';
+    }
+
+    /**
+     * @param array<int, string> $labelSegments
+     */
+    private function field_output_label(array $labelSegments, array $field): string
+    {
+        $segments = array_filter($labelSegments, static fn (string $label): bool => $label !== '');
+        $segments[] = $this->field_label($field);
+
+        return implode(' · ', array_values(array_unique($segments)));
+    }
+
+    private function is_editable_leaf_type(string $type): bool
+    {
+        return in_array($type, ['text', 'textarea', 'wysiwyg', 'url'], true);
+    }
+
+    private function acf_value_type(array $field): string
+    {
+        $type = (string) ($field['type'] ?? '');
+        if ($type === 'wysiwyg') {
+            return 'rich_text';
+        }
+        if ($type === 'url') {
+            return 'url';
+        }
+
+        $name = strtolower((string) ($field['name'] ?? ''));
+        $label = strtolower($this->field_label($field));
+        $combined = $name . ' ' . $label;
+        if (str_contains($combined, 'heading')) {
+            return 'heading';
+        }
+        if (
+            str_contains($combined, 'button')
+            || str_contains($combined, 'knop')
+            || str_contains($combined, 'cta')
+        ) {
+            return 'button_text';
+        }
+
+        return 'plain_text';
+    }
+
+    private function max_length_for_type(string $type): int
+    {
+        return match ($type) {
+            'text' => 500,
+            'textarea' => 5000,
+            'wysiwyg' => 20000,
+            'url' => 2000,
+            default => 5000,
+        };
+    }
+
+    private function infer_semantic_role(string $name, string $label): string
+    {
+        $combined = strtolower($name . ' ' . $label);
+        if (str_contains($combined, 'hero') || str_contains($combined, 'header')) {
+            return 'hero';
+        }
+        if (str_contains($combined, 'intro') || str_contains($combined, 'inleiding')) {
+            return 'introduction';
+        }
+        if (str_contains($combined, 'benefit') || str_contains($combined, 'voordel')) {
+            return 'benefits';
+        }
+        if (str_contains($combined, 'proces') || str_contains($combined, 'stap')) {
+            return 'process';
+        }
+        if (str_contains($combined, 'faq') || str_contains($combined, 'vraag')) {
+            return 'faq';
+        }
+        if (str_contains($combined, 'cta') || str_contains($combined, 'call')) {
+            return 'cta';
+        }
+
+        return 'content';
+    }
+
+    private function normalize_locked_value(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $normalized = [];
+            foreach ($value as $key => $child) {
+                $normalized[$key] = $this->normalize_locked_value($child);
+            }
+
+            return $normalized;
+        }
+
+        return $value;
+    }
+
+    private function slot_value_type(string $valueType): string
+    {
+        return $valueType === 'rich_text' ? 'html' : 'text';
+    }
+
+    private function is_excluded_meta_key(string $metaKey): bool
+    {
+        if (str_starts_with($metaKey, '_wp_fixpilot_')) {
+            return true;
+        }
+
+        return in_array($metaKey, ['_edit_lock', '_edit_last', '_wp_old_slug'], true);
     }
 }

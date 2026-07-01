@@ -28,3 +28,10 @@ interface WPFixPilot_Blueprint_Adapter
         array $replacements
     ): bool|WP_Error;
 }
+
+if (!function_exists('wpfixpilot_field_id')) {
+    function wpfixpilot_field_id(string $builder, string $path): string
+    {
+        return $builder . '-' . substr(hash('sha256', $path), 0, 20);
+    }
+}

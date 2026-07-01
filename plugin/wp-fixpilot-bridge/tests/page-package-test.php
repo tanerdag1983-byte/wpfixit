@@ -88,6 +88,7 @@ function wp_json_encode(mixed $value): string { return (string) json_encode($val
 function wp_strip_all_tags(string $value): string { return strip_tags($value); }
 
 require_once __DIR__ . '/../includes/builder-adapters/interface-builder-adapter.php';
+require_once __DIR__ . '/../includes/builder-adapters/interface-blueprint-adapter.php';
 require_once __DIR__ . '/../includes/builder-adapters/class-gutenberg-adapter.php';
 require_once __DIR__ . '/../includes/builder-adapters/class-elementor-adapter.php';
 require_once __DIR__ . '/../includes/builder-adapters/class-bricks-adapter.php';

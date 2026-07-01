@@ -29,11 +29,10 @@ final class WPFixPilot_REST_Controller
     {
         return [
             new WPFixPilot_ACF_Blueprint_Adapter(),
-            // TODO: Add other adapters as they are implemented
-            // new WPFixPilot_Elementor_Blueprint_Adapter(),
-            // new WPFixPilot_WPBakery_Blueprint_Adapter(),
-            // new WPFixPilot_Bricks_Blueprint_Adapter(),
-            // new WPFixPilot_Gutenberg_Blueprint_Adapter(),
+            new WPFixPilot_Elementor_Adapter(),
+            new WPFixPilot_WPBakery_Adapter(),
+            new WPFixPilot_Bricks_Adapter(),
+            new WPFixPilot_Gutenberg_Adapter(),
         ];
     }
 
