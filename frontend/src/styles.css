@@ -2220,6 +2220,23 @@ h2 {
   white-space: nowrap;
 }
 
+.opportunity-create-action {
+  align-self: center;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  max-width: 280px;
+}
+
+.opportunity-create-error {
+  color: #a43b2b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0;
+  text-align: right;
+}
+
 .field-help {
   color: var(--muted);
   font-size: 12px;
@@ -2499,6 +2516,15 @@ h2 {
 
   .opportunity-card > .icon-button {
     display: none;
+  }
+
+  .opportunity-create-action {
+    grid-column: 2;
+    justify-items: start;
+  }
+
+  .opportunity-create-error {
+    text-align: left;
   }
 
   .publishing-review {

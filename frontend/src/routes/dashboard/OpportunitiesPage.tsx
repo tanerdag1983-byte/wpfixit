@@ -30,6 +30,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   const [creatingProposalId, setCreatingProposalId] = useState<string | null>(
     null,
   );
+  const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
 
   const loadItems = useCallback(async () => {
@@ -85,7 +86,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
 
   async function createPageProposal(item: KeywordOpportunity) {
     setCreatingProposalId(item.id);
-    setMessage("AI-paginavoorstel wordt voorbereid. Dit kan even duren.");
+    setProposalErrors((current) => ({ ...current, [item.id]: "" }));
     try {
       const response = await apiRequest<{ id: string }>(
         `/projects/${projectId}/keyword-opportunities/${item.id}/page-proposal`,
@@ -94,11 +95,12 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
       window.sessionStorage.setItem(`page-proposal-id:${projectId}`, response.id);
       window.location.hash = "page-proposal";
     } catch (error) {
-      setMessage(
-        error instanceof Error
+      setProposalErrors((current) => ({
+        ...current,
+        [item.id]: error instanceof Error
           ? error.message
           : "Paginavoorstel maken mislukt.",
-      );
+      }));
     } finally {
       setCreatingProposalId(null);
     }
@@ -162,16 +164,23 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
               )}
             </div>
             {item.target_classification === "new_page" ? (
-              <button
-                className="secondary-button opportunity-create-button"
-                disabled={creatingProposalId === item.id}
-                onClick={() => createPageProposal(item)}
-                type="button"
-              >
-                {creatingProposalId === item.id
-                  ? "Voorstel maken..."
-                  : "Pagina laten maken"}
-              </button>
+              <div className="opportunity-create-action">
+                <button
+                  className="secondary-button opportunity-create-button"
+                  disabled={creatingProposalId === item.id}
+                  onClick={() => createPageProposal(item)}
+                  type="button"
+                >
+                  {creatingProposalId === item.id
+                    ? "Voorstel maken..."
+                    : "Pagina laten maken"}
+                </button>
+                {proposalErrors[item.id] && (
+                  <p className="opportunity-create-error" role="alert">
+                    {proposalErrors[item.id]}
+                  </p>
+                )}
+              </div>
             ) : item.target_url ? (
               <a
                 className="icon-button"
