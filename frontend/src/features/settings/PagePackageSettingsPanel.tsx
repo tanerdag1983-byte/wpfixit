@@ -30,9 +30,13 @@ const semanticSlots = [
   ["introduction", "Introductie"],
   ["main_content", "Hoofdinhoud"],
   ["faq", "FAQ"],
-  ["cta_title", "CTA-titel"],
-  ["cta_text", "CTA-tekst"],
+  ["cta_title", "CTA-titel (optioneel)"],
+  ["cta_text", "CTA-tekst (optioneel)"],
 ] as const;
+
+const requiredSemanticSlots = semanticSlots.filter(
+  ([key]) => key !== "cta_title" && key !== "cta_text",
+);
 
 export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
   const [builder, setBuilder] = useState("gutenberg");
@@ -145,19 +149,20 @@ export function PagePackageSettingsPanel({ projectId }: { projectId: string }) {
     }
   }
 
-  const mappedRequiredPaths = semanticSlots
+  const mappedRequiredPaths = requiredSemanticSlots
     .map(([key]) => mapping[key])
     .filter(Boolean);
+  const mappedPaths = semanticSlots.map(([key]) => mapping[key]).filter(Boolean);
   const duplicatePaths = new Set(
-    mappedRequiredPaths.filter(
-      (path, index) => mappedRequiredPaths.indexOf(path) !== index,
+    mappedPaths.filter(
+      (path, index) => mappedPaths.indexOf(path) !== index,
     ),
   );
   const duplicatePathsAreSafe =
     duplicatePaths.size === 0 ||
     (builder === "acf" && [...duplicatePaths].every((path) => path.startsWith("acf-block:")));
   const completeMapping =
-    mappedRequiredPaths.length === semanticSlots.length && duplicatePathsAreSafe;
+    mappedRequiredPaths.length === requiredSemanticSlots.length && duplicatePathsAreSafe;
 
   return (
     <section>

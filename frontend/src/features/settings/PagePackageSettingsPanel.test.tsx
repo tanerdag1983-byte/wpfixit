@@ -107,7 +107,7 @@ describe("PagePackageSettingsPanel", () => {
     expect(screen.getByText("5 echte templateblokken gevonden.")).toBeVisible();
   });
 
-  it("allows multiple semantic fields to use the same ACF block", async () => {
+  it("allows global CTA content to remain unmapped", async () => {
     render(<PagePackageSettingsPanel projectId="project-1" />);
     fireEvent.change(await screen.findByLabelText("Page builder"), {
       target: { value: "acf" },
@@ -132,14 +132,10 @@ describe("PagePackageSettingsPanel", () => {
     fireEvent.change(screen.getByLabelText("FAQ"), {
       target: { value: "acf-block:field_page_blocks:2" },
     });
-    fireEvent.change(screen.getByLabelText("CTA-titel"), {
-      target: { value: "acf-block:field_page_blocks:3" },
-    });
-    fireEvent.change(screen.getByLabelText("CTA-tekst"), {
-      target: { value: "acf-block:field_page_blocks:3" },
-    });
 
     expect(screen.getByRole("button", { name: "Paginapakket valideren" })).toBeEnabled();
+    expect(screen.getByLabelText("CTA-titel (optioneel)")).toHaveValue("");
+    expect(screen.getByLabelText("CTA-tekst (optioneel)")).toHaveValue("");
   });
 
   it("keeps duplicate mappings disabled for non-ACF builders", async () => {
@@ -155,7 +151,14 @@ describe("PagePackageSettingsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Blokken ophalen" }));
     fireEvent.click(await screen.findByText("AI-inhoud aan templateblokken koppelen"));
 
-    for (const label of ["Hero-titel", "Introductie", "Hoofdinhoud", "FAQ", "CTA-titel", "CTA-tekst"]) {
+    for (const label of [
+      "Hero-titel",
+      "Introductie",
+      "Hoofdinhoud",
+      "FAQ",
+      "CTA-titel (optioneel)",
+      "CTA-tekst (optioneel)",
+    ]) {
       fireEvent.change(screen.getByLabelText(label), {
         target: { value: "acf-block:field_page_blocks:0" },
       });

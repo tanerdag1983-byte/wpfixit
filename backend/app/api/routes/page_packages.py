@@ -48,9 +48,12 @@ REQUIRED_SLOTS = {
     "introduction",
     "main_content",
     "faq",
+}
+OPTIONAL_SLOTS = {
     "cta_title",
     "cta_text",
 }
+MAPPABLE_SLOTS = REQUIRED_SLOTS | OPTIONAL_SLOTS
 
 
 @router.get("/page-package-settings")
@@ -168,7 +171,10 @@ def validate_page_package_settings(
     mapped_required = {
         slot for slot in REQUIRED_SLOTS if settings.slot_mapping.get(slot)
     }
-    mapped_path_values = [settings.slot_mapping[slot] for slot in mapped_required]
+    mapped_slots = {
+        slot for slot in MAPPABLE_SLOTS if settings.slot_mapping.get(slot)
+    }
+    mapped_path_values = [settings.slot_mapping[slot] for slot in mapped_slots]
     mapped_paths = set(mapped_path_values)
     duplicate_paths = {
         path for path in mapped_paths if mapped_path_values.count(path) > 1

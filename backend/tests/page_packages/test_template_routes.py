@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -184,7 +185,7 @@ def test_validation_rejects_duplicate_non_acf_mapping_paths(
     assert response.status_code == 409
 
 
-def test_validation_allows_multiple_semantic_slots_to_use_same_template_block(
+def test_validation_allows_optional_cta_slots_for_global_content(
     client: TestClient,
     session: Session,
     auth_as,
@@ -210,8 +211,6 @@ def test_validation_allows_multiple_semantic_slots_to_use_same_template_block(
         "introduction": "acf-block:field_page_blocks:0",
         "main_content": "acf:field_summary",
         "faq": "acf-block:field_page_blocks:2",
-        "cta_title": "acf-block:field_page_blocks:3",
-        "cta_text": "acf-block:field_page_blocks:3",
     }
     response = client.put(
         f"/projects/{projects.member_project.id}/page-package-settings",
@@ -248,11 +247,6 @@ def test_validation_allows_multiple_semantic_slots_to_use_same_template_block(
                         "label": "Paginablokken · FAQ",
                         "value_type": "html",
                     },
-                    {
-                        "path": "acf-block:field_page_blocks:3",
-                        "label": "Paginablokken · CTA",
-                        "value_type": "html",
-                    },
                 ],
             }
 
@@ -267,3 +261,53 @@ def test_validation_allows_multiple_semantic_slots_to_use_same_template_block(
 
     assert validated.status_code == 200
     assert validated.json()["validation_state"] == "valid"
+
+
+@pytest.mark.parametrize(
+    "cta_path",
+    ["element.missing.cta", REQUIRED_MAPPING["hero_title"]],
+)
+def test_validation_rejects_invalid_optional_cta_mapping(
+    cta_path: str,
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    _save_settings(client, session, projects)
+    mapping = {**REQUIRED_MAPPING, "cta_title": cta_path}
+    saved = client.put(
+        f"/projects/{projects.member_project.id}/page-package-settings",
+        json={
+            "builder": "elementor",
+            "template_wordpress_page_id": "template-page",
+            "seo_plugin": "yoast",
+            "slot_mapping": mapping,
+        },
+    )
+    assert saved.status_code == 200
+
+    class Bridge:
+        def template_slots(self, object_id: int, builder: str) -> dict:
+            return {
+                "builder": "elementor",
+                "seo_plugin": "yoast",
+                "template_hash": "live-template-hash",
+                "slots": [
+                    {"path": path, "label": slot, "value_type": "html"}
+                    for slot, path in REQUIRED_MAPPING.items()
+                ],
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda session, project_id: Bridge(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-package-settings/validate"
+    )
+
+    assert response.status_code == 409
