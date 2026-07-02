@@ -14,6 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.domains.page_blueprints import models as page_blueprint_models  # noqa: F401
 
 
 class ProjectPagePackageSettings(Base):
