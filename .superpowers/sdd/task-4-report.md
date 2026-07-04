@@ -107,6 +107,31 @@ PostgreSQL migration command exited 0 at head.
 Plugin PHP 8.2: all six suites and full PHP lint passed.
 ```
 
+## Fifth Review Adjudication
+
+The fifth review found that cleanup trusted the returned WordPress blueprint ID before
+proving that it represented a newly created clone. This was accepted and fixed:
+
+- `created` must be exactly `true` and the WordPress ID must be a positive integer.
+- The project registry must not already contain that WordPress ID.
+- Cleanup is armed only after both checks pass; malformed, reused, or non-created IDs
+  are rejected without any remote delete call.
+- The same guard protects initial capture and successor creation.
+
+The requested PostgreSQL concurrency race test is assigned to the final migration and
+end-to-end task. Task 4 already takes the required row lock; the release test must prove
+that lock blocks concurrent proposal and successor insertion.
+
+Verification after the trusted-capture fix:
+
+```text
+Blueprint tests: 49 passed in 1.22s
+Full backend: 198 passed in 6.53s
+Ruff: clean
+Alembic PostgreSQL upgrade: clean
+Plugin PHP 8.2: all six suites and full PHP lint passed
+```
+
 ## Second Review Adjudication
 
 The second review confirmed the six original findings were fixed, but rejected making

@@ -37,6 +37,7 @@ def valid_schema(*, role: str = "hero") -> dict:
 
 def captured_blueprint(*, wordpress_id: int = 901, version: int = 1) -> dict:
     return {
+        "created": True,
         "wordpress_blueprint_id": wordpress_id,
         "source_page_id": 19,
         "builder": "acf",
@@ -323,6 +324,57 @@ def test_invalid_capture_is_removed_and_not_persisted(
     assert response.status_code == 502
     assert bridge.deleted == [901]
     assert session.scalar(select(PageBlueprint)) is None
+
+
+@pytest.mark.parametrize(
+    "capture_override",
+    [
+        {"wordpress_blueprint_id": 0},
+        {"wordpress_blueprint_id": "not-an-id"},
+        {"created": False},
+    ],
+)
+def test_untrusted_capture_identity_is_never_deleted(
+    client, auth_as, projects, monkeypatch, capture_override
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    bridge.captures[0].update(capture_override)
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints",
+        json={
+            "name": "Onbetrouwbaar",
+            "page_type": "service",
+            "source_wordpress_page_id": "source-page",
+        },
+    )
+
+    assert response.status_code == 502
+    assert bridge.deleted == []
+
+
+def test_duplicate_capture_identity_does_not_delete_existing_clone(
+    client, auth_as, projects, monkeypatch
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    create_blueprint(client, projects.member_project.id)
+    bridge.captures[0]["wordpress_blueprint_id"] = 901
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints",
+        json={
+            "name": "Dubbel",
+            "page_type": "brand",
+            "source_wordpress_page_id": "source-page",
+        },
+    )
+
+    assert response.status_code == 409
+    assert bridge.deleted == []
 
 
 def test_delete_rejects_blueprint_used_by_proposal_before_wordpress_call(

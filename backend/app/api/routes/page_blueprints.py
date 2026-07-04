@@ -159,6 +159,36 @@ def _delete_remote_blueprint(bridge: WordPressClient, wordpress_id: int) -> None
             raise
 
 
+def _new_capture_wordpress_id(
+    session: Session,
+    project_id: str,
+    captured: dict,
+) -> int:
+    wordpress_id = captured.get("wordpress_blueprint_id")
+    if (
+        captured.get("created") is not True
+        or isinstance(wordpress_id, bool)
+        or not isinstance(wordpress_id, int)
+        or wordpress_id < 1
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="WordPress returned an untrusted blueprint identity",
+        )
+    existing = session.scalar(
+        select(PageBlueprint.id).where(
+            PageBlueprint.project_id == project_id,
+            PageBlueprint.wordpress_blueprint_id == wordpress_id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="WordPress blueprint identity is already registered",
+        )
+    return wordpress_id
+
+
 def _payload(blueprint: PageBlueprint) -> dict:
     return {
         "id": blueprint.id,
@@ -218,7 +248,10 @@ def create_blueprint(
             "version": 1,
         }
     )
+    cleanup_wordpress_id: int | None = None
     try:
+        wordpress_id = _new_capture_wordpress_id(session, project_id, captured)
+        cleanup_wordpress_id = wordpress_id
         schema, state = _validated_capture(
             captured,
             source_page_id=source.wordpress_object_id,
@@ -231,7 +264,7 @@ def create_blueprint(
             name=payload.name,
             page_type=payload.page_type,
             source_wordpress_page_id=source.id,
-            wordpress_blueprint_id=int(captured["wordpress_blueprint_id"]),
+            wordpress_blueprint_id=wordpress_id,
             builder=str(captured["builder"]),
             seo_plugin=str(captured.get("seo_plugin") or "none"),
             version=1,
@@ -245,9 +278,8 @@ def create_blueprint(
         session.refresh(blueprint)
     except Exception:
         session.rollback()
-        wordpress_id = captured.get("wordpress_blueprint_id")
-        if wordpress_id is not None:
-            _delete_remote_blueprint(bridge, int(wordpress_id))
+        if cleanup_wordpress_id is not None:
+            _delete_remote_blueprint(bridge, cleanup_wordpress_id)
         raise
     return _payload(blueprint)
 
@@ -408,7 +440,10 @@ def version_blueprint(
             "version": next_version,
         }
     )
+    cleanup_wordpress_id: int | None = None
     try:
+        wordpress_id = _new_capture_wordpress_id(session, project_id, captured)
+        cleanup_wordpress_id = wordpress_id
         schema, state = _validated_capture(
             captured,
             source_page_id=source.wordpress_object_id,
@@ -419,7 +454,7 @@ def version_blueprint(
         replacement = create_blueprint_version(
             session,
             original,
-            wordpress_blueprint_id=int(captured["wordpress_blueprint_id"]),
+            wordpress_blueprint_id=wordpress_id,
             structure_hash=str(captured["structure_hash"]),
             content_schema=schema.model_dump(mode="python"),
             state=state,
@@ -431,9 +466,8 @@ def version_blueprint(
         session.refresh(replacement)
     except Exception:
         session.rollback()
-        wordpress_id = captured.get("wordpress_blueprint_id")
-        if wordpress_id is not None:
-            _delete_remote_blueprint(bridge, int(wordpress_id))
+        if cleanup_wordpress_id is not None:
+            _delete_remote_blueprint(bridge, cleanup_wordpress_id)
         raise
     return _payload(replacement)
 
