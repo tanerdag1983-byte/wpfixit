@@ -1,6 +1,6 @@
 # WP FixPilot Handoff
 
-Updated: 2026-06-30
+Updated: 2026-07-05
 
 ## Resume Here
 
@@ -14,8 +14,8 @@ Read these first:
 
 1. `AGENTS.md`
 2. `.superpowers/sdd/progress.md`
-3. `.superpowers/sdd/task-2-brief.md`
-4. `.superpowers/sdd/task-2-report.md`
+3. `.superpowers/sdd/task-5-brief.md`
+4. `.superpowers/sdd/task-4-report.md`
 5. `docs/superpowers/specs/2026-06-27-managed-page-blueprints-design.md`
 6. `docs/superpowers/plans/2026-06-28-managed-page-blueprints.md`
 7. `docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`
@@ -65,18 +65,15 @@ Commits: `87fd133..d5e8279`
 
 ## Remaining Managed-Blueprint Tasks
 
-1. Task 3: implement and register ACF, Elementor, WPBakery, Bricks, and Gutenberg
-   adapters with shared contract fixtures.
-3. Task 4: backend manager-only blueprint CRUD/validate/default/version/delete API.
-4. Task 5: project blueprint management UI and semantic block outline.
-5. Task 6: schema-bound AI generation using the selected project blueprint.
-6. Task 7: approved, idempotent WordPress draft creation and publication review flow.
-7. Task 8: legacy page-package migration plus integration and end-to-end tests.
-8. Task 9: release, GitHub push, Render/Vercel deployment, plugin package, and live smoke
+1. Task 5: project blueprint management UI and semantic block outline.
+2. Task 6: schema-bound AI generation using the selected project blueprint.
+3. Task 7: approved, idempotent WordPress draft creation and publication review flow.
+4. Task 8: complete blueprint review in the frontend.
+5. Task 9: migration, integration/E2E coverage, release, GitHub push, Render/Vercel deployment, plugin package, and live smoke
    tests.
-9. Roadmap Task 10: Project Brand DNA, using
+6. Roadmap Task 10: Project Brand DNA, using
    `docs/superpowers/plans/2026-06-30-project-brand-dna.md`.
-10. Roadmap Tasks 11 onward: Link Intelligence, Content Studio and SEO scoring, Image
+7. Roadmap Tasks 11 onward: Link Intelligence, Content Studio and SEO scoring, Image
     Studio, Content Calendar, and the GSC/GA4/PageSpeed Impact Timeline. Each receives a
     separate spec and implementation plan after Task 10.
 
