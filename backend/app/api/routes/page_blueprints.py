@@ -67,14 +67,19 @@ def _manager_project(session: Session, user: CurrentUser, project_id: str):
 
 
 def _blueprint_or_404(
-    session: Session, project_id: str, blueprint_id: str
+    session: Session,
+    project_id: str,
+    blueprint_id: str,
+    *,
+    for_update: bool = False,
 ) -> PageBlueprint:
-    blueprint = session.scalar(
-        select(PageBlueprint).where(
-            PageBlueprint.id == blueprint_id,
-            PageBlueprint.project_id == project_id,
-        )
+    statement = select(PageBlueprint).where(
+        PageBlueprint.id == blueprint_id,
+        PageBlueprint.project_id == project_id,
     )
+    if for_update:
+        statement = statement.with_for_update()
+    blueprint = session.scalar(statement)
     if blueprint is None:
         raise HTTPException(status_code=404, detail="Blueprint not found")
     return blueprint
@@ -279,6 +284,8 @@ def update_blueprint(
                 status_code=409,
                 detail="Change the default before changing page type",
             )
+        if payload.page_type != blueprint.page_type:
+            blueprint.state = "stale"
         blueprint.page_type = payload.page_type
     if payload.semantic_roles is not None:
         schema = BlueprintSchema.model_validate(blueprint.content_schema)
@@ -327,6 +334,7 @@ def validate_blueprint(
         "source_page_id": source.wordpress_object_id if source is not None else None,
         "builder": blueprint.builder,
         "seo_plugin": blueprint.seo_plugin,
+        "page_type": blueprint.page_type,
         "version": blueprint.version,
     }
     stored_schema = BlueprintSchema.model_validate(blueprint.content_schema)
@@ -356,7 +364,12 @@ def default_blueprint(
     user: UserDependency,
 ) -> dict:
     _manager_project(session, user, project_id)
-    blueprint = _blueprint_or_404(session, project_id, blueprint_id)
+    blueprint = _blueprint_or_404(
+        session,
+        project_id,
+        blueprint_id,
+        for_update=True,
+    )
     try:
         set_default_blueprint(session, blueprint)
     except ValueError as error:
@@ -435,7 +448,12 @@ def delete_blueprint_route(
     user: UserDependency,
 ) -> Response:
     _manager_project(session, user, project_id)
-    blueprint = _blueprint_or_404(session, project_id, blueprint_id)
+    blueprint = _blueprint_or_404(
+        session,
+        project_id,
+        blueprint_id,
+        for_update=True,
+    )
     proposal = session.scalar(
         select(PagePackageProposal.id).where(
             PagePackageProposal.project_id == project_id,

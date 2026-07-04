@@ -78,6 +78,35 @@ builder. This was accepted and fixed:
 
 All six PHP 8.2 plugin suites and PHP lint passed after these changes.
 
+## Fourth Review Adjudication
+
+The fourth review found two remaining lifecycle gaps, both accepted:
+
+- A backend page-type edit now marks the current blueprint `stale`. Live validation
+  compares the captured WordPress page type, and a fresh successor capture is required
+  before the changed type can become ready.
+- Delete now acquires a `SELECT ... FOR UPDATE` lock on the blueprint registry row
+  before checking proposal and successor foreign-key dependencies. PostgreSQL therefore
+  prevents a new referencing row from racing the remote WordPress deletion.
+
+Final regression verification for this round:
+
+```text
+cd backend && .venv/bin/ruff check app tests alembic
+All checks passed!
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib tests/page_blueprints -q
+45 passed in 1.24s
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib -q
+194 passed in 6.32s
+
+cd backend && .venv/bin/alembic upgrade head
+PostgreSQL migration command exited 0 at head.
+
+Plugin PHP 8.2: all six suites and full PHP lint passed.
+```
+
 ## Second Review Adjudication
 
 The second review confirmed the six original findings were fixed, but rejected making
