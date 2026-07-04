@@ -81,7 +81,6 @@ def create_blueprint(client: TestClient, project_id: str) -> dict:
             "name": "Dienstpagina",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
-            "builder": "acf",
         },
     )
     assert response.status_code == 201, response.text
@@ -104,7 +103,6 @@ def test_manager_captures_lists_defaults_and_versions_blueprint(
             "source_page_id": 19,
             "name": "Dienstpagina",
             "page_type": "service",
-            "builder": "acf",
             "version": 1,
         }
     ]
@@ -130,7 +128,6 @@ def test_manager_captures_lists_defaults_and_versions_blueprint(
         "source_page_id": 19,
         "name": "Dienstpagina",
         "page_type": "service",
-        "builder": "acf",
         "version": 2,
     }
 
@@ -148,7 +145,6 @@ def test_routes_require_manager_and_project_membership(
             "name": "Dienstpagina",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
-            "builder": "acf",
         },
     )
     assert denied.status_code == 403
@@ -287,7 +283,6 @@ def test_invalid_capture_is_removed_and_not_persisted(
             "name": "Ongeldig",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
-            "builder": "acf",
         },
     )
 

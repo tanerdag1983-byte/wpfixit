@@ -27,8 +27,8 @@ UserDependency = Annotated[CurrentUser, Depends(get_current_user)]
 SemanticRole = Literal[
     "hero", "introduction", "benefits", "process", "faq", "cta", "content"
 ]
-Builder = Literal["acf", "elementor", "wpbakery", "bricks", "gutenberg"]
 PageType = Literal["service", "brand", "location", "blog", "generic"]
+SUPPORTED_BUILDERS = {"acf", "elementor", "wpbakery", "bricks", "gutenberg"}
 
 
 class BlueprintCreate(BaseModel):
@@ -37,7 +37,6 @@ class BlueprintCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     page_type: PageType
     source_wordpress_page_id: str = Field(min_length=1, max_length=64)
-    builder: Builder
 
 
 class BlueprintUpdate(BaseModel):
@@ -97,9 +96,9 @@ def _validated_capture(
     data: dict,
     *,
     source_page_id: int,
-    builder: str,
     page_type: str,
     version: int,
+    expected_builder: str | None = None,
 ) -> tuple[BlueprintSchema, str]:
     try:
         schema = BlueprintSchema.model_validate(data.get("content_schema"))
@@ -114,7 +113,6 @@ def _validated_capture(
         )
     expected = {
         "source_page_id": source_page_id,
-        "builder": builder,
         "page_type": page_type,
         "version": version,
     }
@@ -122,6 +120,13 @@ def _validated_capture(
         raise HTTPException(
             status_code=502,
             detail="WordPress returned a mismatched blueprint identity",
+        )
+    captured_builder = str(data.get("builder") or "")
+    if captured_builder not in SUPPORTED_BUILDERS or (
+        expected_builder is not None and captured_builder != expected_builder
+    ):
+        raise HTTPException(
+            status_code=502, detail="WordPress returned an invalid blueprint builder"
         )
     if not str(data.get("structure_hash") or ""):
         raise HTTPException(
@@ -205,7 +210,6 @@ def create_blueprint(
             "source_page_id": source.wordpress_object_id,
             "name": payload.name,
             "page_type": payload.page_type,
-            "builder": payload.builder,
             "version": 1,
         }
     )
@@ -213,7 +217,6 @@ def create_blueprint(
         schema, state = _validated_capture(
             captured,
             source_page_id=source.wordpress_object_id,
-            builder=payload.builder,
             page_type=payload.page_type,
             version=1,
         )
@@ -389,7 +392,6 @@ def version_blueprint(
             "source_page_id": source.wordpress_object_id,
             "name": original.name,
             "page_type": original.page_type,
-            "builder": original.builder,
             "version": next_version,
         }
     )
@@ -397,9 +399,9 @@ def version_blueprint(
         schema, state = _validated_capture(
             captured,
             source_page_id=source.wordpress_object_id,
-            builder=original.builder,
             page_type=original.page_type,
             version=next_version,
+            expected_builder=original.builder,
         )
         replacement = create_blueprint_version(
             session,

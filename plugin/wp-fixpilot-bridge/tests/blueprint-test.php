@@ -643,6 +643,22 @@ $controller = new WPFixPilot_Blueprint_Controller([
     new Test_Blueprint_Adapter([19, 20, 22]),
 ]);
 
+$ambiguousController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([19]),
+    new Test_Blueprint_Adapter([19]),
+]);
+$ambiguousBlueprintId = $GLOBALS['wpfixpilot_next_post_id'];
+$ambiguousCapture = $ambiguousController->capture([
+    'source_page_id' => 19,
+    'name' => 'Ambigue dienstpagina',
+    'page_type' => 'service',
+    'version' => 1,
+]);
+assert(is_wp_error($ambiguousCapture));
+assert($ambiguousCapture->code === 'wp_fixpilot_blueprint_builder_ambiguous');
+assert(($ambiguousCapture->data['status'] ?? null) === 409);
+assert(get_post($ambiguousBlueprintId) === null);
+
 $invalidSourcePageIdCases = [
     ['label' => 'mixed source page id', 'value' => '19abc'],
     ['label' => 'zero source page id', 'value' => 0],
@@ -659,7 +675,6 @@ foreach ($invalidSourcePageIdCases as $invalidSourcePageIdCase) {
         'source_page_id' => $invalidSourcePageIdCase['value'],
         'name' => 'Dienstpagina',
         'page_type' => 'service',
-        'builder' => 'acf',
         'version' => 1,
     ]);
     assert(is_wp_error($invalidSourceId), $invalidSourcePageIdCase['label']);
@@ -676,7 +691,6 @@ $missingSource = $missingSourceController->capture([
     'source_page_id' => 999,
     'name' => 'Ontbrekende bronpagina',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($missingSource));
@@ -692,7 +706,6 @@ $wrongTypeSource = $wrongTypeSourceController->capture([
     'source_page_id' => 23,
     'name' => 'Verkeerde bronpagina',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($wrongTypeSource));
@@ -708,7 +721,6 @@ $invalidCaptureCases = [
             'source_page_id' => 19,
             'name' => '   ',
             'page_type' => 'service',
-            'builder' => 'acf',
             'version' => 1,
         ],
     ],
@@ -718,7 +730,6 @@ $invalidCaptureCases = [
             'source_page_id' => 19,
             'name' => 'Dienstpagina',
             'page_type' => 'landing page',
-            'builder' => 'acf',
             'version' => 1,
         ],
     ],
@@ -728,18 +739,7 @@ $invalidCaptureCases = [
             'source_page_id' => 19,
             'name' => 'Dienstpagina',
             'page_type' => 'service',
-            'builder' => 'acf',
             'version' => 0,
-        ],
-    ],
-    [
-        'label' => 'empty builder after sanitize',
-        'payload' => [
-            'source_page_id' => 19,
-            'name' => 'Dienstpagina',
-            'page_type' => 'service',
-            'builder' => '   ',
-            'version' => 1,
         ],
     ],
 ];
@@ -760,7 +760,6 @@ $strictCapture = $strictCaptureController->capture([
     'source_page_id' => 19,
     'name' => 'Dienstpagina',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
     'unexpected' => 'value',
 ]);
@@ -774,7 +773,6 @@ $captured = $controller->capture([
     'source_page_id' => '19',
     'name' => 'Dienstpagina',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 
@@ -1484,7 +1482,6 @@ $secondBlueprint = $controller->capture([
     'source_page_id' => 22,
     'name' => 'Tweede dienstpagina',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($secondBlueprint));
@@ -1546,7 +1543,6 @@ $noneSeoCapture = $noneSeoController->capture([
     'source_page_id' => 21,
     'name' => 'No SEO plugin blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($noneSeoCapture));
@@ -1566,7 +1562,6 @@ $capturedSeoBlueprint = $capturedSeoController->capture([
     'source_page_id' => 22,
     'name' => 'Captured SEO plugin blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($capturedSeoBlueprint));
@@ -1700,7 +1695,6 @@ foreach ($invalidSchemaCases as $invalidSchemaCase) {
         'source_page_id' => 20,
         'name' => 'Invalid schema blueprint ' . $invalidSchemaCase['label'],
         'page_type' => 'service',
-        'builder' => 'acf',
         'version' => 1,
     ]);
     assert(is_wp_error($invalidSchemaCapture), $invalidSchemaCase['label']);
@@ -1717,7 +1711,6 @@ $schemaFailure = $schemaFailureController->capture([
     'source_page_id' => 20,
     'name' => 'Schema failure blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($schemaFailure));
@@ -1731,7 +1724,6 @@ $replacementFailureCapture = $replacementFailureController->capture([
     'source_page_id' => 21,
     'name' => 'Replacement failure blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($replacementFailureCapture));
@@ -1761,7 +1753,6 @@ $seoFailureCapture = $seoFailureController->capture([
     'source_page_id' => 22,
     'name' => 'SEO failure blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($seoFailureCapture));
@@ -1824,7 +1815,6 @@ $restCapturePayload = [
     'source_page_id' => 20,
     'name' => 'REST blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restCaptureBody = wp_json_encode($restCapturePayload);
@@ -1861,7 +1851,6 @@ $restInvalidNamePayload = [
     'source_page_id' => 20,
     'name' => '   ',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restInvalidNameBody = wp_json_encode($restInvalidNamePayload);
@@ -1892,7 +1881,6 @@ $restInvalidPageTypePayload = [
     'source_page_id' => 20,
     'name' => 'REST blueprint',
     'page_type' => 'landing page',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restInvalidPageTypeBody = wp_json_encode($restInvalidPageTypePayload);
@@ -1923,7 +1911,6 @@ $restInvalidSourcePageIdPayload = [
     'source_page_id' => '20abc',
     'name' => 'REST blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restInvalidSourcePageIdBody = wp_json_encode($restInvalidSourcePageIdPayload);
@@ -1954,7 +1941,6 @@ $restMissingSourcePayload = [
     'source_page_id' => 999,
     'name' => 'REST missing source blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restMissingSourceBody = wp_json_encode($restMissingSourcePayload);
@@ -1985,7 +1971,6 @@ $restDraftCapturePayload = [
     'source_page_id' => 22,
     'name' => 'REST draft blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restDraftCaptureBody = wp_json_encode($restDraftCapturePayload);
@@ -2138,7 +2123,6 @@ $restNoSeoPayload = [
     'source_page_id' => 21,
     'name' => 'REST no SEO blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ];
 $restNoSeoBody = wp_json_encode($restNoSeoPayload);
@@ -2231,7 +2215,6 @@ $optionalFieldCapture = $optionalFieldController->capture([
     'source_page_id' => 21,
     'name' => 'Optioneel veld blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($optionalFieldCapture));
@@ -2269,7 +2252,6 @@ $captureMetaWriteFailure = $captureMetaWriteFailureController->capture([
     'source_page_id' => 20,
     'name' => 'Capture meta false return blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($captureMetaWriteFailure));
@@ -2404,7 +2386,6 @@ $captureCleanupFailure = $captureCleanupFailureController->capture([
     'source_page_id' => 20,
     'name' => 'Capture cleanup failure blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(is_wp_error($captureCleanupFailure));
@@ -2422,7 +2403,6 @@ $deleteCapture = $deleteController->capture([
     'source_page_id' => 22,
     'name' => 'Delete endpoint blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($deleteCapture));
@@ -2436,7 +2416,6 @@ $deleteFailureCapture = $deleteController->capture([
     'source_page_id' => 22,
     'name' => 'Delete endpoint cleanup failure blueprint',
     'page_type' => 'service',
-    'builder' => 'acf',
     'version' => 1,
 ]);
 assert(!is_wp_error($deleteFailureCapture));
@@ -2473,7 +2452,6 @@ foreach ($duplicateCaptureCases as $duplicateCaptureCase) {
         'source_page_id' => 20,
         'name' => 'Duplicate capture blueprint ' . $duplicateCaptureCase['label'],
         'page_type' => 'service',
-        'builder' => 'acf',
         'version' => 1,
     ]);
     assert(is_wp_error($duplicateCapture), $duplicateCaptureCase['label']);
@@ -2505,7 +2483,6 @@ foreach ($duplicateSnapshotCases as $duplicateSnapshotCase) {
         'source_page_id' => 20,
         'name' => 'Duplicate snapshot blueprint ' . $duplicateSnapshotCase['label'],
         'page_type' => 'service',
-        'builder' => 'acf',
         'version' => 1,
     ]);
     assert(!is_wp_error($duplicateSnapshotCapture), $duplicateSnapshotCase['label']);

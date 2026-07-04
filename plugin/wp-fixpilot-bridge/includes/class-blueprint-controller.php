@@ -57,7 +57,7 @@ final class WPFixPilot_Blueprint_Controller
     /** @return array<string, mixed>|WP_Error */
     public function capture(array $payload): array|WP_Error
     {
-        $required = ['source_page_id', 'name', 'page_type', 'builder', 'version'];
+        $required = ['source_page_id', 'name', 'page_type', 'version'];
         if (!$this->has_exact_keys($payload, $required)) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_invalid',
@@ -110,30 +110,14 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
-        $builder = sanitize_key((string) $payload['builder']);
-        if ($builder === '') {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_invalid',
-                'De blueprint-aanvraag is niet compleet.',
-                ['status' => 400]
-            );
-        }
-
         $source = $this->source_page($sourceId);
         if (is_wp_error($source)) {
             return $source;
         }
 
-        $adapter = $this->adapter($builder);
+        $adapter = $this->detect_adapter($sourceId);
         if (is_wp_error($adapter)) {
             return $adapter;
-        }
-        if (!$adapter->uses_page($sourceId)) {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_builder_mismatch',
-                'De gekozen builder hoort niet bij deze pagina.',
-                ['status' => 409]
-            );
         }
 
         $capturedSeoPlugin = $this->detected_seo_plugin_snapshot();
@@ -508,6 +492,34 @@ final class WPFixPilot_Blueprint_Controller
             'De gekozen builder wordt nog niet ondersteund.',
             ['status' => 400]
         );
+    }
+
+    private function detect_adapter(int $sourceId): WPFixPilot_Blueprint_Adapter|WP_Error
+    {
+        $matches = [];
+        foreach ($this->adapters() as $adapter) {
+            if (!$adapter->is_active() || !$adapter->uses_page($sourceId)) {
+                continue;
+            }
+            $matches[] = $adapter;
+        }
+
+        if ($matches === []) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_builder_unsupported',
+                'Geen ondersteunde actieve builder gevonden voor deze pagina.',
+                ['status' => 400]
+            );
+        }
+        if (count($matches) !== 1) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_builder_ambiguous',
+                'Meerdere builders gevonden voor deze pagina.',
+                ['status' => 409]
+            );
+        }
+
+        return $matches[0];
     }
 
     private function source_page_id(mixed $sourcePageId): int|WP_Error

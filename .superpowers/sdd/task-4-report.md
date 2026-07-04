@@ -62,6 +62,35 @@ cd backend && .venv/bin/alembic upgrade head
 PostgreSQL migration command exited 0 at head.
 ```
 
+## Second Review Adjudication
+
+The second review confirmed the six original findings were fixed, but rejected making
+`builder` a client-controlled create field. This was accepted. The WordPress bridge now
+detects exactly one active adapter from the selected reference page. Zero matches return
+an unsupported-builder error and multiple matches return an ambiguity error before any
+clone is created. The backend sends only the approved name, page type, reference page,
+and version capture data, then validates the detected builder from WordPress against a
+strict allowlist. A successor version must retain the original detected builder.
+
+Final verification after the contract correction:
+
+```text
+Plugin PHP 8.2: blueprint, ACF adapter, shared adapter, auth, change controller,
+and page-package suites all passed; all PHP files lint clean.
+
+cd backend && .venv/bin/ruff check app tests alembic
+All checks passed!
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib tests/page_blueprints -q
+43 passed in 0.87s
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib -q
+192 passed in 5.78s
+
+cd backend && .venv/bin/alembic upgrade head
+PostgreSQL migration command exited 0 at head.
+```
+
 ## Review Focus
 
 - Transaction boundaries around WordPress clone cleanup.
