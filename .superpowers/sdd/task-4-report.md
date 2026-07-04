@@ -62,6 +62,22 @@ cd backend && .venv/bin/alembic upgrade head
 PostgreSQL migration command exited 0 at head.
 ```
 
+## Third Review Adjudication
+
+The third review found that WordPress may parse classic/WPBakery content as a nameless
+Gutenberg freeform block, and that auxiliary ACF fields can coexist with a primary page
+builder. This was accepted and fixed:
+
+- Gutenberg detection now requires at least one real named Gutenberg block, including
+  nested blocks; classic/freeform content no longer counts.
+- Elementor, Bricks, and WPBakery are treated as primary builder structures; one primary
+  match takes precedence over auxiliary ACF or Gutenberg content.
+- ACF takes precedence over Gutenberg when no primary builder matches.
+- Multiple matches at the same highest priority remain an explicit ambiguity conflict.
+- Contract tests cover WPBakery versus Gutenberg and Elementor with auxiliary ACF.
+
+All six PHP 8.2 plugin suites and PHP lint passed after these changes.
+
 ## Second Review Adjudication
 
 The second review confirmed the six original findings were fixed, but rejected making

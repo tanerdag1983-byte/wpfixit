@@ -511,6 +511,18 @@ final class WPFixPilot_Blueprint_Controller
                 ['status' => 400]
             );
         }
+        $highestPriority = max(array_map(
+            fn (WPFixPilot_Blueprint_Adapter $adapter): int => $this->adapter_priority(
+                $adapter->key()
+            ),
+            $matches
+        ));
+        $matches = array_values(array_filter(
+            $matches,
+            fn (WPFixPilot_Blueprint_Adapter $adapter): bool => $this->adapter_priority(
+                $adapter->key()
+            ) === $highestPriority
+        ));
         if (count($matches) !== 1) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_builder_ambiguous',
@@ -520,6 +532,16 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         return $matches[0];
+    }
+
+    private function adapter_priority(string $builder): int
+    {
+        return match ($builder) {
+            'elementor', 'bricks', 'wpbakery' => 30,
+            'acf' => 20,
+            'gutenberg' => 10,
+            default => 0,
+        };
     }
 
     private function source_page_id(mixed $sourcePageId): int|WP_Error

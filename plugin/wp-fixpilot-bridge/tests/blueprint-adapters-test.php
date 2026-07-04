@@ -233,6 +233,16 @@ function parse_blocks(string $content): array
         return $decoded;
     }
 
+    if ($content !== '') {
+        return [[
+            'blockName' => null,
+            'attrs' => [],
+            'innerBlocks' => [],
+            'innerHTML' => $content,
+            'innerContent' => [$content],
+        ]];
+    }
+
     return [];
 }
 
@@ -726,6 +736,11 @@ $adapters = [
     'bricks' => new WPFixPilot_Bricks_Adapter(),
     'gutenberg' => new WPFixPilot_Gutenberg_Adapter(),
 ];
+
+assert(
+    $adapters['gutenberg']->uses_page(203) === false,
+    'WPBakery shortcode content is not a Gutenberg page'
+);
 
 $fixtures = [
     'acf' => [

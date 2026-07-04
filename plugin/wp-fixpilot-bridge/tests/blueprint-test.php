@@ -425,6 +425,22 @@ class Test_Blueprint_Adapter implements WPFixPilot_Blueprint_Adapter
     }
 }
 
+final class Keyed_Test_Blueprint_Adapter extends Test_Blueprint_Adapter
+{
+    /** @param array<int, int> $sourcePageIds */
+    public function __construct(
+        private string $adapterKey,
+        array $sourcePageIds = [19]
+    ) {
+        parent::__construct($sourcePageIds);
+    }
+
+    public function key(): string
+    {
+        return $this->adapterKey;
+    }
+}
+
 final class Schema_Failing_Blueprint_Adapter extends Test_Blueprint_Adapter
 {
     public function schema(int $postId): array|WP_Error
@@ -642,6 +658,22 @@ $GLOBALS['wpfixpilot_next_post_id'] = 200;
 $controller = new WPFixPilot_Blueprint_Controller([
     new Test_Blueprint_Adapter([19, 20, 22]),
 ]);
+
+$primaryBuilderController = new WPFixPilot_Blueprint_Controller([
+    new Keyed_Test_Blueprint_Adapter('acf', [19]),
+    new Keyed_Test_Blueprint_Adapter('elementor', [19]),
+]);
+$primaryBuilderCapture = $primaryBuilderController->capture([
+    'source_page_id' => 19,
+    'name' => 'Elementor met ACF',
+    'page_type' => 'service',
+    'version' => 1,
+]);
+assert(!is_wp_error($primaryBuilderCapture));
+assert($primaryBuilderCapture['builder'] === 'elementor');
+$primaryBuilderId = (int) $primaryBuilderCapture['wordpress_blueprint_id'];
+wp_delete_post($primaryBuilderId, true);
+$GLOBALS['wpfixpilot_next_post_id'] = $primaryBuilderId;
 
 $ambiguousController = new WPFixPilot_Blueprint_Controller([
     new Test_Blueprint_Adapter([19]),

@@ -25,7 +25,26 @@ final class WPFixPilot_Gutenberg_Adapter implements
 
         $blocks = parse_blocks((string) $post->post_content);
 
-        return is_array($blocks) && $blocks !== [];
+        return is_array($blocks) && $this->has_named_block($blocks);
+    }
+
+    /** @param array<int, mixed> $blocks */
+    private function has_named_block(array $blocks): bool
+    {
+        foreach ($blocks as $block) {
+            if (!is_array($block)) {
+                continue;
+            }
+            if (is_string($block['blockName'] ?? null) && $block['blockName'] !== '') {
+                return true;
+            }
+            $innerBlocks = $block['innerBlocks'] ?? [];
+            if (is_array($innerBlocks) && $this->has_named_block($innerBlocks)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array<int, array{path: string, label: string, value_type: string}> */
