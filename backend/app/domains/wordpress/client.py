@@ -75,6 +75,17 @@ class WordPressClient:
         response.raise_for_status()
         return response.json()
 
+    def _delete(self, endpoint: str) -> dict:
+        route = f"/wpfixpilot/v1/{endpoint}"
+        response = requests.delete(
+            f"{self.site_url}/wp-json{route}",
+            headers=self._headers("DELETE", route),
+            timeout=30,
+            verify=self.verify_ssl,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def health(self) -> WordPressHealth:
         data = self._get("health")
         return WordPressHealth(
@@ -104,3 +115,17 @@ class WordPressClient:
 
     def create_draft(self, payload: dict) -> dict:
         return self._post("draft-pages", payload)
+
+    def capture_blueprint(self, payload: dict) -> dict:
+        return self._post("blueprints", payload)
+
+    def blueprint(self, wordpress_blueprint_id: int) -> dict:
+        return self._get(f"blueprints/{wordpress_blueprint_id}")
+
+    def create_blueprint_draft(
+        self, wordpress_blueprint_id: int, payload: dict
+    ) -> dict:
+        return self._post(f"blueprints/{wordpress_blueprint_id}/drafts", payload)
+
+    def delete_blueprint(self, wordpress_blueprint_id: int) -> dict:
+        return self._delete(f"blueprints/{wordpress_blueprint_id}")
