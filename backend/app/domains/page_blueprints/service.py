@@ -24,7 +24,12 @@ def _validated_state(state: str) -> str:
     return state
 
 
-def set_default_blueprint(session: Session, blueprint: PageBlueprint) -> None:
+def set_default_blueprint(
+    session: Session,
+    blueprint: PageBlueprint,
+    *,
+    commit: bool = True,
+) -> None:
     if blueprint.state != "ready":
         raise ValueError("Only ready blueprints can be set as the default")
 
@@ -38,7 +43,10 @@ def set_default_blueprint(session: Session, blueprint: PageBlueprint) -> None:
         .values(is_default_for_page_type=False)
     )
     blueprint.is_default_for_page_type = True
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
 
 
 def create_blueprint_version(
@@ -49,6 +57,7 @@ def create_blueprint_version(
     structure_hash: str,
     content_schema: dict,
     state: BlueprintLifecycleState,
+    commit: bool = True,
 ) -> PageBlueprint:
     validated_schema = _validated_schema(content_schema)
     validated_state = _validated_state(state)
@@ -70,7 +79,10 @@ def create_blueprint_version(
         supersedes_id=original.id,
     )
     session.add(replacement)
-    session.commit()
-    session.refresh(replacement)
+    if commit:
+        session.commit()
+        session.refresh(replacement)
+    else:
+        session.flush()
 
     return replacement

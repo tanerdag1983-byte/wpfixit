@@ -1,6 +1,7 @@
 from typing import Annotated, Literal
 from uuid import uuid4
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
@@ -26,21 +27,24 @@ UserDependency = Annotated[CurrentUser, Depends(get_current_user)]
 SemanticRole = Literal[
     "hero", "introduction", "benefits", "process", "faq", "cta", "content"
 ]
+Builder = Literal["acf", "elementor", "wpbakery", "bricks", "gutenberg"]
+PageType = Literal["service", "brand", "location", "blog", "generic"]
 
 
 class BlueprintCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=160)
-    page_type: str = Field(min_length=1, max_length=32)
+    page_type: PageType
     source_wordpress_page_id: str = Field(min_length=1, max_length=64)
+    builder: Builder
 
 
 class BlueprintUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=160)
-    page_type: str | None = Field(default=None, min_length=1, max_length=32)
+    page_type: PageType | None = None
     semantic_roles: dict[str, SemanticRole] | None = None
 
 
@@ -89,7 +93,14 @@ def _bridge(session: Session, project_id: str) -> WordPressClient:
     )
 
 
-def _validated_capture(data: dict) -> tuple[BlueprintSchema, str]:
+def _validated_capture(
+    data: dict,
+    *,
+    source_page_id: int,
+    builder: str,
+    page_type: str,
+    version: int,
+) -> tuple[BlueprintSchema, str]:
     try:
         schema = BlueprintSchema.model_validate(data.get("content_schema"))
     except ValidationError as error:
@@ -101,7 +112,41 @@ def _validated_capture(data: dict) -> tuple[BlueprintSchema, str]:
         raise HTTPException(
             status_code=409, detail="Captured WordPress blueprint is not ready"
         )
+    expected = {
+        "source_page_id": source_page_id,
+        "builder": builder,
+        "page_type": page_type,
+        "version": version,
+    }
+    if any(data.get(key) != value for key, value in expected.items()):
+        raise HTTPException(
+            status_code=502,
+            detail="WordPress returned a mismatched blueprint identity",
+        )
+    if not str(data.get("structure_hash") or ""):
+        raise HTTPException(
+            status_code=502, detail="WordPress returned an empty blueprint hash"
+        )
     return schema, state
+
+
+def _schema_with_stored_roles(
+    inspected: BlueprintSchema, stored: BlueprintSchema
+) -> dict:
+    stored_roles = {block.id: block.semantic_role for block in stored.blocks}
+    if {block.id for block in inspected.blocks} != set(stored_roles):
+        return inspected.model_dump(mode="python")
+    for block in inspected.blocks:
+        block.semantic_role = stored_roles[block.id]
+    return inspected.model_dump(mode="python")
+
+
+def _delete_remote_blueprint(bridge: WordPressClient, wordpress_id: int) -> None:
+    try:
+        bridge.delete_blueprint(wordpress_id)
+    except requests.HTTPError as error:
+        if error.response is None or error.response.status_code != 404:
+            raise
 
 
 def _payload(blueprint: PageBlueprint) -> dict:
@@ -129,7 +174,7 @@ def _payload(blueprint: PageBlueprint) -> dict:
 def list_blueprints(
     project_id: str, session: SessionDependency, user: UserDependency
 ) -> dict:
-    _project_or_404(session, user, project_id)
+    _manager_project(session, user, project_id)
     items = session.scalars(
         select(PageBlueprint)
         .where(PageBlueprint.project_id == project_id)
@@ -155,9 +200,23 @@ def create_blueprint(
     if source is None:
         raise HTTPException(status_code=404, detail="Reference page not found")
     bridge = _bridge(session, project_id)
-    captured = bridge.capture_blueprint({"source_page_id": source.wordpress_object_id})
+    captured = bridge.capture_blueprint(
+        {
+            "source_page_id": source.wordpress_object_id,
+            "name": payload.name,
+            "page_type": payload.page_type,
+            "builder": payload.builder,
+            "version": 1,
+        }
+    )
     try:
-        schema, state = _validated_capture(captured)
+        schema, state = _validated_capture(
+            captured,
+            source_page_id=source.wordpress_object_id,
+            builder=payload.builder,
+            page_type=payload.page_type,
+            version=1,
+        )
         blueprint = PageBlueprint(
             id=str(uuid4()),
             project_id=project_id,
@@ -180,7 +239,7 @@ def create_blueprint(
         session.rollback()
         wordpress_id = captured.get("wordpress_blueprint_id")
         if wordpress_id is not None:
-            bridge.delete_blueprint(int(wordpress_id))
+            _delete_remote_blueprint(bridge, int(wordpress_id))
         raise
     return _payload(blueprint)
 
@@ -192,7 +251,7 @@ def get_blueprint_route(
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
-    _project_or_404(session, user, project_id)
+    _manager_project(session, user, project_id)
     return _payload(_blueprint_or_404(session, project_id, blueprint_id))
 
 
@@ -209,6 +268,14 @@ def update_blueprint(
     if payload.name is not None:
         blueprint.name = payload.name
     if payload.page_type is not None:
+        if (
+            blueprint.is_default_for_page_type
+            and payload.page_type != blueprint.page_type
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Change the default before changing page type",
+            )
         blueprint.page_type = payload.page_type
     if payload.semantic_roles is not None:
         schema = BlueprintSchema.model_validate(blueprint.content_schema)
@@ -237,6 +304,11 @@ def validate_blueprint(
     _manager_project(session, user, project_id)
     blueprint = _blueprint_or_404(session, project_id, blueprint_id)
     inspected = _bridge(session, project_id).blueprint(blueprint.wordpress_blueprint_id)
+    if str(inspected.get("status")) != "ready":
+        blueprint.state = "invalid"
+        blueprint.is_default_for_page_type = False
+        session.commit()
+        raise HTTPException(status_code=409, detail="WordPress blueprint is not ready")
     try:
         schema = BlueprintSchema.model_validate(inspected.get("content_schema"))
     except ValidationError as error:
@@ -246,9 +318,22 @@ def validate_blueprint(
         raise HTTPException(
             status_code=409, detail="Blueprint schema is invalid"
         ) from error
+    source = session.get(WordPressPage, blueprint.source_wordpress_page_id)
+    expected_identity = {
+        "wordpress_blueprint_id": blueprint.wordpress_blueprint_id,
+        "source_page_id": source.wordpress_object_id if source is not None else None,
+        "builder": blueprint.builder,
+        "seo_plugin": blueprint.seo_plugin,
+        "version": blueprint.version,
+    }
+    stored_schema = BlueprintSchema.model_validate(blueprint.content_schema)
+    schema_matches = (
+        _schema_with_stored_roles(schema, stored_schema) == blueprint.content_schema
+    )
     if (
-        str(inspected.get("structure_hash")) != blueprint.structure_hash
-        or schema.model_dump(mode="python") != blueprint.content_schema
+        any(inspected.get(key) != value for key, value in expected_identity.items())
+        or str(inspected.get("structure_hash")) != blueprint.structure_hash
+        or not schema_matches
     ):
         blueprint.state = "stale"
         blueprint.is_default_for_page_type = False
@@ -298,9 +383,24 @@ def version_blueprint(
     if source is None:
         raise HTTPException(status_code=404, detail="Reference page not found")
     bridge = _bridge(session, project_id)
-    captured = bridge.capture_blueprint({"source_page_id": source.wordpress_object_id})
+    next_version = original.version + 1
+    captured = bridge.capture_blueprint(
+        {
+            "source_page_id": source.wordpress_object_id,
+            "name": original.name,
+            "page_type": original.page_type,
+            "builder": original.builder,
+            "version": next_version,
+        }
+    )
     try:
-        schema, state = _validated_capture(captured)
+        schema, state = _validated_capture(
+            captured,
+            source_page_id=source.wordpress_object_id,
+            builder=original.builder,
+            page_type=original.page_type,
+            version=next_version,
+        )
         replacement = create_blueprint_version(
             session,
             original,
@@ -308,15 +408,17 @@ def version_blueprint(
             structure_hash=str(captured["structure_hash"]),
             content_schema=schema.model_dump(mode="python"),
             state=state,
+            commit=False,
         )
         if original.is_default_for_page_type:
-            set_default_blueprint(session, replacement)
-            session.refresh(replacement)
+            set_default_blueprint(session, replacement, commit=False)
+        session.commit()
+        session.refresh(replacement)
     except Exception:
         session.rollback()
         wordpress_id = captured.get("wordpress_blueprint_id")
         if wordpress_id is not None:
-            bridge.delete_blueprint(int(wordpress_id))
+            _delete_remote_blueprint(bridge, int(wordpress_id))
         raise
     return _payload(replacement)
 
@@ -343,7 +445,9 @@ def delete_blueprint_route(
     )
     if proposal is not None or successor is not None:
         raise HTTPException(status_code=409, detail="Blueprint is still referenced")
-    _bridge(session, project_id).delete_blueprint(blueprint.wordpress_blueprint_id)
+    _delete_remote_blueprint(
+        _bridge(session, project_id), blueprint.wordpress_blueprint_id
+    )
     session.delete(blueprint)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

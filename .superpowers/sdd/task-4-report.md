@@ -68,3 +68,35 @@ PostgreSQL migration command exited 0 at head.
 - Proposal and lineage dependency checks before deletion.
 - Immutability of field IDs and builder paths during semantic-role updates.
 - Correct default transfer after successful version capture.
+
+## First Review Adjudication
+
+The first independent review was not approved. All findings were accepted:
+
+- Added the complete WordPress capture payload (`name`, `page_type`, `builder`, and
+  `version`) and strict response identity validation.
+- Preserved backend semantic-role overrides while comparing the immutable live schema.
+- Added non-committing service modes so successor creation and default transfer commit
+  atomically in the route.
+- Made remote deletion retry-safe when WordPress reports that the clone is already
+  absent after an earlier partial attempt.
+- Validation now rejects non-ready status and mismatched WordPress ID, source page,
+  version, builder, or SEO plugin.
+- Default blueprints must be replaced as the default before their page type changes.
+- Blueprint list and detail routes now enforce the same manager role as mutations.
+
+Regression verification after fixes:
+
+```text
+cd backend && .venv/bin/ruff check app tests alembic
+All checks passed!
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib tests/page_blueprints -q
+43 passed in 0.86s
+
+cd backend && .venv/bin/python -m pytest --import-mode=importlib -q
+192 passed in 6.07s
+
+cd backend && .venv/bin/alembic upgrade head
+PostgreSQL migration command exited 0 at head.
+```

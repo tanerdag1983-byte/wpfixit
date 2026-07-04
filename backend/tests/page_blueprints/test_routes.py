@@ -1,3 +1,5 @@
+import pytest
+import requests
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -38,6 +40,7 @@ def captured_blueprint(*, wordpress_id: int = 901, version: int = 1) -> dict:
         "wordpress_blueprint_id": wordpress_id,
         "source_page_id": 19,
         "builder": "acf",
+        "page_type": "service",
         "seo_plugin": "yoast",
         "version": version,
         "structure_hash": f"hash-v{version}",
@@ -54,9 +57,10 @@ class FakeBlueprintBridge:
         ]
         self.deleted: list[int] = []
         self.inspections: dict[int, dict] = {}
+        self.capture_payloads: list[dict] = []
 
     def capture_blueprint(self, payload: dict) -> dict:
-        assert payload["source_page_id"] == 19
+        self.capture_payloads.append(payload)
         return self.captures.pop(0)
 
     def blueprint(self, wordpress_blueprint_id: int) -> dict:
@@ -77,6 +81,7 @@ def create_blueprint(client: TestClient, project_id: str) -> dict:
             "name": "Dienstpagina",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
+            "builder": "acf",
         },
     )
     assert response.status_code == 201, response.text
@@ -94,6 +99,15 @@ def test_manager_captures_lists_defaults_and_versions_blueprint(
     blueprint_id = created["id"]
     assert created["builder"] == "acf"
     assert created["state"] == "ready"
+    assert bridge.capture_payloads == [
+        {
+            "source_page_id": 19,
+            "name": "Dienstpagina",
+            "page_type": "service",
+            "builder": "acf",
+            "version": 1,
+        }
+    ]
 
     listed = client.get(f"/projects/{projects.member_project.id}/page-blueprints")
     assert listed.status_code == 200
@@ -112,6 +126,13 @@ def test_manager_captures_lists_defaults_and_versions_blueprint(
     assert versioned.json()["version"] == 2
     assert versioned.json()["supersedes_id"] == blueprint_id
     assert versioned.json()["is_default_for_page_type"] is True
+    assert bridge.capture_payloads[-1] == {
+        "source_page_id": 19,
+        "name": "Dienstpagina",
+        "page_type": "service",
+        "builder": "acf",
+        "version": 2,
+    }
 
 
 def test_routes_require_manager_and_project_membership(
@@ -127,6 +148,7 @@ def test_routes_require_manager_and_project_membership(
             "name": "Dienstpagina",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
+            "builder": "acf",
         },
     )
     assert denied.status_code == 403
@@ -149,7 +171,7 @@ def test_update_allows_roles_but_rejects_unknown_blocks(
         route,
         json={
             "name": "Nieuwe naam",
-            "page_type": "landing",
+            "page_type": "brand",
             "semantic_roles": {"block-hero": "introduction"},
         },
     )
@@ -161,6 +183,25 @@ def test_update_allows_roles_but_rejects_unknown_blocks(
 
     rejected = client.put(route, json={"semantic_roles": {"unknown": "hero"}})
     assert rejected.status_code == 422
+
+    validated = client.post(f"{route}/validate")
+    assert validated.status_code == 200, validated.text
+
+
+def test_default_blueprint_page_type_cannot_be_changed(
+    client, auth_as, projects, monkeypatch
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    route = f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+    assert client.post(f"{route}/set-default").status_code == 200
+
+    response = client.put(route, json={"page_type": "brand"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Change the default before changing page type"
 
 
 def test_validation_marks_hash_drift_stale(client, auth_as, projects, monkeypatch):
@@ -181,6 +222,37 @@ def test_validation_marks_hash_drift_stale(client, auth_as, projects, monkeypatc
         f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
     )
     assert detail.json()["state"] == "stale"
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_state"),
+    [
+        ({"status": "invalid"}, "invalid"),
+        ({"version": 2}, "stale"),
+        ({"builder": "elementor"}, "stale"),
+        ({"seo_plugin": "rank_math"}, "stale"),
+        ({"source_page_id": 77}, "stale"),
+        ({"wordpress_blueprint_id": 999}, "stale"),
+    ],
+)
+def test_validation_rejects_incompatible_wordpress_identity(
+    client, auth_as, projects, monkeypatch, override, expected_state
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    bridge.inspections[901] = {**captured_blueprint(), **override}
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}/validate"
+    )
+
+    assert response.status_code == 409
+    detail = client.get(
+        f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+    )
+    assert detail.json()["state"] == expected_state
 
 
 def test_delete_removes_wordpress_clone_after_dependency_check(
@@ -215,6 +287,7 @@ def test_invalid_capture_is_removed_and_not_persisted(
             "name": "Ongeldig",
             "page_type": "service",
             "source_wordpress_page_id": "source-page",
+            "builder": "acf",
         },
     )
 
@@ -280,3 +353,45 @@ def test_delete_rejects_blueprint_used_by_proposal_before_wordpress_call(
     assert response.status_code == 409
     assert bridge.deleted == []
     assert session.get(PageBlueprint, created["id"]) is not None
+
+
+def test_new_version_rolls_back_registry_when_default_transfer_fails(
+    client, auth_as, projects, monkeypatch, session
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    route = f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+    assert client.post(f"{route}/set-default").status_code == 200
+
+    def fail_default(*args, **kwargs):
+        raise RuntimeError("default transfer failed")
+
+    monkeypatch.setattr(page_blueprints, "set_default_blueprint", fail_default)
+    with pytest.raises(RuntimeError, match="default transfer failed"):
+        client.post(f"{route}/new-version")
+
+    rows = session.scalars(select(PageBlueprint)).all()
+    assert [row.id for row in rows] == [created["id"]]
+    assert bridge.deleted == [902]
+
+
+def test_delete_recovers_when_wordpress_clone_is_already_absent(
+    client, auth_as, projects, monkeypatch
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    response = requests.Response()
+    response.status_code = 404
+
+    def already_absent(wordpress_blueprint_id: int):
+        raise requests.HTTPError(response=response)
+
+    bridge.delete_blueprint = already_absent
+    deleted = client.delete(
+        f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+    )
+    assert deleted.status_code == 204
