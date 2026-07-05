@@ -202,4 +202,87 @@ describe("BlueprintSettingsPanel", () => {
       expect(screen.queryByText("Hero (algemeen)")).not.toBeInTheDocument(),
     );
   });
+
+  it("ignores a completed mutation after switching projects", async () => {
+    let finishCreate: ((value: typeof blueprint) => void) | undefined;
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (!init && path.includes("project-1") && path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [] });
+      }
+      if (!init && path.includes("project-1") && path.endsWith("/wordpress-pages")) {
+        return Promise.resolve({ items: [{ id: "page-19", title: "Bron", url: "/bron/" }] });
+      }
+      if (init?.method === "POST" && path.includes("project-1")) {
+        return new Promise((resolve) => { finishCreate = resolve; });
+      }
+      if (!init && path.includes("project-2") && path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [] });
+      }
+      return Promise.resolve({ items: [] });
+    });
+    const { rerender } = render(<BlueprintSettingsPanel projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Blueprintnaam"), {
+      target: { value: "Dienstpagina" },
+    });
+    fireEvent.change(screen.getByLabelText("Referentiepagina"), {
+      target: { value: "page-19" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Blueprint maken" }));
+
+    rerender(<BlueprintSettingsPanel projectId="project-2" />);
+    finishCreate?.(blueprint);
+
+    await waitFor(() => expect(screen.getByLabelText("Blueprintnaam")).toHaveValue(""));
+    expect(screen.queryByText("Hero (algemeen)")).not.toBeInTheDocument();
+  });
+
+  it("shows a register error without exposing the legacy empty state", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.reject(new Error("Register offline"));
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Register offline");
+    expect(screen.getByText("Blueprintregister kon niet worden geladen.")).toBeVisible();
+    expect(screen.queryByText(/oude paginapakket/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Blueprintregister laden...")).not.toBeInTheDocument();
+  });
+
+  it("marks the selected registry item accessibly", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [blueprint] });
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByRole("button", { name: /Dienstpagina/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("locks destructive actions while semantic roles are being saved", async () => {
+    let finishSave: ((value: typeof blueprint) => void) | undefined;
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (!init && path.endsWith("/page-blueprints")) return Promise.resolve({ items: [blueprint] });
+      if (!init && path.endsWith("/wordpress-pages")) return Promise.resolve({ items: [] });
+      if (init?.method === "PUT") {
+        return new Promise((resolve) => { finishSave = resolve; });
+      }
+      return Promise.resolve(blueprint);
+    });
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Hero \(algemeen\)/ }));
+    fireEvent.change(screen.getByLabelText("Rol voor Hero (algemeen)"), {
+      target: { value: "introduction" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rollen opslaan" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Verwijderen" })).toBeDisabled());
+    finishSave?.(blueprint);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Verwijderen" })).toBeEnabled());
+  });
 });

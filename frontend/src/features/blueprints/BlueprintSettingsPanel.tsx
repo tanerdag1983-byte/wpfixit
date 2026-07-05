@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
 import {
@@ -63,15 +63,21 @@ export function BlueprintSettingsPanel({
   const [sourcePageId, setSourcePageId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [registryLoaded, setRegistryLoaded] = useState(false);
+  const [registryStatus, setRegistryStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
 
   useEffect(() => {
     let active = true;
     setBlueprints([]);
     setPages([]);
     setSelectedId("");
+    setName("");
+    setPageType("service");
+    setSourcePageId("");
+    setBusy(false);
     setMessage("");
-    setRegistryLoaded(false);
+    setRegistryStatus("loading");
     onAvailabilityChange?.(null);
 
     apiRequest<{ items: Blueprint[] }>(`/projects/${projectId}/page-blueprints`)
@@ -80,12 +86,12 @@ export function BlueprintSettingsPanel({
         const items = registry.items ?? [];
         setBlueprints(items);
         setSelectedId(items[0]?.id ?? "");
-        setRegistryLoaded(true);
+        setRegistryStatus("loaded");
         onAvailabilityChange?.(items.length > 0);
       })
       .catch((error) => {
         if (!active) return;
-        setRegistryLoaded(false);
+        setRegistryStatus("error");
         setMessage(error instanceof Error ? error.message : "Blueprints laden mislukt.");
       });
 
@@ -107,7 +113,8 @@ export function BlueprintSettingsPanel({
     (page) => page.id === selected?.source_wordpress_page_id,
   );
 
-  function replaceBlueprint(updated: Blueprint) {
+  function replaceBlueprint(updated: Blueprint, requestProjectId = projectId) {
+    if (projectIdRef.current !== requestProjectId) return;
     setBlueprints((current) => {
       const exists = current.some((item) => item.id === updated.id);
       const normalized = updated.is_default_for_page_type
@@ -127,6 +134,7 @@ export function BlueprintSettingsPanel({
 
   async function createBlueprint() {
     if (!name.trim() || !sourcePageId) return;
+    const requestProjectId = projectId;
     setBusy(true);
     setMessage("");
     try {
@@ -138,73 +146,92 @@ export function BlueprintSettingsPanel({
           source_wordpress_page_id: sourcePageId,
         }),
       });
-      replaceBlueprint(created);
+      if (projectIdRef.current !== requestProjectId) return;
+      replaceBlueprint(created, requestProjectId);
       setName("");
       setMessage("Blueprint is vastgelegd vanuit WordPress.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Blueprint maken mislukt.");
+      if (projectIdRef.current === requestProjectId) {
+        setMessage(error instanceof Error ? error.message : "Blueprint maken mislukt.");
+      }
     } finally {
-      setBusy(false);
+      if (projectIdRef.current === requestProjectId) setBusy(false);
     }
   }
 
   async function action(path: string, method = "POST") {
     if (!selected) return;
+    const requestProjectId = projectId;
+    const selectedBlueprintId = selected.id;
     setBusy(true);
     setMessage("");
     try {
       const updated = await apiRequest<Blueprint>(
-        `/projects/${projectId}/page-blueprints/${selected.id}${path}`,
+        `/projects/${requestProjectId}/page-blueprints/${selectedBlueprintId}${path}`,
         { method },
       );
-      replaceBlueprint(updated);
+      replaceBlueprint(updated, requestProjectId);
     } catch (error) {
+      if (projectIdRef.current !== requestProjectId) return;
       const errorMessage = error instanceof Error ? error.message : "Blueprint bijwerken mislukt.";
       try {
         const persisted = await apiRequest<Blueprint>(
-          `/projects/${projectId}/page-blueprints/${selected.id}`,
+          `/projects/${requestProjectId}/page-blueprints/${selectedBlueprintId}`,
         );
-        replaceBlueprint(persisted);
+        replaceBlueprint(persisted, requestProjectId);
       } catch {
         // Keep the current snapshot when the recovery read is unavailable.
       }
-      setMessage(errorMessage);
+      if (projectIdRef.current === requestProjectId) setMessage(errorMessage);
     } finally {
-      setBusy(false);
+      if (projectIdRef.current === requestProjectId) setBusy(false);
     }
   }
 
   async function saveRoles(roles: Record<string, SemanticRole>) {
     if (!selected) return false;
+    const requestProjectId = projectId;
+    const selectedBlueprintId = selected.id;
+    setBusy(true);
     try {
       const updated = await apiRequest<Blueprint>(
-        `/projects/${projectId}/page-blueprints/${selected.id}`,
+        `/projects/${requestProjectId}/page-blueprints/${selectedBlueprintId}`,
         { method: "PUT", body: JSON.stringify({ semantic_roles: roles }) },
       );
-      replaceBlueprint(updated);
+      if (projectIdRef.current !== requestProjectId) return false;
+      replaceBlueprint(updated, requestProjectId);
       setMessage("Semantische rollen zijn opgeslagen.");
       return true;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Rollen opslaan mislukt.");
+      if (projectIdRef.current === requestProjectId) {
+        setMessage(error instanceof Error ? error.message : "Rollen opslaan mislukt.");
+      }
       return false;
+    } finally {
+      if (projectIdRef.current === requestProjectId) setBusy(false);
     }
   }
 
   async function removeBlueprint() {
     if (!selected) return;
+    const requestProjectId = projectId;
+    const selectedBlueprintId = selected.id;
     setBusy(true);
     try {
-      await apiRequest<void>(`/projects/${projectId}/page-blueprints/${selected.id}`, {
+      await apiRequest<void>(`/projects/${requestProjectId}/page-blueprints/${selectedBlueprintId}`, {
         method: "DELETE",
       });
-      const remaining = blueprints.filter((item) => item.id !== selected.id);
+      if (projectIdRef.current !== requestProjectId) return;
+      const remaining = blueprints.filter((item) => item.id !== selectedBlueprintId);
       setBlueprints(remaining);
       setSelectedId(remaining[0]?.id ?? "");
       onAvailabilityChange?.(remaining.length > 0);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Blueprint verwijderen mislukt.");
+      if (projectIdRef.current === requestProjectId) {
+        setMessage(error instanceof Error ? error.message : "Blueprint verwijderen mislukt.");
+      }
     } finally {
-      setBusy(false);
+      if (projectIdRef.current === requestProjectId) setBusy(false);
     }
   }
 
@@ -249,10 +276,12 @@ export function BlueprintSettingsPanel({
         </button>
       </div>
 
-      {message && <p className="form-message">{message}</p>}
+      {message && <p aria-live="polite" className="form-message" role="status">{message}</p>}
 
-      {!registryLoaded ? (
+      {registryStatus === "loading" ? (
         <p className="blueprint-migration-note">Blueprintregister laden...</p>
+      ) : registryStatus === "error" ? (
+        <p className="blueprint-migration-note">Blueprintregister kon niet worden geladen.</p>
       ) : blueprints.length === 0 ? (
         <p className="blueprint-migration-note">
           Nog geen managed blueprint. Het oude paginapakket blijft hieronder beschikbaar
@@ -264,6 +293,7 @@ export function BlueprintSettingsPanel({
             {blueprints.map((blueprint) => (
               <button
                 className={blueprint.id === selectedId ? "active" : ""}
+                aria-pressed={blueprint.id === selectedId}
                 key={blueprint.id}
                 onClick={() => setSelectedId(blueprint.id)}
                 type="button"
@@ -296,7 +326,7 @@ export function BlueprintSettingsPanel({
                 </div>
               </header>
               {selected.is_default_for_page_type && <p className="blueprint-default">Standaard voor {selected.page_type}</p>}
-              <BlueprintOutline schema={selected.content_schema} onSave={saveRoles} />
+              <BlueprintOutline disabled={busy} schema={selected.content_schema} onSave={saveRoles} />
             </div>
           )}
         </div>

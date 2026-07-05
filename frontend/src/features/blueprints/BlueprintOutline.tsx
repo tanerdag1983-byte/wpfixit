@@ -47,9 +47,11 @@ function schemaRoles(schema: BlueprintSchema) {
 }
 
 export function BlueprintOutline({
+  disabled = false,
   schema,
   onSave,
 }: {
+  disabled?: boolean;
   schema: BlueprintSchema;
   onSave: (roles: Record<string, SemanticRole>) => Promise<boolean | void>;
 }) {
@@ -63,6 +65,7 @@ export function BlueprintOutline({
   }, [schema]);
 
   async function save() {
+    if (disabled) return;
     setBusy(true);
     try {
       const saved = await onSave(roles);
@@ -81,7 +84,7 @@ export function BlueprintOutline({
           <h3>Blokken en bewerkbare velden</h3>
           <p>Controleer de betekenis per blok. Builderpaden blijven vergrendeld.</p>
         </div>
-        <button className="secondary-button" disabled={busy} onClick={save} type="button">
+        <button className="secondary-button" disabled={busy || disabled} onClick={save} type="button">
           {busy ? "Opslaan..." : "Rollen opslaan"}
         </button>
       </div>

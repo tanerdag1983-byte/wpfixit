@@ -58,4 +58,10 @@ describe("BlueprintOutline", () => {
 
     await waitFor(() => expect(role).toHaveValue("hero"));
   });
+
+  it("disables role saving while another blueprint mutation is active", () => {
+    render(<BlueprintOutline disabled schema={schema} onSave={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Rollen opslaan" })).toBeDisabled();
+  });
 });

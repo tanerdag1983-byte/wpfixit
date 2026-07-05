@@ -30,10 +30,10 @@ Failed to resolve import "./BlueprintOutline"
 
 ```text
 npm test -- BlueprintSettingsPanel.test.tsx BlueprintOutline.test.tsx AiSettingsPanel.test.tsx --run
-3 files passed, 9 tests passed
+3 files passed, 14 tests passed
 
 npm test -- --run
-26 files passed, 72 tests passed
+26 files passed, 77 tests passed
 
 npm run lint
 clean
@@ -56,6 +56,19 @@ four were accepted and covered by regressions before the fixes were implemented:
 
 The legacy page-package mapper also stays hidden while managed-blueprint availability
 is unresolved.
+
+## Second Review Adjudication
+
+The second independent review found two remaining mutation races and two smaller UI
+state/accessibility issues. All were accepted and fixed with regression coverage:
+
+- Every mutation is bound to the project that started it; late responses are ignored
+  after a project switch and project-specific form state is reset immediately.
+- Semantic-role saves use the shared mutation lock, preventing save/delete races and
+  late client-side resurrection of a deleted blueprint.
+- Registry failures now have a terminal error state instead of an endless loading label.
+- Async messages use a polite status region and registry selection exposes
+  `aria-pressed`.
 
 ## Review Focus
 
