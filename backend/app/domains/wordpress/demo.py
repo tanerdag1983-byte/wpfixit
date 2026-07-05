@@ -3,7 +3,8 @@ import json
 
 
 class DemoWordPressClient:
-    _states: dict[int, dict] = {}
+    def __init__(self) -> None:
+        self._states: dict[int, dict] = {}
 
     def current_state(self, object_id: int) -> dict:
         return self._states.setdefault(

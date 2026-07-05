@@ -1,39 +1,65 @@
 import { ArrowDown, ArrowUpRight, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
+import { apiRequest } from "../../lib/api";
 
-const pages = [
-  {
-    score: "94",
-    title: "Transmissie revisie",
-    url: "/revisie",
-    seo: "48 SEO",
-    search: "12.400 impressies · 1,2% CTR",
-    traffic: "1.840 sessies · 11 conversies",
-    trend: "-22%",
-    action: "Verbeter snippet en herstel conversieverlies",
-  },
-  {
-    score: "87",
-    title: "Automatische versnellingsbak",
-    url: "/automatische-versnellingsbak",
-    seo: "61 SEO",
-    search: "8.900 impressies · 2,1% CTR",
-    traffic: "1.210 sessies · 9 conversies",
-    trend: "-9%",
-    action: "Verdiep content en maak de CTA specifieker",
-  },
-  {
-    score: "72",
-    title: "Automaat revisie",
-    url: "/automaat-revisie",
-    seo: "74 SEO",
-    search: "7.100 impressies · positie 8,2",
-    traffic: "640 sessies · 14 conversies",
-    trend: "+4%",
-    action: "Voeg interne links vanaf sterke servicepagina's toe",
-  },
-];
+interface PriorityItem {
+  url: string;
+  title: string;
+  seo_score: number;
+  clicks: number | null;
+  impressions: number | null;
+  ctr: number | null;
+  average_position: number | null;
+  sessions: number | null;
+  conversions: number | null;
+  trend: string | null;
+  priority_score: number;
+  confidence: number;
+  components: Record<string, unknown>;
+  action: string;
+  evidence: Array<Record<string, unknown>>;
+}
 
-export function PriorityPage() {
+export function PriorityPage({ projectId }: { projectId: string }) {
+  const [items, setItems] = useState<PriorityItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchPriorities() {
+      try {
+        setLoading(true);
+        const response = await apiRequest<{ items: PriorityItem[] }>(
+          `/projects/${projectId}/seo-priority-score?minimum_score=0&limit=100`,
+        );
+        setItems(response.items);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Er is iets misgegaan");
+        console.error("Failed to fetch priorities:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    void fetchPriorities();
+  }, [projectId]);
+
+  if (loading) {
+    return (
+      <section className="data-page priority-page">
+        <p>Laden...</p>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="data-page priority-page">
+        <p style={{ color: "red" }}>Fout: {error}</p>
+      </section>
+    );
+  }
+
   return (
     <section className="data-page priority-page">
       <div className="page-heading">
@@ -50,44 +76,67 @@ export function PriorityPage() {
         </button>
       </div>
 
-      <div className="priority-table">
-        <div className="priority-table-row header">
-          <span>Score</span>
-          <span>Pagina</span>
-          <span>Zoekprestatie</span>
-          <span>Resultaat</span>
-          <span>Actie</span>
+      {items.length === 0 ? (
+        <p>Geen prioriteiten gevonden.</p>
+      ) : (
+        <div className="priority-table">
+          <div className="priority-table-row header">
+            <span>Score</span>
+            <span>Pagina</span>
+            <span>Zoekprestatie</span>
+            <span>Resultaat</span>
+            <span>Actie</span>
+          </div>
+          {items.map((item) => {
+            const trendValue = item.trend ? parseFloat(item.trend) : 0;
+            const trendDirection = trendValue < 0 ? "down" : "up";
+            const searchDisplay =
+              item.impressions !== null && item.ctr !== null
+                ? `${item.impressions.toLocaleString("nl-NL")} impressies · ${(item.ctr * 100).toLocaleString("nl-NL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% CTR`
+                : item.impressions !== null
+                  ? `${item.impressions.toLocaleString("nl-NL")} impressies`
+                  : item.average_position !== null
+                    ? `positie ${item.average_position.toLocaleString("nl-NL", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`
+                    : "Geen data";
+            const trafficDisplay =
+              item.sessions !== null || item.conversions !== null
+                ? `${(item.sessions ?? 0).toLocaleString("nl-NL")} sessies${item.conversions ? ` · ${item.conversions.toLocaleString("nl-NL")} conversies` : ""}`
+                : "Geen data";
+
+            return (
+              <button className="priority-table-row" type="button" key={item.url}>
+                <span className="priority-number">
+                  {Math.round(item.priority_score)}
+                </span>
+                <span className="priority-page-name">
+                  <strong>{item.title}</strong>
+                  <small>
+                    {item.url} · {Math.round(item.seo_score)} SEO
+                  </small>
+                </span>
+                <span>{searchDisplay}</span>
+                <span>
+                  {trafficDisplay}
+                  {item.trend && (
+                    <small className={`trend-${trendDirection}`}>
+                      {trendDirection === "down" ? (
+                        <ArrowDown size={12} />
+                      ) : (
+                        <ArrowUpRight size={12} />
+                      )}
+                      {item.trend}
+                    </small>
+                  )}
+                </span>
+                <span className="priority-action">
+                  {item.action}
+                  <ArrowUpRight size={15} />
+                </span>
+              </button>
+            );
+          })}
         </div>
-        {pages.map((page) => (
-          <button className="priority-table-row" type="button" key={page.url}>
-            <span className="priority-number">{page.score}</span>
-            <span className="priority-page-name">
-              <strong>{page.title}</strong>
-              <small>
-                {page.url} · {page.seo}
-              </small>
-            </span>
-            <span>{page.search}</span>
-            <span>
-              {page.traffic}
-              <small
-                className={page.trend.startsWith("-") ? "trend-down" : "trend-up"}
-              >
-                {page.trend.startsWith("-") ? (
-                  <ArrowDown size={12} />
-                ) : (
-                  <ArrowUpRight size={12} />
-                )}
-                {page.trend}
-              </small>
-            </span>
-            <span className="priority-action">
-              {page.action}
-              <ArrowUpRight size={15} />
-            </span>
-          </button>
-        ))}
-      </div>
+      )}
     </section>
   );
 }

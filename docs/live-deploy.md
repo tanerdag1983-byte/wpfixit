@@ -45,6 +45,7 @@ WP_FIXPILOT_CORS_ORIGINS=https://<your-vercel-domain>
 WP_FIXPILOT_TRUSTED_HOSTS=<your-api-domain>,localhost,127.0.0.1
 WP_FIXPILOT_SUPABASE_URL=<supabase-project-url>
 WP_FIXPILOT_SUPABASE_ANON_KEY=<supabase-anon-key>
+WP_FIXPILOT_SUPABASE_JWT_SECRET=<supabase-jwt-secret>
 WP_FIXPILOT_ENCRYPTION_KEY=<fernet-key>
 WP_FIXPILOT_GOOGLE_CLIENT_ID=<google-oauth-client-id>
 WP_FIXPILOT_GOOGLE_CLIENT_SECRET=<google-oauth-client-secret>

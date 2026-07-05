@@ -554,7 +554,8 @@ def _policy_payload(session: Session, policy: ProjectAiPolicy) -> dict:
         if policy.fallback_connection_id
         else None
     )
-    assert primary is not None
+    if primary is None:
+        raise RuntimeError("Primary AI connection not found")
     return {
         "configured": True,
         "primary": {

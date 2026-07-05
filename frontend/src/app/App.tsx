@@ -360,7 +360,7 @@ function RouteContent({
     );
   if (route === "opportunities")
     return <OpportunitiesPage projectId={activeProject.id} />;
-  if (route === "priorities") return <PriorityPage />;
+  if (route === "priorities") return <PriorityPage projectId={activeProject.id} />;
   if (route === "publishing")
     return <PublishingReview projectId={activeProject.id} />;
   if (route === "page-proposal")

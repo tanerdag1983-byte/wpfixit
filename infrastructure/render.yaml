@@ -26,6 +26,8 @@ services:
         sync: false
       - key: WP_FIXPILOT_SUPABASE_ANON_KEY
         sync: false
+      - key: WP_FIXPILOT_SUPABASE_JWT_SECRET
+        sync: false
       - key: WP_FIXPILOT_ENCRYPTION_KEY
         generateValue: true
       - key: WP_FIXPILOT_GOOGLE_CLIENT_ID

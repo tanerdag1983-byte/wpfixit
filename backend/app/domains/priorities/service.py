@@ -129,7 +129,8 @@ def _evidence(
     result: PriorityResult,
 ) -> list[EvidenceItem]:
     signals = result.signals
-    assert signals is not None
+    if signals is None:
+        raise RuntimeError("Priority signals missing")
     evidence = [
         EvidenceItem(
             id=f"page:{page.id}",
