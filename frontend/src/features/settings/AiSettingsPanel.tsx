@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { BlueprintSettingsPanel } from "../blueprints/BlueprintSettingsPanel";
 import { AiConnectionsPanel } from "./AiConnectionsPanel";
 import { CompanyProfilePanel } from "./CompanyProfilePanel";
 import { DataForSeoPanel } from "./DataForSeoPanel";
@@ -15,11 +16,16 @@ export function AiSettingsPanel({
   projectId: string;
 }) {
   const [connectionsRevision, setConnectionsRevision] = useState(0);
+  const [managedBlueprintsAvailable, setManagedBlueprintsAvailable] = useState(false);
 
   return (
     <div className="ai-settings">
       <WordPressBridgePanel projectId={projectId} />
-      <PagePackageSettingsPanel projectId={projectId} />
+      <BlueprintSettingsPanel
+        projectId={projectId}
+        onAvailabilityChange={setManagedBlueprintsAvailable}
+      />
+      {!managedBlueprintsAvailable && <PagePackageSettingsPanel projectId={projectId} />}
       <DataForSeoPanel organizationId={organizationId} />
       <AiConnectionsPanel
         organizationId={organizationId}

@@ -2372,6 +2372,227 @@ h2 {
   }
 }
 
+.blueprint-settings {
+  padding: 54px 0;
+  border-top: 1px solid var(--line);
+}
+
+.blueprint-section-heading,
+.blueprint-outline-heading,
+.blueprint-inspector > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.blueprint-create-row {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr 1.35fr auto;
+  align-items: end;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.blueprint-create-row label,
+.blueprint-block-detail label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.blueprint-create-row input,
+.blueprint-create-row select,
+.blueprint-block-detail select {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.blueprint-migration-note,
+.blueprint-preserved-note {
+  margin-top: 24px;
+  padding: 16px 18px;
+  border-left: 3px solid var(--accent);
+  background: rgba(40, 130, 91, 0.07);
+  color: var(--muted);
+}
+
+.blueprint-workspace {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr);
+  gap: 40px;
+  margin-top: 42px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
+}
+
+.blueprint-registry {
+  display: grid;
+  align-content: start;
+}
+
+.blueprint-registry button {
+  display: grid;
+  gap: 5px;
+  padding: 18px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.blueprint-registry button.active {
+  box-shadow: inset 3px 0 var(--accent);
+  background: rgba(40, 130, 91, 0.06);
+}
+
+.blueprint-registry span {
+  font-weight: 800;
+}
+
+.blueprint-registry small,
+.blueprint-registry b,
+.blueprint-inspector header p,
+.blueprint-outline-heading p {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.blueprint-registry b {
+  font-weight: 700;
+}
+
+.blueprint-inspector h3,
+.blueprint-outline h3 {
+  margin: 8px 0;
+}
+
+.blueprint-state {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.blueprint-state.ready {
+  background: rgba(30, 145, 93, 0.12);
+  color: var(--accent);
+}
+
+.blueprint-state.stale,
+.blueprint-state.invalid {
+  background: rgba(184, 72, 36, 0.12);
+  color: var(--danger);
+}
+
+.blueprint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.blueprint-actions button,
+.secondary-button {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.blueprint-default {
+  margin: 18px 0 0;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.blueprint-outline {
+  margin-top: 32px;
+}
+
+.blueprint-block {
+  border-top: 1px solid var(--line);
+}
+
+.blueprint-block-toggle {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(120px, 0.7fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 18px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.blueprint-block-toggle > span,
+.blueprint-block-toggle small {
+  color: var(--muted);
+}
+
+.blueprint-block-detail {
+  padding: 6px 8px 26px 62px;
+}
+
+.blueprint-field-list {
+  display: grid;
+  gap: 0;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.blueprint-field-list > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) 100px minmax(160px, 1fr);
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.blueprint-field-list code,
+.blueprint-field-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.blueprint-field-list p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .blueprint-create-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .blueprint-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .blueprint-registry {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 760px) {
   .app-shell {
     display: block;
@@ -2577,6 +2798,41 @@ h2 {
   }
 
   .settings-field-grid .wide-field {
+    grid-column: auto;
+  }
+
+  .blueprint-create-row,
+  .blueprint-registry {
+    grid-template-columns: 1fr;
+  }
+
+  .blueprint-section-heading,
+  .blueprint-outline-heading,
+  .blueprint-inspector > header {
+    flex-direction: column;
+  }
+
+  .blueprint-actions {
+    justify-content: flex-start;
+  }
+
+  .blueprint-block-toggle {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .blueprint-block-toggle small {
+    display: none;
+  }
+
+  .blueprint-block-detail {
+    padding-left: 42px;
+  }
+
+  .blueprint-field-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .blueprint-field-list p {
     grid-column: auto;
   }
 
