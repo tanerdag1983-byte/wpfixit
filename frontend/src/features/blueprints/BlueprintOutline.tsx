@@ -40,30 +40,35 @@ const roleLabels: Record<SemanticRole, string> = {
   content: "Inhoud",
 };
 
+function schemaRoles(schema: BlueprintSchema) {
+  return Object.fromEntries(
+    schema.blocks.map((block) => [block.id, block.semantic_role]),
+  );
+}
+
 export function BlueprintOutline({
   schema,
   onSave,
 }: {
   schema: BlueprintSchema;
-  onSave: (roles: Record<string, SemanticRole>) => Promise<void>;
+  onSave: (roles: Record<string, SemanticRole>) => Promise<boolean | void>;
 }) {
   const [roles, setRoles] = useState<Record<string, SemanticRole>>({});
   const [openBlocks, setOpenBlocks] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setRoles(
-      Object.fromEntries(
-        schema.blocks.map((block) => [block.id, block.semantic_role]),
-      ),
-    );
+    setRoles(schemaRoles(schema));
     setOpenBlocks(new Set());
   }, [schema]);
 
   async function save() {
     setBusy(true);
     try {
-      await onSave(roles);
+      const saved = await onSave(roles);
+      if (saved === false) setRoles(schemaRoles(schema));
+    } catch {
+      setRoles(schemaRoles(schema));
     } finally {
       setBusy(false);
     }

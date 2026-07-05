@@ -16,7 +16,9 @@ export function AiSettingsPanel({
   projectId: string;
 }) {
   const [connectionsRevision, setConnectionsRevision] = useState(0);
-  const [managedBlueprintsAvailable, setManagedBlueprintsAvailable] = useState(false);
+  const [managedBlueprintsAvailable, setManagedBlueprintsAvailable] = useState<
+    boolean | null
+  >(null);
 
   return (
     <div className="ai-settings">
@@ -25,7 +27,9 @@ export function AiSettingsPanel({
         projectId={projectId}
         onAvailabilityChange={setManagedBlueprintsAvailable}
       />
-      {!managedBlueprintsAvailable && <PagePackageSettingsPanel projectId={projectId} />}
+      {managedBlueprintsAvailable === false && (
+        <PagePackageSettingsPanel projectId={projectId} />
+      )}
       <DataForSeoPanel organizationId={organizationId} />
       <AiConnectionsPanel
         organizationId={organizationId}

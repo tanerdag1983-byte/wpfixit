@@ -50,4 +50,18 @@ describe("AiSettingsPanel", () => {
       screen.getByRole("heading", { name: "DataForSEO" }),
     ).toBeVisible();
   });
+
+  it("does not expose legacy mappings while blueprint availability is loading", () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return new Promise(() => undefined);
+      if (path.endsWith("/wordpress-pages")) return Promise.resolve({ items: [] });
+      return Promise.resolve({});
+    });
+
+    render(<AiSettingsPanel organizationId="org-1" projectId="project-1" />);
+
+    expect(
+      screen.queryByRole("heading", { name: "Standaard paginapakket" }),
+    ).not.toBeInTheDocument();
+  });
 });

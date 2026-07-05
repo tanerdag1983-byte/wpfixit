@@ -138,4 +138,68 @@ describe("BlueprintSettingsPanel", () => {
     await waitFor(() => expect(onAvailabilityChange).toHaveBeenCalledWith(true));
     expect(screen.queryByText(/oude paginapakket/)).not.toBeInTheDocument();
   });
+
+  it("keeps registry state when WordPress inventory fails", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [blueprint] });
+      }
+      return Promise.reject(new Error("Inventory niet bereikbaar"));
+    });
+    const onAvailabilityChange = vi.fn();
+
+    render(
+      <BlueprintSettingsPanel
+        projectId="project-1"
+        onAvailabilityChange={onAvailabilityChange}
+      />,
+    );
+
+    expect(await screen.findByText("Hero (algemeen)")).toBeVisible();
+    expect(onAvailabilityChange).toHaveBeenCalledWith(true);
+    expect(screen.getByText("Inventory niet bereikbaar")).toBeVisible();
+  });
+
+  it("reloads persisted stale state after validation fails", async () => {
+    const stale = { ...blueprint, state: "stale" };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (!init && path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [blueprint] });
+      }
+      if (!init && path.endsWith("/wordpress-pages")) {
+        return Promise.resolve({ items: [] });
+      }
+      if (init?.method === "POST" && path.endsWith("/validate")) {
+        return Promise.reject(new Error("Blueprint structure has changed"));
+      }
+      if (!init && path.endsWith("/page-blueprints/blueprint-1")) {
+        return Promise.resolve(stale);
+      }
+      return Promise.resolve(blueprint);
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Valideren" }));
+
+    expect(await screen.findAllByText("Nieuwe versie nodig")).toHaveLength(2);
+    expect(screen.getByText("Blueprint structure has changed")).toBeVisible();
+  });
+
+  it("clears the previous registry immediately when the project changes", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.includes("project-1") && path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [blueprint] });
+      }
+      if (path.includes("project-2")) return new Promise(() => undefined);
+      return Promise.resolve({ items: [] });
+    });
+    const { rerender } = render(<BlueprintSettingsPanel projectId="project-1" />);
+    expect(await screen.findByText("Hero (algemeen)")).toBeVisible();
+
+    rerender(<BlueprintSettingsPanel projectId="project-2" />);
+
+    await waitFor(() =>
+      expect(screen.queryByText("Hero (algemeen)")).not.toBeInTheDocument(),
+    );
+  });
 });

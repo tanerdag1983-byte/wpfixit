@@ -29,11 +29,11 @@ Failed to resolve import "./BlueprintOutline"
 ## Verification
 
 ```text
-npm test -- BlueprintSettingsPanel.test.tsx BlueprintOutline.test.tsx --run
-2 files passed, 3 tests passed
+npm test -- BlueprintSettingsPanel.test.tsx BlueprintOutline.test.tsx AiSettingsPanel.test.tsx --run
+3 files passed, 9 tests passed
 
 npm test -- --run
-26 files passed, 67 tests passed
+26 files passed, 72 tests passed
 
 npm run lint
 clean
@@ -41,6 +41,21 @@ clean
 npm run build
 TypeScript and Vite production build passed
 ```
+
+## First Review Adjudication
+
+The first independent review reported four important state-management issues. All
+four were accepted and covered by regressions before the fixes were implemented:
+
+- Failed validation now reloads and displays the persisted stale/invalid blueprint.
+- Registry and WordPress inventory requests load independently, so inventory failure
+  cannot hide known blueprints or expose the legacy mapper.
+- Changing projects immediately clears the previous project's blueprint state.
+- Failed semantic-role saves restore the server-backed roles and show an error rather
+  than leaving optimistic controls looking authoritative.
+
+The legacy page-package mapper also stays hidden while managed-blueprint availability
+is unresolved.
 
 ## Review Focus
 

@@ -53,7 +53,7 @@ export function BlueprintSettingsPanel({
   onAvailabilityChange,
 }: {
   projectId: string;
-  onAvailabilityChange?: (available: boolean) => void;
+  onAvailabilityChange?: (available: boolean | null) => void;
 }) {
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
   const [pages, setPages] = useState<WordPressPage[]>([]);
@@ -63,23 +63,39 @@ export function BlueprintSettingsPanel({
   const [sourcePageId, setSourcePageId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [registryLoaded, setRegistryLoaded] = useState(false);
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      apiRequest<{ items: Blueprint[] }>(`/projects/${projectId}/page-blueprints`),
-      apiRequest<{ items: WordPressPage[] }>(`/projects/${projectId}/wordpress-pages`),
-    ])
-      .then(([registry, inventory]) => {
+    setBlueprints([]);
+    setPages([]);
+    setSelectedId("");
+    setMessage("");
+    setRegistryLoaded(false);
+    onAvailabilityChange?.(null);
+
+    apiRequest<{ items: Blueprint[] }>(`/projects/${projectId}/page-blueprints`)
+      .then((registry) => {
         if (!active) return;
         const items = registry.items ?? [];
         setBlueprints(items);
-        setPages(inventory.items ?? []);
         setSelectedId(items[0]?.id ?? "");
+        setRegistryLoaded(true);
         onAvailabilityChange?.(items.length > 0);
       })
       .catch((error) => {
-        if (active) setMessage(error instanceof Error ? error.message : "Blueprints laden mislukt.");
+        if (!active) return;
+        setRegistryLoaded(false);
+        setMessage(error instanceof Error ? error.message : "Blueprints laden mislukt.");
+      });
+
+    apiRequest<{ items: WordPressPage[] }>(`/projects/${projectId}/wordpress-pages`)
+      .then((inventory) => {
+        if (active) setPages(inventory.items ?? []);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setMessage(error instanceof Error ? error.message : "WordPress-pagina's laden mislukt.");
       });
     return () => {
       active = false;
@@ -143,20 +159,35 @@ export function BlueprintSettingsPanel({
       );
       replaceBlueprint(updated);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Blueprint bijwerken mislukt.");
+      const errorMessage = error instanceof Error ? error.message : "Blueprint bijwerken mislukt.";
+      try {
+        const persisted = await apiRequest<Blueprint>(
+          `/projects/${projectId}/page-blueprints/${selected.id}`,
+        );
+        replaceBlueprint(persisted);
+      } catch {
+        // Keep the current snapshot when the recovery read is unavailable.
+      }
+      setMessage(errorMessage);
     } finally {
       setBusy(false);
     }
   }
 
   async function saveRoles(roles: Record<string, SemanticRole>) {
-    if (!selected) return;
-    const updated = await apiRequest<Blueprint>(
-      `/projects/${projectId}/page-blueprints/${selected.id}`,
-      { method: "PUT", body: JSON.stringify({ semantic_roles: roles }) },
-    );
-    replaceBlueprint(updated);
-    setMessage("Semantische rollen zijn opgeslagen.");
+    if (!selected) return false;
+    try {
+      const updated = await apiRequest<Blueprint>(
+        `/projects/${projectId}/page-blueprints/${selected.id}`,
+        { method: "PUT", body: JSON.stringify({ semantic_roles: roles }) },
+      );
+      replaceBlueprint(updated);
+      setMessage("Semantische rollen zijn opgeslagen.");
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Rollen opslaan mislukt.");
+      return false;
+    }
   }
 
   async function removeBlueprint() {
@@ -220,7 +251,9 @@ export function BlueprintSettingsPanel({
 
       {message && <p className="form-message">{message}</p>}
 
-      {blueprints.length === 0 ? (
+      {!registryLoaded ? (
+        <p className="blueprint-migration-note">Blueprintregister laden...</p>
+      ) : blueprints.length === 0 ? (
         <p className="blueprint-migration-note">
           Nog geen managed blueprint. Het oude paginapakket blijft hieronder beschikbaar
           totdat de eerste blueprint klaarstaat.

@@ -47,4 +47,15 @@ describe("BlueprintOutline", () => {
       expect(onSave).toHaveBeenCalledWith({ hero: "introduction" }),
     );
   });
+
+  it("restores server roles when saving is rejected", async () => {
+    const onSave = vi.fn().mockResolvedValue(false);
+    render(<BlueprintOutline schema={schema} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: /Hero \(algemeen\)/ }));
+    const role = screen.getByLabelText("Rol voor Hero (algemeen)");
+    fireEvent.change(role, { target: { value: "introduction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rollen opslaan" }));
+
+    await waitFor(() => expect(role).toHaveValue("hero"));
+  });
 });
