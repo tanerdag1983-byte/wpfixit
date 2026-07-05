@@ -31,6 +31,12 @@ type WordPressPage = {
   title: string;
   url: string;
 };
+type LegacyCandidate = {
+  source_wordpress_page_id: string;
+  builder: string;
+  seo_plugin: string;
+  state: "capture_required";
+};
 
 const stateLabels: Record<BlueprintState, string> = {
   capture_required: "Vastlegging nodig",
@@ -64,6 +70,7 @@ export function BlueprintSettingsPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [registryStatus, setRegistryStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const [legacyCandidates, setLegacyCandidates] = useState<LegacyCandidate[]>([]);
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
 
@@ -78,13 +85,15 @@ export function BlueprintSettingsPanel({
     setBusy(false);
     setMessage("");
     setRegistryStatus("loading");
+    setLegacyCandidates([]);
     onAvailabilityChange?.(null);
 
-    apiRequest<{ items: Blueprint[] }>(`/projects/${projectId}/page-blueprints`)
+    apiRequest<{ items: Blueprint[]; legacy_candidates?: LegacyCandidate[] }>(`/projects/${projectId}/page-blueprints`)
       .then((registry) => {
         if (!active) return;
         const items = registry.items ?? [];
         setBlueprints(items);
+        setLegacyCandidates(registry.legacy_candidates ?? []);
         setSelectedId(items[0]?.id ?? "");
         setRegistryStatus("loaded");
         onAvailabilityChange?.(items.length > 0);
@@ -284,8 +293,9 @@ export function BlueprintSettingsPanel({
         <p className="blueprint-migration-note">Blueprintregister kon niet worden geladen.</p>
       ) : blueprints.length === 0 ? (
         <p className="blueprint-migration-note">
-          Nog geen managed blueprint. Het oude paginapakket blijft hieronder beschikbaar
-          totdat de eerste blueprint klaarstaat.
+          {legacyCandidates.length > 0
+            ? "Geldige oude paginapakketinstellingen gevonden. Kies de bijbehorende referentiepagina hierboven om veilig een managed blueprint vast te leggen. De oude instellingen blijven behouden."
+            : "Nog geen managed blueprint. Het oude paginapakket blijft hieronder beschikbaar totdat de eerste blueprint klaarstaat."}
         </p>
       ) : (
         <div className="blueprint-workspace">

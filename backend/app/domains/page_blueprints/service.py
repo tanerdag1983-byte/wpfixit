@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import update
@@ -9,8 +10,46 @@ from app.domains.page_blueprints.lifecycle import (
 )
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema
+from app.domains.page_packages.models import ProjectPagePackageSettings
 
 _ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
+
+
+@dataclass(frozen=True)
+class LegacyBlueprintCandidate:
+    project_id: str
+    source_wordpress_page_id: str
+    builder: str
+    seo_plugin: str
+    state: BlueprintLifecycleState = "capture_required"
+
+
+def legacy_blueprint_candidates(
+    session: Session,
+    project_id: str,
+) -> list[LegacyBlueprintCandidate]:
+    settings = session.get(ProjectPagePackageSettings, project_id)
+    if (
+        settings is None
+        or settings.validation_state != "valid"
+        or not settings.template_wordpress_page_id
+    ):
+        return []
+    managed_source_exists = session.query(PageBlueprint.id).filter(
+        PageBlueprint.project_id == project_id,
+        PageBlueprint.source_wordpress_page_id
+        == settings.template_wordpress_page_id,
+    ).first()
+    if managed_source_exists is not None:
+        return []
+    return [
+        LegacyBlueprintCandidate(
+            project_id=project_id,
+            source_wordpress_page_id=settings.template_wordpress_page_id,
+            builder=settings.builder,
+            seo_plugin=settings.seo_plugin,
+        )
+    ]
 
 
 def _validated_schema(content_schema: dict) -> dict:

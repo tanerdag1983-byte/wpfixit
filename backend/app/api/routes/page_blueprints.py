@@ -14,6 +14,7 @@ from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema
 from app.domains.page_blueprints.service import (
     create_blueprint_version,
+    legacy_blueprint_candidates,
     set_default_blueprint,
 )
 from app.domains.page_packages.models import PagePackageProposal
@@ -220,7 +221,18 @@ def list_blueprints(
         .where(PageBlueprint.project_id == project_id)
         .order_by(PageBlueprint.created_at, PageBlueprint.id)
     ).all()
-    return {"items": [_payload(item) for item in items]}
+    return {
+        "items": [_payload(item) for item in items],
+        "legacy_candidates": [
+            {
+                "source_wordpress_page_id": candidate.source_wordpress_page_id,
+                "builder": candidate.builder,
+                "seo_plugin": candidate.seo_plugin,
+                "state": candidate.state,
+            }
+            for candidate in legacy_blueprint_candidates(session, project_id)
+        ],
+    }
 
 
 @router.post("/page-blueprints", status_code=status.HTTP_201_CREATED)

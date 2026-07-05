@@ -264,6 +264,28 @@ describe("BlueprintSettingsPanel", () => {
     );
   });
 
+  it("shows a non-destructive legacy migration candidate", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [],
+          legacy_candidates: [{
+            source_wordpress_page_id: "page-19",
+            builder: "acf",
+            seo_plugin: "yoast",
+            state: "capture_required",
+          }],
+        });
+      }
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByText(/Geldige oude paginapakketinstellingen gevonden/)).toBeVisible();
+    expect(screen.getByText(/oude instellingen blijven behouden/)).toBeVisible();
+  });
+
   it("locks destructive actions while semantic roles are being saved", async () => {
     let finishSave: ((value: typeof blueprint) => void) | undefined;
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
