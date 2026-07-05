@@ -2097,6 +2097,60 @@ h2 {
   margin-top: 38px;
 }
 
+.blueprint-review-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 28px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.blueprint-review-summary > div {
+  display: grid;
+  gap: 5px;
+  padding: 18px 22px;
+  border-right: 1px solid var(--line);
+}
+
+.blueprint-review-summary > div:last-child {
+  border-right: 0;
+}
+
+.blueprint-review-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.blueprint-review-block {
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.blueprint-review-block-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.blueprint-review-block-heading > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #e4ece2;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.blueprint-review-block-heading h2 {
+  margin: 3px 0 0;
+  font-size: 22px;
+}
+
 .page-package-form,
 .package-section {
   display: grid;
@@ -2759,6 +2813,15 @@ h2 {
   .page-package-layout,
   .package-repeat {
     grid-template-columns: 1fr;
+  }
+
+  .blueprint-review-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .blueprint-review-summary > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .page-package-sidebar {

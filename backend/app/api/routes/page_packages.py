@@ -721,6 +721,7 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
                 "builder": stored.builder,
                 "seo_plugin": stored.seo_plugin,
                 "wordpress_blueprint_id": stored.wordpress_blueprint_id,
+                "source_wordpress_page_id": stored.source_wordpress_page_id,
             }
     return {
         "id": proposal.id,

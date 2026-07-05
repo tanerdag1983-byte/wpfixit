@@ -3,26 +3,36 @@ import { useEffect, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
 
-type Section = { heading: string; body_html: string };
-type Faq = { question: string; answer_html: string };
 type InternalLink = { anchor: string; url: string };
+type Replacement = { field_id: string; value: string };
 type PagePackage = {
   title: string;
   slug: string;
   seo_title: string;
   meta_description: string;
   focus_keyword: string;
-  hero_title: string;
-  introduction_html: string;
-  sections: Section[];
-  faq: Faq[];
-  cta: {
-    title: string;
-    body_html: string;
-    button_label: string;
-    button_url: string;
-  };
+  replacements: Replacement[];
   internal_links: InternalLink[];
+};
+
+type BlueprintField = {
+  id: string;
+  path: string;
+  label: string;
+  value_type: "plain_text" | "rich_text" | "heading" | "button_text" | "url";
+  current_value: string;
+  required: boolean;
+  max_length: number;
+};
+type BlueprintSchema = {
+  schema_version: "blueprint-v1";
+  blocks: Array<{
+    id: string;
+    layout: string;
+    label: string;
+    semantic_role: string;
+    fields: BlueprintField[];
+  }>;
 };
 
 type Proposal = {
@@ -30,6 +40,15 @@ type Proposal = {
   state: "generating" | "proposed" | "approved" | "draft_created" | "failed";
   package: PagePackage;
   rendered_html: string;
+  blueprint: {
+    name: string;
+    page_type: string;
+    version: number;
+    builder: string;
+    seo_plugin: string;
+    source_wordpress_page_id?: string;
+  } | null;
+  config_snapshot: { content_schema?: BlueprintSchema };
   provider: string | null;
   model: string | null;
   wordpress_edit_url?: string | null;
@@ -192,9 +211,38 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         </span>
       </div>
 
+      {proposal.blueprint && (
+        <div className="blueprint-review-summary">
+          <div>
+            <span>Gekozen blueprint</span>
+            <strong>{proposal.blueprint.name} · versie {proposal.blueprint.version}</strong>
+          </div>
+          <div>
+            <span>Paginatype</span>
+            <strong>{proposal.blueprint.page_type}</strong>
+          </div>
+          <div>
+            <span>Builder en SEO</span>
+            <strong>{proposal.blueprint.builder} · {proposal.blueprint.seo_plugin}</strong>
+          </div>
+          <div>
+            <span>Bronpagina</span>
+            <strong>{proposal.blueprint.source_wordpress_page_id || "Onbekend"}</strong>
+          </div>
+        </div>
+      )}
+      <p className="blueprint-preserved-note">
+        Afbeeldingen en vormgeving blijven uit de blueprint behouden.
+      </p>
+
       <div className="page-package-layout">
         <div className="page-package-form">
-          <PackageFields draft={draft} disabled={!editable} onChange={setDraft} />
+          <PackageFields
+            draft={draft}
+            disabled={!editable}
+            onChange={setDraft}
+            schema={proposal.config_snapshot.content_schema}
+          />
           <div className="settings-actions">
             <button
               className="secondary-button"
@@ -217,12 +265,8 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         </div>
 
         <aside className="page-package-sidebar">
-          <p className="eyebrow">Voorbeeld</p>
-          <div
-            aria-label="Pagina-voorbeeld"
-            className="proposal-preview page-package-preview"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(proposal.rendered_html) }}
-          />
+          <p className="eyebrow">Inhoudsoverzicht</p>
+          <BlueprintPreview draft={draft} schema={proposal.config_snapshot.content_schema} />
           <ol className="publish-steps">
             <li className="complete"><CheckCircle2 size={16} /> Pakket gegenereerd</li>
             <li className={proposal.state !== "proposed" ? "complete" : ""}>
@@ -265,10 +309,12 @@ function PackageFields({
   draft,
   disabled,
   onChange,
+  schema,
 }: {
   draft: PagePackage;
   disabled: boolean;
   onChange: (draft: PagePackage) => void;
+  schema?: BlueprintSchema;
 }) {
   const field = (key: keyof PagePackage, value: string) =>
     onChange({ ...draft, [key]: value });
@@ -284,44 +330,73 @@ function PackageFields({
           <TextField wide label="Meta description" value={draft.meta_description} disabled={disabled} onChange={(value) => field("meta_description", value)} />
         </div>
       </section>
-      <section className="package-section">
-        <p className="eyebrow">Pagina-inhoud</p>
-        <div className="settings-field-grid">
-          <TextField wide label="Hero-titel" value={draft.hero_title} disabled={disabled} onChange={(value) => field("hero_title", value)} />
-          <TextField wide multiline label="Introductie HTML" value={draft.introduction_html} disabled={disabled} onChange={(value) => field("introduction_html", value)} />
-          {draft.sections.map((section, index) => (
-            <div className="package-repeat wide-field" key={`section-${index}`}>
-              <TextField label={`Sectie ${index + 1} titel`} value={section.heading} disabled={disabled} onChange={(value) => onChange({ ...draft, sections: draft.sections.map((item, itemIndex) => itemIndex === index ? { ...item, heading: value } : item) })} />
-              <TextField multiline label={`Sectie ${index + 1} HTML`} value={section.body_html} disabled={disabled} onChange={(value) => onChange({ ...draft, sections: draft.sections.map((item, itemIndex) => itemIndex === index ? { ...item, body_html: value } : item) })} />
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="package-section">
-        <p className="eyebrow">FAQ</p>
-        {draft.faq.map((item, index) => (
-          <div className="package-repeat" key={`faq-${index}`}>
-            <TextField label={`FAQ ${index + 1} vraag`} value={item.question} disabled={disabled} onChange={(value) => onChange({ ...draft, faq: draft.faq.map((faq, itemIndex) => itemIndex === index ? { ...faq, question: value } : faq) })} />
-            <TextField multiline label={`FAQ ${index + 1} antwoord HTML`} value={item.answer_html} disabled={disabled} onChange={(value) => onChange({ ...draft, faq: draft.faq.map((faq, itemIndex) => itemIndex === index ? { ...faq, answer_html: value } : faq) })} />
+      {schema?.blocks.map((block, index) => (
+        <section className="package-section blueprint-review-block" key={block.id}>
+          <div className="blueprint-review-block-heading">
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <div><p className="eyebrow">{block.semantic_role}</p><h2>{block.label}</h2></div>
           </div>
-        ))}
-      </section>
+          <div className="settings-field-grid">
+            {block.fields.map((blueprintField) => {
+              const replacement = draft.replacements.find((item) => item.field_id === blueprintField.id);
+              const value = replacement?.value ?? "";
+              const change = (nextValue: string) => onChange({
+                ...draft,
+                replacements: replacement
+                  ? draft.replacements.map((item) =>
+                      item.field_id === blueprintField.id ? { ...item, value: nextValue } : item,
+                    )
+                  : [...draft.replacements, { field_id: blueprintField.id, value: nextValue }],
+              });
+              if (blueprintField.value_type === "url") {
+                const options = Array.from(new Set(["", value, blueprintField.current_value].filter((option, optionIndex) => option || optionIndex === 0)));
+                return (
+                  <label key={blueprintField.id}>
+                    {blueprintField.label}
+                    <select aria-label={blueprintField.label} disabled={disabled} value={value} onChange={(event) => change(event.target.value)}>
+                      {options.map((option) => <option key={option || "empty"} value={option}>{option || "Kies een goedgekeurde URL"}</option>)}
+                    </select>
+                  </label>
+                );
+              }
+              return (
+                <TextField
+                  disabled={disabled}
+                  key={blueprintField.id}
+                  label={blueprintField.label}
+                  multiline={blueprintField.value_type === "rich_text"}
+                  onChange={change}
+                  value={value}
+                  wide={blueprintField.value_type === "rich_text"}
+                />
+              );
+            })}
+          </div>
+        </section>
+      ))}
       <section className="package-section">
-        <p className="eyebrow">CTA en interne links</p>
-        <div className="settings-field-grid">
-          <TextField label="CTA-titel" value={draft.cta.title} disabled={disabled} onChange={(value) => onChange({ ...draft, cta: { ...draft.cta, title: value } })} />
-          <TextField label="CTA-knoptekst" value={draft.cta.button_label} disabled={disabled} onChange={(value) => onChange({ ...draft, cta: { ...draft.cta, button_label: value } })} />
-          <TextField wide multiline label="CTA HTML" value={draft.cta.body_html} disabled={disabled} onChange={(value) => onChange({ ...draft, cta: { ...draft.cta, body_html: value } })} />
-          <TextField wide label="CTA-link" value={draft.cta.button_url} disabled={disabled} onChange={(value) => onChange({ ...draft, cta: { ...draft.cta, button_url: value } })} />
-          {draft.internal_links.map((link, index) => (
-            <div className="package-repeat wide-field" key={`link-${index}`}>
-              <TextField label={`Interne link ${index + 1} ankertekst`} value={link.anchor} disabled={disabled} onChange={(value) => onChange({ ...draft, internal_links: draft.internal_links.map((item, itemIndex) => itemIndex === index ? { ...item, anchor: value } : item) })} />
-              <TextField label={`Interne link ${index + 1} URL`} value={link.url} disabled={disabled} onChange={(value) => onChange({ ...draft, internal_links: draft.internal_links.map((item, itemIndex) => itemIndex === index ? { ...item, url: value } : item) })} />
-            </div>
-          ))}
-        </div>
+        <p className="eyebrow">Goedgekeurde interne links</p>
+        {draft.internal_links.map((link) => <p key={`${link.anchor}:${link.url}`}><strong>{link.anchor}</strong><br /><small>{link.url}</small></p>)}
       </section>
     </>
+  );
+}
+
+function BlueprintPreview({ draft, schema }: { draft: PagePackage; schema?: BlueprintSchema }) {
+  return (
+    <div aria-label="Pagina-voorbeeld" className="proposal-preview page-package-preview">
+      {schema?.blocks.map((block) => (
+        <section key={block.id}>
+          <strong>{block.label}</strong>
+          {block.fields.map((field) => {
+            const value = draft.replacements.find((item) => item.field_id === field.id)?.value ?? "";
+            return field.value_type === "rich_text" ? (
+              <div key={field.id} dangerouslySetInnerHTML={{ __html: sanitizeHtml(value) }} />
+            ) : <p key={field.id}>{value}</p>;
+          })}
+        </section>
+      ))}
+    </div>
   );
 }
 

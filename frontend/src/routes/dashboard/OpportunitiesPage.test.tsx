@@ -13,6 +13,14 @@ describe("OpportunitiesPage", () => {
   beforeEach(() => {
     apiRequest.mockReset();
     apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [
+            { id: "blueprint-1", name: "Dienstpagina", page_type: "service", version: 2, state: "ready", is_default_for_page_type: true },
+            { id: "blueprint-2", name: "Merkpagina", page_type: "brand", version: 1, state: "ready", is_default_for_page_type: true },
+          ],
+        });
+      }
       if (path.endsWith("/keyword-opportunities")) {
         return Promise.resolve({
           items: [
@@ -73,6 +81,13 @@ describe("OpportunitiesPage", () => {
   it("shows page proposal errors next to the selected opportunity", async () => {
     let proposalAttempt = 0;
     apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [
+            { id: "blueprint-1", name: "Dienstpagina", page_type: "service", version: 2, state: "ready", is_default_for_page_type: true },
+          ],
+        });
+      }
       if (path.endsWith("/keyword-opportunities")) {
         return Promise.resolve({
           items: [
@@ -158,6 +173,13 @@ describe("OpportunitiesPage", () => {
 
   it("requires and submits an explicit blueprint page type", async () => {
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [
+            { id: "blueprint-2", name: "Merkpagina", page_type: "brand", version: 1, state: "ready", is_default_for_page_type: true },
+          ],
+        });
+      }
       if (path.endsWith("/keyword-opportunities")) {
         return Promise.resolve({
           items: [
@@ -196,5 +218,24 @@ describe("OpportunitiesPage", () => {
         { method: "POST", body: JSON.stringify({ page_type: "brand" }) },
       ),
     );
+  });
+
+  it("links to blueprint settings when no ready default exists", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({ items: [{
+          id: "keyword-1", keyword: "dsg revisie", search_volume: 10, cpc: null,
+          competition_level: null, keyword_difficulty: null, intent: "commercial",
+          target_url: null, target_classification: "new_page", target_score: 0,
+          target_evidence: [], recommended_action: "Maak een pagina.", source: "dataforseo",
+        }] });
+      }
+      return Promise.resolve({ synced: 0 });
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    expect(await screen.findByRole("link", { name: "Standaardblueprint instellen" })).toHaveAttribute("href", "#settings");
+    expect(screen.getByRole("button", { name: "Pagina laten maken" })).toBeDisabled();
   });
 });

@@ -22,6 +22,14 @@ type KeywordOpportunity = {
 type OpportunityResponse = {
   items: KeywordOpportunity[];
 };
+type Blueprint = {
+  id: string;
+  name: string;
+  page_type: PageType;
+  version: number;
+  state: string;
+  is_default_for_page_type: boolean;
+};
 
 type PageType = "service" | "brand" | "location" | "blog" | "generic";
 
@@ -43,6 +51,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
   const [proposalPageTypes, setProposalPageTypes] = useState<Record<string, PageType | "">>({});
   const [message, setMessage] = useState("");
+  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
 
   const loadItems = useCallback(async () => {
     const response = await apiRequest<OpportunityResponse>(
@@ -71,6 +80,22 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
       active = false;
     };
   }, [loadItems]);
+
+  useEffect(() => {
+    let active = true;
+    setBlueprints([]);
+    setProposalPageTypes({});
+    apiRequest<{ items: Blueprint[] }>(`/projects/${projectId}/page-blueprints`)
+      .then((response) => {
+        if (active) setBlueprints(response.items ?? []);
+      })
+      .catch((error) => {
+        if (active) {
+          setMessage(error instanceof Error ? error.message : "Blueprints laden mislukt.");
+        }
+      });
+    return () => { active = false; };
+  }, [projectId]);
 
   async function syncOpportunities() {
     setSyncing(true);
@@ -191,11 +216,21 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                     }
                   >
                     <option value="">Kies paginatype</option>
-                    {pageTypes.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
+                    {pageTypes.map(([value, label]) => {
+                      const blueprint = blueprints.find(
+                        (item) => item.page_type === value && item.state === "ready" && item.is_default_for_page_type,
+                      );
+                      return (
+                        <option disabled={!blueprint} key={value} value={value}>
+                          {blueprint ? `${label} · ${blueprint.name} v${blueprint.version}` : `${label} · geen standaardblueprint`}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
+                {!blueprints.some(
+                  (blueprint) => blueprint.state === "ready" && blueprint.is_default_for_page_type,
+                ) && <a className="back-link" href="#settings">Standaardblueprint instellen</a>}
                 <button
                   className="secondary-button opportunity-create-button"
                   disabled={creatingProposalId === item.id || !proposalPageTypes[item.id]}
