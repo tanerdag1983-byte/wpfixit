@@ -433,7 +433,12 @@ def version_blueprint(
     user: UserDependency,
 ) -> dict:
     _manager_project(session, user, project_id)
-    original = _blueprint_or_404(session, project_id, blueprint_id)
+    original = _blueprint_or_404(
+        session,
+        project_id,
+        blueprint_id,
+        for_update=True,
+    )
     source = session.scalar(
         select(WordPressPage).where(
             WordPressPage.id == original.source_wordpress_page_id,

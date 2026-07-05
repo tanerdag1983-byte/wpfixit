@@ -458,6 +458,36 @@ def test_new_version_rolls_back_registry_when_default_transfer_fails(
     assert bridge.deleted == [902]
 
 
+def test_new_version_locks_original_before_wordpress_capture(
+    client, auth_as, projects, monkeypatch, session
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    original_lookup = page_blueprints._blueprint_or_404
+    lock_requests: list[bool] = []
+
+    def tracked_lookup(session, project_id, blueprint_id, *, for_update=False):
+        lock_requests.append(for_update)
+        return original_lookup(
+            session,
+            project_id,
+            blueprint_id,
+            for_update=for_update,
+        )
+
+    monkeypatch.setattr(page_blueprints, "_blueprint_or_404", tracked_lookup)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{created['id']}/new-version"
+    )
+
+    assert response.status_code == 201
+    assert lock_requests == [True]
+
+
 def test_delete_recovers_when_wordpress_clone_is_already_absent(
     client, auth_as, projects, monkeypatch
 ):

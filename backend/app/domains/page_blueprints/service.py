@@ -10,7 +10,6 @@ from app.domains.page_blueprints.lifecycle import (
 )
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema
-from app.domains.page_packages.models import ProjectPagePackageSettings
 
 _ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
 
@@ -28,6 +27,8 @@ def legacy_blueprint_candidates(
     session: Session,
     project_id: str,
 ) -> list[LegacyBlueprintCandidate]:
+    from app.domains.page_packages.models import ProjectPagePackageSettings
+
     settings = session.get(ProjectPagePackageSettings, project_id)
     if (
         settings is None
