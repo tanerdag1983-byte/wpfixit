@@ -23,6 +23,16 @@ type OpportunityResponse = {
   items: KeywordOpportunity[];
 };
 
+type PageType = "service" | "brand" | "location" | "blog" | "generic";
+
+const pageTypes: Array<[PageType, string]> = [
+  ["service", "Dienstpagina"],
+  ["brand", "Merkpagina"],
+  ["location", "Locatiepagina"],
+  ["blog", "Blogartikel"],
+  ["generic", "Algemene pagina"],
+];
+
 export function OpportunitiesPage({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<KeywordOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +41,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     null,
   );
   const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
+  const [proposalPageTypes, setProposalPageTypes] = useState<Record<string, PageType | "">>({});
   const [message, setMessage] = useState("");
 
   const loadItems = useCallback(async () => {
@@ -85,12 +96,14 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   }
 
   async function createPageProposal(item: KeywordOpportunity) {
+    const pageType = proposalPageTypes[item.id];
+    if (!pageType) return;
     setCreatingProposalId(item.id);
     setProposalErrors((current) => ({ ...current, [item.id]: "" }));
     try {
       const response = await apiRequest<{ id: string }>(
         `/projects/${projectId}/keyword-opportunities/${item.id}/page-proposal`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify({ page_type: pageType }) },
       );
       window.sessionStorage.setItem(`page-proposal-id:${projectId}`, response.id);
       window.location.hash = "page-proposal";
@@ -165,9 +178,27 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
             </div>
             {item.target_classification === "new_page" ? (
               <div className="opportunity-create-action">
+                <label>
+                  <span>Paginatype</span>
+                  <select
+                    aria-label={`Paginatype voor ${item.keyword}`}
+                    value={proposalPageTypes[item.id] ?? ""}
+                    onChange={(event) =>
+                      setProposalPageTypes((current) => ({
+                        ...current,
+                        [item.id]: event.target.value as PageType | "",
+                      }))
+                    }
+                  >
+                    <option value="">Kies paginatype</option>
+                    {pageTypes.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   className="secondary-button opportunity-create-button"
-                  disabled={creatingProposalId === item.id}
+                  disabled={creatingProposalId === item.id || !proposalPageTypes[item.id]}
                   onClick={() => createPageProposal(item)}
                   type="button"
                 >

@@ -11,22 +11,24 @@ from app.core.database import background_engine, get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
+from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.generation import (
     PolicyPagePackageGenerator,
     prompt_version,
-    render_page_package,
+    validate_blueprint_replacements,
 )
 from app.domains.page_packages.models import (
     PagePackageProposal,
     ProjectPagePackageSettings,
 )
 from app.domains.page_packages.schemas import (
-    GeneratedPagePackage,
+    GeneratedBlueprintPackage,
     InternalLink,
     PagePackageContext,
     PagePackageGenerationResult,
     PagePackageProposalWrite,
     PagePackageSettingsWrite,
+    PageProposalRequest,
 )
 from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership, get_project
@@ -217,6 +219,7 @@ def validate_page_package_settings(
 def create_page_package_proposal(
     project_id: str,
     opportunity_id: str,
+    payload: PageProposalRequest,
     background_tasks: BackgroundTasks,
     session: SessionDependency,
     user: UserDependency,
@@ -236,17 +239,25 @@ def create_page_package_proposal(
             status_code=409,
             detail="Only a new-page opportunity can create a page proposal",
         )
-    settings, _ = _configured_settings(session, project_id)
-    if settings.validation_state != "valid" or not settings.template_content_hash:
+    blueprint = session.scalar(
+        select(PageBlueprint).where(
+            PageBlueprint.project_id == project_id,
+            PageBlueprint.page_type == payload.page_type,
+            PageBlueprint.state == "ready",
+            PageBlueprint.is_default_for_page_type.is_(True),
+        )
+    )
+    if blueprint is None:
         raise HTTPException(
             status_code=422,
-            detail="Validate the project page package before generating a page",
+            detail="Set a ready default blueprint for this page type",
         )
     existing = session.scalar(
         select(PagePackageProposal)
         .where(
             PagePackageProposal.project_id == project_id,
             PagePackageProposal.opportunity_id == opportunity_id,
+            PagePackageProposal.blueprint_id == blueprint.id,
             PagePackageProposal.state.in_(["generating", "proposed"]),
         )
         .order_by(PagePackageProposal.created_at.desc())
@@ -254,7 +265,7 @@ def create_page_package_proposal(
     if existing is not None:
         return _proposal_payload(session, existing)
 
-    context = _generation_context(session, project, opportunity, settings)
+    context = _generation_context(session, project, opportunity, blueprint)
     policy = session.get(ProjectAiPolicy, project.id)
     if policy is None:
         raise HTTPException(
@@ -277,12 +288,16 @@ def create_page_package_proposal(
         package={},
         rendered_html="",
         config_snapshot={
-            "builder": settings.builder,
-            "template_wordpress_page_id": settings.template_wordpress_page_id,
-            "seo_plugin": settings.seo_plugin,
-            "slot_mapping": settings.slot_mapping,
-            "template_content_hash": settings.template_content_hash,
+            "blueprint_id": blueprint.id,
+            "page_type": blueprint.page_type,
+            "version": blueprint.version,
+            "structure_hash": blueprint.structure_hash,
+            "builder": blueprint.builder,
+            "seo_plugin": blueprint.seo_plugin,
         },
+        blueprint_id=blueprint.id,
+        blueprint_version=blueprint.version,
+        blueprint_structure_hash=blueprint.structure_hash,
         model=policy.primary_model,
         prompt_version=prompt_version(context, policy.primary_model),
         proposed_by=user.id,
@@ -305,8 +320,24 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
         job = session.get(Job, proposal.job_id)
         opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
         project = session.get(Project, proposal.project_id)
-        settings = session.get(ProjectPagePackageSettings, proposal.project_id)
-        if job is None or opportunity is None or project is None or settings is None:
+        blueprint = session.scalar(
+            select(PageBlueprint).where(
+                PageBlueprint.project_id == proposal.project_id,
+                PageBlueprint.id == proposal.blueprint_id,
+                PageBlueprint.version == proposal.blueprint_version,
+                PageBlueprint.structure_hash == proposal.blueprint_structure_hash,
+                PageBlueprint.state == "ready",
+            )
+        )
+        if job is None or opportunity is None or project is None:
+            return
+        if blueprint is None:
+            proposal.state = "failed"
+            job.state = "failed"
+            job.error_code = "BlueprintUnavailable"
+            job.error_message = "Blueprint changed before generation started"
+            job.completed_at = datetime.now(UTC)
+            session.commit()
             return
         job.state = "running"
         job.progress = 5
@@ -314,23 +345,25 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
         session.commit()
         try:
             generator = _page_package_generator(session, project)
-            context = _generation_context(session, project, opportunity, settings)
+            context = _generation_context(session, project, opportunity, blueprint)
             generated = PagePackageGenerationResult.model_validate(
                 generator.generate_page_package(context)
             )
+            package = GeneratedBlueprintPackage.model_validate(generated.package)
+            package = validate_blueprint_replacements(package, context)
             allowed_links = {link.url for link in context.internal_link_candidates}
             if any(
                 link.url not in allowed_links
-                for link in generated.package.internal_links
+                for link in package.internal_links
             ):
                 raise ValueError("AI returned an unknown internal link")
             if (
-                generated.package.focus_keyword.casefold()
+                package.focus_keyword.casefold()
                 != opportunity.keyword.casefold()
             ):
                 raise ValueError("AI changed the focus keyword")
-            proposal.package = generated.package.model_dump()
-            proposal.rendered_html = render_page_package(generated.package)
+            proposal.package = package.model_dump()
+            proposal.rendered_html = ""
             proposal.provider = generated.provider or proposal.provider
             proposal.model = generated.model or proposal.model
             proposal.input_tokens = generated.input_tokens
@@ -387,8 +420,18 @@ def update_page_package_proposal(
     proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
     if proposal.state != "proposed":
         raise HTTPException(status_code=409, detail="Only proposed pages can be edited")
-    proposal.package = payload.package.model_dump()
-    proposal.rendered_html = render_page_package(payload.package)
+    blueprint = _proposal_blueprint_or_409(session, proposal)
+    project = session.get(Project, proposal.project_id)
+    opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+    if project is None or opportunity is None:
+        raise HTTPException(status_code=409, detail="Proposal context is unavailable")
+    package = GeneratedBlueprintPackage.model_validate(payload.package)
+    validate_blueprint_replacements(
+        package,
+        _generation_context(session, project, opportunity, blueprint),
+    )
+    proposal.package = package.model_dump()
+    proposal.rendered_html = ""
     session.commit()
     return _proposal_payload(session, proposal)
 
@@ -407,7 +450,17 @@ def approve_page_package_proposal(
         raise HTTPException(
             status_code=409, detail="Only proposed pages can be approved"
         )
-    GeneratedPagePackage.model_validate(proposal.package)
+    blueprint = _proposal_blueprint_or_409(session, proposal)
+    project_context = session.get(Project, proposal.project_id)
+    opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+    if project_context is None or opportunity is None:
+        raise HTTPException(status_code=409, detail="Proposal context is unavailable")
+    package = GeneratedBlueprintPackage.model_validate(proposal.package)
+    validate_blueprint_replacements(
+        package,
+        _generation_context(session, project_context, opportunity, blueprint),
+    )
+    _require_current_wordpress_blueprint(session, project_id, blueprint)
     proposal.state = "approved"
     proposal.approved_by = user.id
     proposal.approved_at = datetime.now(UTC)
@@ -432,31 +485,47 @@ def create_wordpress_draft(
             status_code=409,
             detail="Approve the page proposal before creating a WordPress draft",
         )
-    settings, template = _configured_settings(session, project_id)
-    snapshot = proposal.config_snapshot
-    current = {
-        "builder": settings.builder,
-        "template_wordpress_page_id": settings.template_wordpress_page_id,
-        "seo_plugin": settings.seo_plugin,
-        "slot_mapping": settings.slot_mapping,
-        "template_content_hash": settings.template_content_hash,
+    blueprint = _proposal_blueprint_or_409(session, proposal)
+    _require_current_wordpress_blueprint(session, project_id, blueprint)
+    opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+    if opportunity is None:
+        raise HTTPException(status_code=409, detail="Proposal context is unavailable")
+    package = GeneratedBlueprintPackage.model_validate(proposal.package)
+    context = _generation_context(session, project, opportunity, blueprint)
+    validate_blueprint_replacements(package, context)
+    replacements = {
+        replacement.field_id: replacement.value
+        for replacement in package.replacements
     }
-    if settings.validation_state != "valid" or snapshot != current:
-        raise HTTPException(
-            status_code=409,
-            detail="Page package settings changed; generate a new proposal",
-        )
+    url_field_ids = {
+        field["id"]
+        for block in blueprint.content_schema.get("blocks", [])
+        for field in block.get("fields", [])
+        if field.get("value_type") == "url"
+    }
+    approved_urls = sorted(
+        {link.url for link in package.internal_links}
+        | {
+            replacement.value
+            for replacement in package.replacements
+            if replacement.field_id in url_field_ids
+        }
+    )
     try:
-        result = _page_package_client(session, project_id).create_draft(
+        result = _page_package_client(session, project_id).create_blueprint_draft(
+            blueprint.wordpress_blueprint_id,
             {
-                "template_id": template.wordpress_object_id,
-                "expected_template_hash": settings.template_content_hash,
-                "builder": settings.builder,
-                "mapping": settings.slot_mapping,
-                "seo_plugin": settings.seo_plugin,
+                "expected_version": proposal.blueprint_version,
+                "expected_structure_hash": proposal.blueprint_structure_hash,
                 "idempotency_key": proposal.id,
-                "package": proposal.package,
-            }
+                "replacements": replacements,
+                "approved_urls": approved_urls,
+                "seo": {
+                    "title": package.seo_title,
+                    "description": package.meta_description,
+                    "keyword": package.focus_keyword,
+                },
+            },
         )
     except Exception as error:
         raise HTTPException(
@@ -470,6 +539,53 @@ def create_wordpress_draft(
     proposal.wordpress_edit_url = str(result.get("edit_url") or "") or None
     session.commit()
     return _proposal_payload(session, proposal)
+
+
+def _proposal_blueprint_or_409(
+    session: Session, proposal: PagePackageProposal
+) -> PageBlueprint:
+    blueprint = session.scalar(
+        select(PageBlueprint).where(
+            PageBlueprint.project_id == proposal.project_id,
+            PageBlueprint.id == proposal.blueprint_id,
+            PageBlueprint.version == proposal.blueprint_version,
+            PageBlueprint.structure_hash == proposal.blueprint_structure_hash,
+        )
+    )
+    if blueprint is None or blueprint.state != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail="Blueprint changed; generate a new proposal",
+        )
+    return blueprint
+
+
+def _require_current_wordpress_blueprint(
+    session: Session,
+    project_id: str,
+    blueprint: PageBlueprint,
+) -> None:
+    try:
+        current = _page_package_client(session, project_id).blueprint(
+            blueprint.wordpress_blueprint_id
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="WordPress blueprint validation failed",
+        ) from error
+    if (
+        current.get("status") != "ready"
+        or current.get("version") != blueprint.version
+        or current.get("structure_hash") != blueprint.structure_hash
+    ):
+        blueprint.state = "stale"
+        blueprint.is_default_for_page_type = False
+        session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="Blueprint structure changed; generate a new proposal",
+        )
 
 
 def _page_package_generator(session: Session, project):
@@ -508,7 +624,7 @@ def _generation_context(
     session: Session,
     project,
     opportunity: KeywordOpportunity,
-    settings: ProjectPagePackageSettings,
+    blueprint: PageBlueprint,
 ) -> PagePackageContext:
     profile = session.get(CompanyProfile, project.id)
     pages = session.scalars(
@@ -524,6 +640,12 @@ def _generation_context(
     ]
     if not links:
         links = [InternalLink(anchor=project.name, url=project.domain)]
+    approved_cta_urls = [
+        field["current_value"]
+        for block in blueprint.content_schema.get("blocks", [])
+        for field in block.get("fields", [])
+        if field.get("value_type") == "url" and field.get("current_value")
+    ]
     return PagePackageContext(
         keyword=opportunity.keyword,
         search_volume=opportunity.search_volume,
@@ -531,7 +653,9 @@ def _generation_context(
         company_context=_company_context(profile),
         project_domain=project.domain,
         internal_link_candidates=links,
-        template_slots=settings.slot_mapping,
+        template_slots={},
+        approved_cta_urls=approved_cta_urls,
+        blueprint_schema=blueprint.content_schema,
     )
 
 
@@ -571,6 +695,20 @@ def _proposal_or_404(
 
 def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
     job = session.get(Job, proposal.job_id)
+    blueprint = None
+    if proposal.blueprint_id is not None:
+        stored = session.get(PageBlueprint, proposal.blueprint_id)
+        if stored is not None and stored.project_id == proposal.project_id:
+            blueprint = {
+                "id": stored.id,
+                "name": stored.name,
+                "page_type": stored.page_type,
+                "version": proposal.blueprint_version,
+                "structure_hash": proposal.blueprint_structure_hash,
+                "builder": stored.builder,
+                "seo_plugin": stored.seo_plugin,
+                "wordpress_blueprint_id": stored.wordpress_blueprint_id,
+            }
     return {
         "id": proposal.id,
         "project_id": proposal.project_id,
@@ -579,6 +717,7 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         "package": proposal.package,
         "rendered_html": proposal.rendered_html,
         "config_snapshot": proposal.config_snapshot,
+        "blueprint": blueprint,
         "provider": proposal.provider,
         "model": proposal.model,
         "prompt_version": proposal.prompt_version,

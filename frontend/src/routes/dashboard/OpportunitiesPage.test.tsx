@@ -51,7 +51,8 @@ describe("OpportunitiesPage", () => {
     expect(screen.getByText("Nieuwe pagina aanbevolen")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Pagina laten maken" }),
-    ).toBeVisible();
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Paginatype voor automatische transmissie revisie")).toBeVisible();
   });
 
   it("syncs and reloads keyword opportunities", async () => {
@@ -131,6 +132,12 @@ describe("OpportunitiesPage", () => {
       .closest("article");
     expect(selectedCard).not.toBeNull();
     expect(otherCard).not.toBeNull();
+    fireEvent.change(
+      within(selectedCard!).getByLabelText(
+        "Paginatype voor 7g dct automatische transmissie",
+      ),
+      { target: { value: "service" } },
+    );
     fireEvent.click(
       within(selectedCard!).getByRole("button", { name: "Pagina laten maken" }),
     );
@@ -146,6 +153,48 @@ describe("OpportunitiesPage", () => {
     );
     await waitFor(() =>
       expect(within(selectedCard!).queryByRole("alert")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("requires and submits an explicit blueprint page type", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [
+            {
+              id: "keyword-1",
+              keyword: "automatische transmissie revisie",
+              search_volume: 320,
+              cpc: 4.25,
+              competition_level: "medium",
+              keyword_difficulty: 38,
+              intent: "commercial",
+              target_url: null,
+              target_classification: "new_page",
+              target_score: 0,
+              target_evidence: [],
+              recommended_action: "Maak een landingspagina.",
+              source: "dataforseo",
+            },
+          ],
+        });
+      }
+      if (init?.method === "POST") return Promise.resolve({ id: "proposal-1" });
+      return Promise.resolve({ synced: 1 });
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+    const button = await screen.findByRole("button", { name: "Pagina laten maken" });
+    fireEvent.change(
+      screen.getByLabelText("Paginatype voor automatische transmissie revisie"),
+      { target: { value: "brand" } },
+    );
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/keyword-opportunities/keyword-1/page-proposal",
+        { method: "POST", body: JSON.stringify({ page_type: "brand" }) },
+      ),
     );
   });
 });

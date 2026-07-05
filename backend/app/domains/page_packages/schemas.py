@@ -7,6 +7,13 @@ from app.domains.page_blueprints.schemas import BlueprintSchema
 
 BuilderType = Literal["gutenberg", "elementor", "bricks", "wpbakery", "acf"]
 SeoPluginType = Literal["yoast", "rank_math", "aioseo"]
+PageType = Literal["service", "brand", "location", "blog", "generic"]
+
+
+class PageProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_type: PageType
 
 
 class PagePackageSettingsWrite(BaseModel):
@@ -182,4 +189,4 @@ class PagePackageGenerationResult(BaseModel):
 
 
 class PagePackageProposalWrite(BaseModel):
-    package: GeneratedPagePackage
+    package: GeneratedBlueprintPackage
