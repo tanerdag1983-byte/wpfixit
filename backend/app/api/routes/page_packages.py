@@ -294,6 +294,7 @@ def create_page_package_proposal(
             "structure_hash": blueprint.structure_hash,
             "builder": blueprint.builder,
             "seo_plugin": blueprint.seo_plugin,
+            "content_schema": blueprint.content_schema,
         },
         blueprint_id=blueprint.id,
         blueprint_version=blueprint.version,
@@ -336,6 +337,14 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
             job.state = "failed"
             job.error_code = "BlueprintUnavailable"
             job.error_message = "Blueprint changed before generation started"
+            job.completed_at = datetime.now(UTC)
+            session.commit()
+            return
+        if blueprint.content_schema != proposal.config_snapshot.get("content_schema"):
+            proposal.state = "failed"
+            job.state = "failed"
+            job.error_code = "BlueprintSchemaChanged"
+            job.error_message = "Blueprint schema changed before generation started"
             job.completed_at = datetime.now(UTC)
             session.commit()
             return
@@ -552,7 +561,11 @@ def _proposal_blueprint_or_409(
             PageBlueprint.structure_hash == proposal.blueprint_structure_hash,
         )
     )
-    if blueprint is None or blueprint.state != "ready":
+    if (
+        blueprint is None
+        or blueprint.state != "ready"
+        or blueprint.content_schema != proposal.config_snapshot.get("content_schema")
+    ):
         raise HTTPException(
             status_code=409,
             detail="Blueprint changed; generate a new proposal",

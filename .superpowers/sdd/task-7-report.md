@@ -34,7 +34,7 @@ legacy proposal calls returned 422 and legacy edit/draft paths failed
 ## Verification
 
 ```text
-backend: 213 passed
+backend: 214 passed
 backend Ruff: clean
 frontend: 26 files, 78 tests passed
 frontend ESLint: clean
@@ -49,3 +49,10 @@ PHP 8.2 blueprint lifecycle contract: passed
 - Stale detection and state transitions on WordPress drift.
 - Exact bridge payload and idempotent repeated draft behavior.
 - Frontend required page-type selection and request body.
+
+## Review Adjudication
+
+The review found that semantic-role edits can change `content_schema` without changing
+the WordPress structure hash. This was accepted as an important snapshot-consistency
+issue. Proposals now store the full schema and generation, approval, and draft creation
+all reject a blueprint whose current schema differs from the proposal snapshot.

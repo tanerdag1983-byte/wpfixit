@@ -221,6 +221,7 @@ def test_proposal_uses_requested_page_type_default_blueprint(
     assert proposal["blueprint"]["name"] == "Dienstpagina"
     assert proposal["blueprint"]["version"] == 2
     assert proposal["config_snapshot"]["structure_hash"] == "hash-v2"
+    assert proposal["config_snapshot"]["content_schema"] == valid_blueprint_schema()
 
 
 def test_creates_persistent_reviewable_page_proposal(
@@ -480,3 +481,31 @@ def test_draft_rechecks_wordpress_blueprint_after_approval(
 
     assert response.status_code == 409
     assert bridge.payloads == []
+
+
+def test_approval_rejects_changed_blueprint_schema_snapshot(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = generated_blueprint_proposal(
+        client, projects, opportunity, monkeypatch
+    )
+    blueprint = session.get(PageBlueprint, "blueprint-service-v2")
+    changed_schema = dict(blueprint.content_schema)
+    changed_schema["blocks"] = [dict(changed_schema["blocks"][0])]
+    changed_schema["blocks"][0]["semantic_role"] = "introduction"
+    blueprint.content_schema = changed_schema
+    session.commit()
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{proposal['id']}/approve"
+    )
+
+    assert response.status_code == 409
+    assert "generate a new proposal" in response.json()["detail"]
