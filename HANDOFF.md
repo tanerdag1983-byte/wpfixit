@@ -63,16 +63,18 @@ Commits: `87fd133..d5e8279`
 
 **Final review conclusion:** All 10 critical areas verified (atomicity, required fields, payload/schema validation, metadata persistence, delete verification, request hash idempotency, auth, drift, HTTP semantics, source immutability). All PHP 8.2 plugin tests PASS. Ready for Task 3.
 
-## Remaining Managed-Blueprint Tasks
+## Managed-Blueprint Release Status
 
-1. Task 6: schema-bound AI generation using the selected project blueprint.
-2. Task 7: approved, idempotent WordPress draft creation and publication review flow.
-3. Task 8: complete blueprint review in the frontend.
-4. Task 9: migration, integration/E2E coverage, release, GitHub push, Render/Vercel deployment, plugin package, and live smoke
-   tests.
-5. Roadmap Task 10: Project Brand DNA, using
+Tasks 1 through 8 are complete. Task 9 is released on GitHub, Render and Vercel.
+The only remaining Task 9 gate is installing bridge plugin `0.3.1` on SHM staging
+and completing the source-to-draft acceptance flow documented in
+`.superpowers/sdd/task-9-report.md`.
+
+After that gate:
+
+1. Roadmap Task 10: Project Brand DNA, using
    `docs/superpowers/plans/2026-06-30-project-brand-dna.md`.
-6. Roadmap Tasks 11 onward: Link Intelligence, Content Studio and SEO scoring, Image
+2. Roadmap Tasks 11 onward: Link Intelligence, Content Studio and SEO scoring, Image
     Studio, Content Calendar, and the GSC/GA4/PageSpeed Impact Timeline. Each receives a
     separate spec and implementation plan after Task 10.
 
