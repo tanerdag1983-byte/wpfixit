@@ -14,8 +14,8 @@ Read these first:
 
 1. `AGENTS.md`
 2. `.superpowers/sdd/progress.md`
-3. `.superpowers/sdd/task-8-brief.md`
-4. `.superpowers/sdd/task-7-report.md`
+3. `.superpowers/sdd/task-9-brief.md`
+4. `.superpowers/sdd/task-8-report.md`
 5. `docs/superpowers/specs/2026-06-27-managed-page-blueprints-design.md`
 6. `docs/superpowers/plans/2026-06-28-managed-page-blueprints.md`
 7. `docs/superpowers/specs/2026-06-30-content-operations-intelligence-design.md`
