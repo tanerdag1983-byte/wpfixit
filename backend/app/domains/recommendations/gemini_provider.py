@@ -4,9 +4,10 @@ import requests
 
 from app.domains.page_packages.generation import (
     generation_result,
+    page_package_contract,
     page_package_system_prompt,
 )
-from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
+from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -92,9 +93,7 @@ class GeminiRecommendationGenerator:
                     "systemInstruction": {
                         "parts": [
                             {
-                                "text": page_package_system_prompt(
-                                    context.company_context
-                                )
+                                "text": page_package_system_prompt(context)
                             }
                         ]
                     },
@@ -112,7 +111,9 @@ class GeminiRecommendationGenerator:
                     ],
                     "generationConfig": {
                         "responseMimeType": "application/json",
-                        "responseSchema": GeneratedPagePackage.model_json_schema(),
+                        "responseSchema": page_package_contract(
+                            context
+                        ).model_json_schema(),
                     },
                 },
                 timeout=120,
@@ -120,7 +121,7 @@ class GeminiRecommendationGenerator:
             )
             response.raise_for_status()
             payload = response.json()
-            package = GeneratedPagePackage.model_validate_json(
+            package = page_package_contract(context).model_validate_json(
                 payload["candidates"][0]["content"]["parts"][0]["text"]
             )
             usage = payload.get("usageMetadata", {})
@@ -130,6 +131,7 @@ class GeminiRecommendationGenerator:
                 model=self.model,
                 input_tokens=int(usage.get("promptTokenCount", 0)),
                 output_tokens=int(usage.get("candidatesTokenCount", 0)),
+                context=context,
             )
         except ProviderGenerationError:
             raise

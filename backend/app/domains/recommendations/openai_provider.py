@@ -2,9 +2,10 @@ import json
 
 from app.domains.page_packages.generation import (
     generation_result,
+    page_package_contract,
     page_package_system_prompt,
 )
-from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
+from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -75,14 +76,14 @@ class OpenAIRecommendationGenerator:
                 input=[
                     {
                         "role": "system",
-                        "content": page_package_system_prompt(context.company_context),
+                        "content": page_package_system_prompt(context),
                     },
                     {
                         "role": "user",
                         "content": json.dumps(context.model_dump(), ensure_ascii=False),
                     },
                 ],
-                text_format=GeneratedPagePackage,
+                text_format=page_package_contract(context),
             )
             if response.output_parsed is None:
                 raise ProviderGenerationError("OpenAI returned no page package")
@@ -93,6 +94,7 @@ class OpenAIRecommendationGenerator:
                 model=self.model,
                 input_tokens=getattr(usage, "input_tokens", 0),
                 output_tokens=getattr(usage, "output_tokens", 0),
+                context=context,
             )
         except ProviderGenerationError:
             raise

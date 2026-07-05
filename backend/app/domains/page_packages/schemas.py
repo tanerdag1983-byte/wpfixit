@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.domains.page_blueprints.schemas import BlueprintSchema
+
 BuilderType = Literal["gutenberg", "elementor", "bricks", "wpbakery", "acf"]
 SeoPluginType = Literal["yoast", "rank_math", "aioseo"]
 
@@ -122,6 +124,31 @@ class GeneratedPagePackage(BaseModel):
     _safe_introduction = field_validator("introduction_html")(safe_html)
 
 
+class FieldReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    field_id: str = Field(min_length=3, max_length=128)
+    value: str = Field(max_length=20_000)
+
+
+class GeneratedBlueprintPackage(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=10, max_length=180)
+    slug: str = Field(
+        min_length=3, max_length=160, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    )
+    seo_title: str = Field(min_length=20, max_length=70)
+    meta_description: str = Field(min_length=70, max_length=170)
+    focus_keyword: str = Field(min_length=3, max_length=160)
+    replacements: list[FieldReplacement] = Field(min_length=1)
+    internal_links: list[InternalLink] = Field(default_factory=list, max_length=12)
+
+    _plain_fields = field_validator(
+        "title", "seo_title", "meta_description", "focus_keyword"
+    )(plain_text)
+
+
 class PagePackageContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -132,10 +159,22 @@ class PagePackageContext(BaseModel):
     project_domain: str
     internal_link_candidates: list[InternalLink]
     template_slots: dict[str, str]
+    approved_cta_urls: list[str] = Field(default_factory=list)
+    blueprint_schema: BlueprintSchema | None = None
+
+    @field_validator("approved_cta_urls")
+    @classmethod
+    def validate_approved_cta_urls(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if UNSAFE_HTML.search(value) or not (
+                value.startswith("/") or value.startswith("https://")
+            ):
+                raise ValueError("Approved CTA URL must be relative or HTTPS")
+        return values
 
 
 class PagePackageGenerationResult(BaseModel):
-    package: GeneratedPagePackage
+    package: GeneratedPagePackage | GeneratedBlueprintPackage
     provider: str = ""
     model: str | None = None
     input_tokens: int = 0

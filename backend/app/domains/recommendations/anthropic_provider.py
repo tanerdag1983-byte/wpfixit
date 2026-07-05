@@ -4,9 +4,10 @@ import requests
 
 from app.domains.page_packages.generation import (
     generation_result,
+    page_package_contract,
     page_package_system_prompt,
 )
-from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
+from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -89,7 +90,7 @@ class AnthropicRecommendationGenerator:
                 json={
                     "model": self.model,
                     "max_tokens": 5000,
-                    "system": page_package_system_prompt(context.company_context),
+                    "system": page_package_system_prompt(context),
                     "messages": [
                         {
                             "role": "user",
@@ -104,7 +105,7 @@ class AnthropicRecommendationGenerator:
             )
             response.raise_for_status()
             payload = response.json()
-            package = GeneratedPagePackage.model_validate_json(
+            package = page_package_contract(context).model_validate_json(
                 payload["content"][0]["text"]
             )
             usage = payload.get("usage", {})
@@ -114,6 +115,7 @@ class AnthropicRecommendationGenerator:
                 model=self.model,
                 input_tokens=int(usage.get("input_tokens", 0)),
                 output_tokens=int(usage.get("output_tokens", 0)),
+                context=context,
             )
         except ProviderGenerationError:
             raise

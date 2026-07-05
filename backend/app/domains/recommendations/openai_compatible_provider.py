@@ -4,9 +4,10 @@ import requests
 
 from app.domains.page_packages.generation import (
     generation_result,
+    page_package_contract,
     page_package_system_prompt,
 )
-from app.domains.page_packages.schemas import GeneratedPagePackage, PagePackageContext
+from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     system_prompt,
@@ -45,9 +46,7 @@ class OpenAICompatibleRecommendationGenerator:
                     "messages": [
                         {
                             "role": "system",
-                            "content": page_package_system_prompt(
-                                context.company_context
-                            ),
+                            "content": page_package_system_prompt(context),
                         },
                         {
                             "role": "user",
@@ -63,7 +62,7 @@ class OpenAICompatibleRecommendationGenerator:
             )
             response.raise_for_status()
             payload = response.json()
-            package = GeneratedPagePackage.model_validate_json(
+            package = page_package_contract(context).model_validate_json(
                 payload["choices"][0]["message"]["content"]
             )
             usage = payload.get("usage", {})
@@ -73,6 +72,7 @@ class OpenAICompatibleRecommendationGenerator:
                 model=self.model,
                 input_tokens=int(usage.get("prompt_tokens", 0)),
                 output_tokens=int(usage.get("completion_tokens", 0)),
+                context=context,
             )
         except ProviderGenerationError:
             raise

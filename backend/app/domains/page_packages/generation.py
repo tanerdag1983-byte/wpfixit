@@ -1,16 +1,54 @@
 import hashlib
 import html
 import json
+from html.parser import HTMLParser
 
 from app.domains.page_packages.schemas import (
+    GeneratedBlueprintPackage,
     GeneratedPagePackage,
     PagePackageContext,
     PagePackageGenerationResult,
+    plain_text,
+    safe_html,
 )
 from app.domains.recommendations.provider import ProviderGenerationError
 
 
-def page_package_system_prompt(company_context: str) -> str:
+class _LinkCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.urls: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.lower() != "a":
+            return
+        for name, value in attrs:
+            if name.lower() == "href" and value:
+                self.urls.append(value.strip())
+
+
+def _html_urls(value: str) -> list[str]:
+    parser = _LinkCollector()
+    parser.feed(value)
+    return parser.urls
+
+
+def page_package_contract(context: PagePackageContext):
+    if context.blueprint_schema is not None:
+        return GeneratedBlueprintPackage
+    return GeneratedPagePackage
+
+
+def page_package_system_prompt(context: PagePackageContext) -> str:
+    blueprint_rules = ""
+    if context.blueprint_schema is not None:
+        blueprint_rules = (
+            " Bewaar iedere block- en field-ID uit het blueprint-schema. Geef exact "
+            "een replacement voor ieder verplicht tekst- of URL-veld en respecteer "
+            "value_type en max_length. Geef nooit media-, layout-, stijl- of "
+            "builderdata terug. Gebruik voor URL-velden en interne links uitsluitend "
+            "de aangeleverde goedgekeurde URL's."
+        )
     return (
         "Maak een complete Nederlandse SEO-landingspagina als strikt JSON volgens "
         "het opgegeven schema. Gebruik het focuszoekwoord natuurlijk, houd merk- en "
@@ -19,19 +57,25 @@ def page_package_system_prompt(company_context: str) -> str:
         "Alle HTML moet "
         "semantisch zijn en mag geen scripts, formulieren, inline event handlers of "
         "javascript-URL's bevatten. Het resultaat is een concept voor menselijke "
-        "beoordeling en mag nooit automatisch worden gepubliceerd.\n\n"
-        f"Projectcontext:\n{company_context[:10_000] or 'Niet ingesteld.'}"
+        "beoordeling en mag nooit automatisch worden gepubliceerd."
+        f"{blueprint_rules}\n\n"
+        f"Projectcontext:\n{context.company_context[:10_000] or 'Niet ingesteld.'}"
     )
 
 
 def generation_result(
-    package: GeneratedPagePackage,
+    package: GeneratedPagePackage | GeneratedBlueprintPackage,
     *,
     provider: str,
     model: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    context: PagePackageContext | None = None,
 ) -> PagePackageGenerationResult:
+    if isinstance(package, GeneratedBlueprintPackage):
+        if context is None:
+            raise ValueError("blueprint context is required")
+        package = validate_blueprint_replacements(package, context)
     return PagePackageGenerationResult(
         package=package,
         provider=provider,
@@ -39,6 +83,63 @@ def generation_result(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
+
+
+def validate_blueprint_replacements(
+    package: GeneratedBlueprintPackage,
+    context: PagePackageContext,
+) -> GeneratedBlueprintPackage:
+    schema = context.blueprint_schema
+    if schema is None:
+        raise ValueError("blueprint schema is required")
+
+    schema_fields = [field for block in schema.blocks for field in block.fields]
+    fields = {field.id: field for field in schema_fields}
+    if len(fields) != len(schema_fields):
+        raise ValueError("duplicate blueprint field ID")
+    replacement_ids = [replacement.field_id for replacement in package.replacements]
+    if len(replacement_ids) != len(set(replacement_ids)):
+        raise ValueError("duplicate blueprint field replacement")
+
+    unknown = set(replacement_ids) - set(fields)
+    if unknown:
+        raise ValueError(f"unknown blueprint field: {sorted(unknown)[0]}")
+
+    required = {field.id for field in fields.values() if field.required}
+    missing = required - set(replacement_ids)
+    if missing:
+        raise ValueError(f"required blueprint field is missing: {sorted(missing)[0]}")
+
+    approved_urls = {
+        link.url for link in context.internal_link_candidates
+    } | set(context.approved_cta_urls)
+    approved_links = {
+        (link.anchor, link.url) for link in context.internal_link_candidates
+    }
+
+    for replacement in package.replacements:
+        field = fields[replacement.field_id]
+        if field.required and not replacement.value:
+            raise ValueError(f"required blueprint field is empty: {field.id}")
+        if len(replacement.value) > field.max_length:
+            raise ValueError(f"blueprint field exceeds max length: {field.id}")
+        if field.value_type in {"plain_text", "heading", "button_text"}:
+            plain_text(replacement.value)
+        elif field.value_type == "rich_text":
+            safe_html(replacement.value)
+            if any(url not in approved_urls for url in _html_urls(replacement.value)):
+                raise ValueError(f"URL is not approved for blueprint field: {field.id}")
+        elif replacement.value not in approved_urls:
+            raise ValueError(f"URL is not approved for blueprint field: {field.id}")
+
+    has_unapproved_link = any(
+        (link.anchor, link.url) not in approved_links
+        for link in package.internal_links
+    )
+    if has_unapproved_link:
+        raise ValueError("internal link is not approved")
+
+    return package
 
 
 def render_page_package(package: GeneratedPagePackage) -> str:
@@ -65,7 +166,11 @@ def prompt_version(context: PagePackageContext, model: str) -> str:
     return hashlib.sha256(
         json.dumps(
             {
-                "contract": "page-package-v1",
+                "contract": (
+                    "blueprint-replacements-v1"
+                    if context.blueprint_schema is not None
+                    else "page-package-v1"
+                ),
                 "context": context.model_dump(),
                 "model": model,
             },
