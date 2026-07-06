@@ -66,7 +66,7 @@ Commits: `87fd133..d5e8279`
 ## Managed-Blueprint Release Status
 
 Tasks 1 through 8 are complete. Task 9 is released on GitHub, Render and Vercel.
-The only remaining Task 9 gate is installing bridge plugin `0.3.1` on SHM staging
+The only remaining Task 9 gate is installing bridge plugin `0.3.2` on SHM staging
 and completing the source-to-draft acceptance flow documented in
 `.superpowers/sdd/task-9-report.md`.
 

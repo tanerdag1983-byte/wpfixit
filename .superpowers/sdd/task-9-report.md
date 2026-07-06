@@ -10,8 +10,8 @@ Status: in progress
 - Frontend: `https://frontend-nine-jade-0t9k15bffs.vercel.app`
 - Vercel deployment: `dpl_EyRpL7JdEE7X4uqGpL5zWYAP7KKM`
 - Backend health: `https://wp-fixpilot-api.onrender.com/health`
-- Plugin artifact: `artifacts/wp-fixpilot-bridge-0.3.1.zip`
-- Plugin SHA-256: `110ed320a85dbe8933b13d449dab7f446faf41a772aec712fbca95cc7a9f81cc`
+- Plugin artifact: `artifacts/wp-fixpilot-bridge-0.3.2.zip`
+- Plugin SHA-256: `927bda866790343e371639fe5f73a8f51660a23198a9740e047b0e6626a472c2`
 
 ## Verification Evidence
 
@@ -34,3 +34,7 @@ site and the source-to-draft acceptance flow from `task-9-brief.md` is executed.
 There was no authenticated WordPress staging browser session available during
 this release run. Record the generated WordPress draft edit URL here after the
 acceptance flow, then mark Task 9 complete.
+
+An earlier staging build also reported `0.3.1` but predated the final blueprint
+capture contract. The release was therefore bumped to `0.3.2`; only the artifact
+and checksum above may be used for final acceptance.

@@ -34,12 +34,12 @@ The release floors include `cryptography>=48.0.1`, `msgpack>=1.2.1`, and
 The tested WordPress bridge artifact is:
 
 ```text
-artifacts/wp-fixpilot-bridge-0.3.1.zip
-SHA-256: 110ed320a85dbe8933b13d449dab7f446faf41a772aec712fbca95cc7a9f81cc
+artifacts/wp-fixpilot-bridge-0.3.2.zip
+SHA-256: 927bda866790343e371639fe5f73a8f51660a23198a9740e047b0e6626a472c2
 ```
 
 Install this zip on staging before validating a managed blueprint release. The
-plugin health response and plugin header must both report `0.3.1`.
+plugin health response and plugin header must both report `0.3.2`.
 
 Run the staging acceptance flow without publishing the generated page:
 

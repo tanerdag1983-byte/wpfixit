@@ -2238,7 +2238,7 @@ assert(array_column($inventory['items'], 'id') === [
 ]);
 
 $health = $restController->health()->get_data();
-assert($health['plugin_version'] === '0.3.1');
+assert($health['plugin_version'] === '0.3.2');
 
 $optionalFieldController = new WPFixPilot_Blueprint_Controller([
     new Optional_Field_Blueprint_Adapter([21]),
