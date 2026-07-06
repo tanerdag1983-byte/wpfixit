@@ -59,7 +59,7 @@ class WordPressClient:
         response.raise_for_status()
         return response.json()
 
-    def _post(self, endpoint: str, payload: dict) -> dict:
+    def _post(self, endpoint: str, payload: dict, *, timeout: int = 30) -> dict:
         route = f"/wpfixpilot/v1/{endpoint}"
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         response = requests.post(
@@ -69,7 +69,7 @@ class WordPressClient:
                 "Content-Type": "application/json",
             },
             data=body.encode(),
-            timeout=30,
+            timeout=timeout,
             verify=self.verify_ssl,
         )
         response.raise_for_status()
@@ -117,7 +117,7 @@ class WordPressClient:
         return self._post("draft-pages", payload)
 
     def capture_blueprint(self, payload: dict) -> dict:
-        return self._post("blueprints", payload)
+        return self._post("blueprints", payload, timeout=120)
 
     def blueprint(self, wordpress_blueprint_id: int) -> dict:
         return self._get(f"blueprints/{wordpress_blueprint_id}")

@@ -78,6 +78,11 @@ class FakeBlueprintBridge:
         return {"deleted": True}
 
 
+class TimeoutBlueprintBridge(FakeBlueprintBridge):
+    def capture_blueprint(self, payload: dict) -> dict:
+        raise requests.Timeout("WordPress took too long")
+
+
 def create_blueprint(client: TestClient, project_id: str) -> dict:
     response = client.post(
         f"/projects/{project_id}/page-blueprints",
@@ -89,6 +94,31 @@ def create_blueprint(client: TestClient, project_id: str) -> dict:
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_capture_timeout_returns_actionable_gateway_error(
+    client, auth_as, projects, monkeypatch
+):
+    auth_as(projects.owner)
+    monkeypatch.setattr(
+        page_blueprints,
+        "_bridge",
+        lambda session, project_id: TimeoutBlueprintBridge(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints",
+        json={
+            "name": "Blogartikel",
+            "page_type": "blog",
+            "source_wordpress_page_id": "source-page",
+        },
+    )
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == (
+        "WordPress had meer tijd nodig om deze pagina vast te leggen. Probeer opnieuw."
+    )
 
 
 def test_manager_captures_lists_defaults_and_versions_blueprint(

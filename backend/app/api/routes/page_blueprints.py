@@ -190,6 +190,19 @@ def _new_capture_wordpress_id(
     return wordpress_id
 
 
+def _capture_blueprint(bridge: WordPressClient, payload: dict) -> dict:
+    try:
+        return bridge.capture_blueprint(payload)
+    except requests.Timeout as error:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "WordPress had meer tijd nodig om deze pagina vast te leggen. "
+                "Probeer opnieuw."
+            ),
+        ) from error
+
+
 def _payload(blueprint: PageBlueprint) -> dict:
     return {
         "id": blueprint.id,
@@ -252,7 +265,8 @@ def create_blueprint(
     if source is None:
         raise HTTPException(status_code=404, detail="Reference page not found")
     bridge = _bridge(session, project_id)
-    captured = bridge.capture_blueprint(
+    captured = _capture_blueprint(
+        bridge,
         {
             "source_page_id": source.wordpress_object_id,
             "name": payload.name,
@@ -449,7 +463,8 @@ def version_blueprint(
         raise HTTPException(status_code=404, detail="Reference page not found")
     bridge = _bridge(session, project_id)
     next_version = original.version + 1
-    captured = bridge.capture_blueprint(
+    captured = _capture_blueprint(
+        bridge,
         {
             "source_page_id": source.wordpress_object_id,
             "name": original.name,
