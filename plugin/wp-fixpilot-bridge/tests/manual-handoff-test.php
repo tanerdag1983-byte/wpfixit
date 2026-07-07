@@ -18,6 +18,7 @@ $GLOBALS['wpfixpilot_options'] = [
 $GLOBALS['wpfixpilot_http_requests'] = [];
 $GLOBALS['wpfixpilot_created_drafts'] = [];
 $GLOBALS['wpfixpilot_browser_history_fragment_cleared'] = false;
+$GLOBALS['wpfixpilot_redirect_to'] = null;
 
 function is_wp_error(mixed $value): bool { return $value instanceof WP_Error; }
 function get_option(string $key, mixed $default = false): mixed { return $GLOBALS['wpfixpilot_options'][$key] ?? $default; }
@@ -63,12 +64,17 @@ function wp_remote_retrieve_body(array $response): string { return (string) ($re
 function admin_url(string $path = ''): string { return 'https://member.example/wp-admin/' . ltrim($path, '/'); }
 function wp_create_nonce(string $action): string { return 'nonce'; }
 function current_user_can(string $capability): bool { return $capability === 'edit_pages'; }
+function get_current_user_id(): int { return 12; }
 function esc_url(string $value): string { return $value; }
 function esc_html(string $value): string { return $value; }
 function esc_attr(string $value): string { return $value; }
 function sanitize_text_field(string $value): string { return trim($value); }
 function wp_unslash(string $value): string { return $value; }
 function wp_json_encode(mixed $value): string { return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); }
+function wp_nonce_field(string $action): void { echo '<input type="hidden" name="_wpnonce" value="nonce" />'; }
+function check_admin_referer(string $action): void {}
+function submit_button(string $text, string $type = 'primary', string $name = 'submit', bool $wrap = true): void { echo '<button>' . $text . '</button>'; }
+function wp_safe_redirect(string $url): void { $GLOBALS['wpfixpilot_redirect_to'] = $url; }
 
 require_once __DIR__ . '/../includes/class-import-session-store.php';
 require_once __DIR__ . '/../includes/class-auth.php';
@@ -102,6 +108,21 @@ assert($redeemed['summary']['proposal_version'] === 7);
 assert($redeemed['summary']['draft_only'] === true);
 assert($GLOBALS['wpfixpilot_browser_history_fragment_cleared'] === true);
 
+$_GET['session_id'] = 'session-1';
+ob_start();
+$controller->render_import_page();
+$page = ob_get_clean();
+assert(str_contains($page, 'WP FixPilot import'));
+assert(str_contains($page, 'DSG revisie pagina'));
+assert(str_contains($page, 'WordPress-concept aanmaken'));
+
+$_POST = ['code' => 'opaque-code', 'wordpress_user_id' => 12];
+$controller->handle_redeem();
+assert(
+    $GLOBALS['wpfixpilot_redirect_to']
+    === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=redeemed&session_id=session-1'
+);
+
 $importController = new WPFixPilot_Manual_Handoff_Controller(
     $store,
     'https://api.example.test',
@@ -111,9 +132,9 @@ $confirmed = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($confirmed));
 assert($confirmed['wordpress_object_id'] === 20);
 assert($confirmed['edit_url'] === 'https://example.com/wp-admin/post.php?post=20');
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 2);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
 assert(
-    $GLOBALS['wpfixpilot_http_requests'][1]['url']
+    $GLOBALS['wpfixpilot_http_requests'][2]['url']
     === 'https://api.example.test/projects/project-1/page-proposals/handoffs/handoff-1/complete'
 );
 
@@ -121,6 +142,20 @@ $repeat = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($repeat));
 assert($repeat['wordpress_object_id'] === 20);
 assert(count($GLOBALS['wpfixpilot_created_drafts']) === 1);
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 2);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+
+$_POST = ['session_id' => 'session-1', 'wordpress_user_id' => 12];
+$importController->handle_confirm_import();
+assert(
+    $GLOBALS['wpfixpilot_redirect_to']
+    === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=imported&session_id=session-1'
+);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+
+$_GET['notice'] = 'imported';
+ob_start();
+$importController->render_import_page();
+$importedPage = ob_get_clean();
+assert(str_contains($importedPage, 'Concept openen in WordPress'));
 
 echo "manual handoff tests passed\n";
