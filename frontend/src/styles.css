@@ -2092,9 +2092,108 @@ h2 {
 
 .page-package-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.45fr);
   gap: 44px;
   margin-top: 38px;
+}
+
+.page-package-preview-shell,
+.proposal-compare-shell,
+.proposal-regeneration-panel {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-package-preview-shell {
+  margin-top: 38px;
+}
+
+.page-package-preview.full-width {
+  max-height: none;
+}
+
+.proposal-compare-shell {
+  margin-top: 38px;
+}
+
+.proposal-compare-heading {
+  display: flex;
+  gap: 18px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.proposal-compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.proposal-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.proposal-compare-column {
+  display: grid;
+  gap: 12px;
+}
+
+.proposal-compare-column header {
+  display: grid;
+  gap: 6px;
+}
+
+.proposal-regeneration-field {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.proposal-regeneration-field textarea {
+  min-height: 120px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.proposal-regeneration-actions {
+  display: grid;
+  gap: 14px;
+}
+
+.proposal-regeneration-block-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.proposal-regeneration-select {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.proposal-regeneration-select select {
+  min-height: 42px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
 }
 
 .blueprint-review-summary {
@@ -2198,8 +2297,6 @@ h2 {
 
 .page-package-sidebar {
   align-self: start;
-  position: sticky;
-  top: 24px;
   padding-left: 28px;
   border-left: 1px solid var(--line);
 }
@@ -2207,6 +2304,11 @@ h2 {
 .page-package-preview {
   max-height: 520px;
   overflow: auto;
+}
+
+.page-package-sidebar-inline {
+  position: sticky;
+  top: 24px;
 }
 
 .page-package-draft-button {
@@ -2280,6 +2382,10 @@ h2 {
   gap: 8px;
   justify-items: end;
   max-width: 280px;
+}
+
+.priority-tag.generated {
+  color: #147a50;
 }
 
 .opportunity-create-error {
@@ -2815,6 +2921,11 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .proposal-compare-grid,
+  .proposal-regeneration-block-row {
+    grid-template-columns: 1fr;
+  }
+
   .blueprint-review-summary {
     grid-template-columns: 1fr;
   }
@@ -2829,6 +2940,11 @@ h2 {
     padding: 24px 0 0;
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+
+  .proposal-compare-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .mode-switcher {

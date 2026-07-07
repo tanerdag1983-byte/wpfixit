@@ -16,6 +16,7 @@ from app.domains.dataforseo.service import (
     project_seed_terms,
     upsert_keyword_opportunities,
 )
+from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.service import get_membership, get_project
 
 router = APIRouter(tags=["dataforseo"])
@@ -136,7 +137,29 @@ def get_keyword_opportunities(
             KeywordOpportunity.keyword,
         )
     ).all()
-    return {"items": [opportunity_payload(item) for item in opportunities]}
+    current_proposals = {
+        proposal.opportunity_id: proposal
+        for proposal in session.scalars(
+            select(PagePackageProposal).where(
+                PagePackageProposal.project_id == project_id,
+                PagePackageProposal.is_current.is_(True),
+            )
+        ).all()
+    }
+    items = []
+    for item in opportunities:
+        payload = opportunity_payload(item)
+        proposal = current_proposals.get(item.id)
+        payload["proposal_summary"] = (
+            {
+                "state": proposal.state,
+                "current_version_id": proposal.current_version_id,
+            }
+            if proposal is not None
+            else None
+        )
+        items.append(payload)
+    return {"items": items}
 
 
 def _required_connection(

@@ -72,6 +72,32 @@ const proposal = {
   job: { state: "completed", progress: 100 },
 };
 
+const activeCandidate = {
+  id: "candidate-1",
+  proposal_group_id: "proposal-group-1",
+  base_version_id: "proposal-1",
+  generation_mode: "block",
+  target_block_id: "hero",
+  instruction: "Maak de intro scherper.",
+  status: "ready",
+  provider: "openrouter",
+  model: "model-2",
+  prompt_version: "prompt-v2",
+  input_tokens: 12,
+  output_tokens: 8,
+  candidate_package: {
+    ...proposal.package,
+    title: "DSG versnellingsbak reviseren en herstellen",
+    replacements: [
+      { field_id: "acf-title", value: "DSG revisie Rotterdam" },
+      { field_id: "acf-copy", value: "<p>Nog concretere diagnose en revisie.</p>" },
+      { field_id: "acf-cta-url", value: "/contact/" },
+    ],
+  },
+  candidate_rendered_html:
+    "<section><h2>Nieuwe versie</h2><p>Nog concretere diagnose en revisie.</p></section>",
+};
+
 describe("PagePackageReview", () => {
   beforeEach(() => {
     apiRequest.mockReset();
@@ -110,6 +136,73 @@ describe("PagePackageReview", () => {
     expect(screen.getByRole("link", { name: "Terug naar kansen" })).toHaveAttribute(
       "href",
       "#opportunities",
+    );
+  });
+
+  it("shows a full-width preview above editable blocks and shared regeneration actions", async () => {
+    render(<PagePackageReview projectId="project-1" />);
+
+    const preview = await screen.findByLabelText("Pagina-voorbeeld");
+    expect(preview).toBeVisible();
+    expect(preview.closest(".page-package-preview-shell")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Volledig opnieuw genereren" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Blok opnieuw genereren" })).toBeVisible();
+    expect(screen.getByLabelText("Extra instructies")).toBeVisible();
+  });
+
+  it("shows a saved candidate compare flow and can accept or discard it", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/accept")) {
+        return Promise.resolve({
+          current_version: {
+            ...proposal,
+            id: "proposal-2",
+            version_number: 2,
+            package: activeCandidate.candidate_package,
+            rendered_html: activeCandidate.candidate_rendered_html,
+          },
+          revoked_handoff_ids: [],
+        });
+      }
+      if (path.endsWith("/discard")) {
+        return Promise.resolve({
+          candidate: { ...activeCandidate, status: "discarded" },
+        });
+      }
+      return Promise.resolve({ ...proposal, active_candidate: activeCandidate });
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Vergelijk gegenereerde versie")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Deze versie gebruiken" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Kandidaat verwerpen" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Deze versie gebruiken" }));
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/candidates/candidate-1/accept",
+        { method: "POST" },
+      ),
+    );
+
+    apiRequest.mockClear();
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/discard")) {
+        return Promise.resolve({
+          candidate: { ...activeCandidate, status: "discarded" },
+        });
+      }
+      return Promise.resolve({ ...proposal, active_candidate: activeCandidate });
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Kandidaat verwerpen" }));
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/candidates/candidate-1/discard",
+        { method: "POST" },
+      ),
     );
   });
 

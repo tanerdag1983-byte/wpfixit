@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_packages.models import ProjectPagePackageSettings
+from app.domains.page_packages.models import (
+    PagePackageRegenerationCandidate,
+    ProjectPagePackageSettings,
+)
 from app.domains.recommendations.models import (
     AiConnection,
     CompanyProfile,
@@ -298,6 +301,49 @@ def test_rejects_existing_page_target_and_missing_default_blueprint(
         json={"page_type": "service"},
     )
     assert invalid.status_code == 422
+
+
+def test_get_proposal_includes_active_candidate(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = generated_blueprint_proposal(
+        client, projects, opportunity, monkeypatch
+    )
+    session.add(
+        PagePackageRegenerationCandidate(
+            id="candidate-1",
+            proposal_group_id=proposal["proposal_group_id"],
+            base_version_id=proposal["id"],
+            generation_mode="block",
+            target_block_id="hero",
+            instruction="Maak de intro scherper.",
+            candidate_package=proposal["package"],
+            candidate_rendered_html="<section><h2>Nieuwe versie</h2></section>",
+            provider="openrouter",
+            model="model-2",
+            status="ready",
+        )
+    )
+    session.commit()
+
+    loaded = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}"
+    )
+
+    assert loaded.status_code == 200
+    assert loaded.json()["active_candidate"]["id"] == "candidate-1"
+    assert loaded.json()["active_candidate"]["candidate_package"]["title"] == (
+        proposal["package"]["title"]
+    )
+    assert loaded.json()["active_candidate"]["candidate_rendered_html"] == (
+        "<section><h2>Nieuwe versie</h2></section>"
+    )
 
 
 def test_updates_and_approves_proposal_before_wordpress(

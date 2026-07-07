@@ -9,6 +9,7 @@ from app.core.crypto import decrypt_text
 from app.domains.dataforseo.models import DataForSeoConnection, KeywordOpportunity
 from app.domains.recommendations.models import CompanyProfile
 from app.domains.wordpress.models import WordPressPage
+from tests.page_packages.test_proposal_versions import page_proposal_factory
 from tests.recommendations.conftest import ProjectFixtures
 
 ENCRYPTION_KEY = "MDAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTA="
@@ -263,6 +264,35 @@ def test_outsider_cannot_read_project_keyword_opportunities(
     )
 
     assert response.status_code == 404
+
+
+def test_keyword_opportunities_include_generated_proposal_summary(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    proposal = page_proposal_factory(
+        session,
+        projects,
+        proposal_id="proposal-2",
+        state="proposed",
+        version_number=1,
+        is_current=True,
+        current_version_id="proposal-2",
+    )
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/keyword-opportunities"
+    )
+
+    assert response.status_code == 200
+    by_id = {item["id"]: item for item in response.json()["items"]}
+    assert by_id[proposal.opportunity_id]["proposal_summary"] == {
+        "state": "proposed",
+        "current_version_id": "proposal-2",
+    }
 
 
 def test_failed_provider_sync_keeps_existing_opportunities(

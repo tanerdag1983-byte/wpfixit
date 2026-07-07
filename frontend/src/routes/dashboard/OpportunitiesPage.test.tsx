@@ -63,6 +63,54 @@ describe("OpportunitiesPage", () => {
     expect(screen.getByLabelText("Paginatype voor automatische transmissie revisie")).toBeVisible();
   });
 
+  it("marks generated new-page opportunities and reopens the saved proposal", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [
+            { id: "blueprint-1", name: "Dienstpagina", page_type: "service", version: 2, state: "ready", is_default_for_page_type: true },
+          ],
+        });
+      }
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [
+            {
+              id: "keyword-1",
+              keyword: "automatische transmissie revisie",
+              search_volume: 320,
+              cpc: 4.25,
+              competition_level: "medium",
+              keyword_difficulty: 38,
+              intent: "commercial",
+              target_url: null,
+              target_classification: "new_page",
+              target_score: 0,
+              target_evidence: ["no_distinctive_page_match"],
+              recommended_action:
+                "Maak een nieuwe landingspagina voor dit zoekwoord.",
+              source: "dataforseo",
+              proposal_summary: {
+                state: "proposed",
+                current_version_id: "proposal-2",
+              },
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ synced: 1 });
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    expect(await screen.findByText("Gegenereerd")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Voorstel bekijken" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Opnieuw genereren" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Voorstel bekijken" }));
+    expect(window.sessionStorage.getItem("page-proposal-id:project-1")).toBe("proposal-2");
+    expect(window.location.hash).toBe("#page-proposal");
+  });
+
   it("syncs and reloads keyword opportunities", async () => {
     render(<OpportunitiesPage projectId="project-1" />);
     await screen.findByText("automatische transmissie revisie");

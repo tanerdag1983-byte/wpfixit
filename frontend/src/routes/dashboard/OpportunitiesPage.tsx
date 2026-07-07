@@ -17,6 +17,10 @@ type KeywordOpportunity = {
   target_evidence: string[];
   recommended_action: string | null;
   source: string;
+  proposal_summary?: {
+    state: string;
+    current_version_id: string;
+  } | null;
 };
 
 type OpportunityResponse = {
@@ -144,6 +148,11 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     }
   }
 
+  function openProposal(proposalId: string) {
+    window.sessionStorage.setItem(`page-proposal-id:${projectId}`, proposalId);
+    window.location.hash = "page-proposal";
+  }
+
   return (
     <section className="data-page opportunity-page">
       <div className="page-heading">
@@ -201,7 +210,25 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 </small>
               )}
             </div>
-            {item.target_classification === "new_page" ? (
+            {item.target_classification === "new_page" && item.proposal_summary ? (
+              <div className="opportunity-create-action">
+                <span className="priority-tag generated">Gegenereerd</span>
+                <button
+                  className="secondary-button opportunity-create-button"
+                  onClick={() => openProposal(item.proposal_summary!.current_version_id)}
+                  type="button"
+                >
+                  Voorstel bekijken
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => openProposal(item.proposal_summary!.current_version_id)}
+                  type="button"
+                >
+                  Opnieuw genereren
+                </button>
+              </div>
+            ) : item.target_classification === "new_page" ? (
               <div className="opportunity-create-action">
                 <label>
                   <span>Paginatype</span>

@@ -934,6 +934,19 @@ def _proposal_or_404(
 
 def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
     job = session.get(Job, proposal.job_id)
+    active_candidate = session.scalar(
+        select(PagePackageRegenerationCandidate)
+        .where(
+            PagePackageRegenerationCandidate.base_version_id == proposal.id,
+            PagePackageRegenerationCandidate.status.in_(("generating", "ready")),
+        )
+        .order_by(PagePackageRegenerationCandidate.created_at.desc())
+    )
+    latest_handoff = session.scalar(
+        select(PagePackageHandoff)
+        .where(PagePackageHandoff.proposal_version_id == proposal.id)
+        .order_by(PagePackageHandoff.created_at.desc())
+    )
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)
@@ -975,6 +988,12 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         "approved_at": proposal.approved_at,
         "wordpress_object_id": proposal.wordpress_object_id,
         "wordpress_edit_url": proposal.wordpress_edit_url,
+        "active_candidate": _candidate_payload(active_candidate)
+        if active_candidate is not None
+        else None,
+        "latest_handoff": _handoff_payload(latest_handoff)
+        if latest_handoff is not None
+        else None,
         "created_at": proposal.created_at,
         "updated_at": proposal.updated_at,
         "job": {
@@ -1002,6 +1021,8 @@ def _candidate_payload(candidate: PagePackageRegenerationCandidate) -> dict:
         "prompt_version": candidate.prompt_version,
         "input_tokens": candidate.input_tokens,
         "output_tokens": candidate.output_tokens,
+        "candidate_package": candidate.candidate_package,
+        "candidate_rendered_html": candidate.candidate_rendered_html,
         "created_at": candidate.created_at,
         "updated_at": candidate.updated_at,
     }
