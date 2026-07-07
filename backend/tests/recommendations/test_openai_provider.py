@@ -111,5 +111,8 @@ def test_openai_generator_translates_provider_failures() -> None:
         )
     )
 
-    with pytest.raises(ProviderGenerationError, match="OpenAI generation failed"):
+    with pytest.raises(
+        ProviderGenerationError,
+        match="OpenAI generation failed: secret",
+    ):
         OpenAIRecommendationGenerator(client, "gpt-test").generate(facts())

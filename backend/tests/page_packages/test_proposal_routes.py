@@ -346,6 +346,45 @@ def test_get_proposal_includes_active_candidate(
     )
 
 
+def test_failed_page_generation_preserves_provider_error_detail(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+
+    class Generator:
+        provider = "openai"
+        model = "gpt-test"
+
+        def generate_page_package(self, context):
+            raise RuntimeError("response_format json_schema is not supported")
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda session, project: Generator(),
+    )
+
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+
+    assert queued.status_code == 202
+    proposal = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{queued.json()['id']}"
+    )
+    assert proposal.status_code == 200
+    assert proposal.json()["state"] == "failed"
+    assert proposal.json()["job"]["error_message"] == (
+        "response_format json_schema is not supported"
+    )
+
+
 def test_updates_and_approves_proposal_before_wordpress(
     client: TestClient,
     session: Session,

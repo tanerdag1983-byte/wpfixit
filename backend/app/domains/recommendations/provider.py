@@ -13,6 +13,11 @@ class ProviderGenerationError(RuntimeError):
     pass
 
 
+def provider_error_message(prefix: str, error: Exception) -> str:
+    detail = " ".join(str(error).split())[:500]
+    return f"{prefix}: {detail}" if detail else prefix
+
+
 class RecommendationGenerator(Protocol):
     def generate(self, facts: PageFacts) -> RecommendationResult: ...
 

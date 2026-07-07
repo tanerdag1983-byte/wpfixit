@@ -1115,7 +1115,7 @@ h2 {
 
 .opportunity-card {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr) auto;
+  grid-template-columns: 82px minmax(0, 1fr) minmax(280px, 360px);
   gap: 24px;
   align-items: start;
   padding: 27px 0;
@@ -2372,16 +2372,24 @@ h2 {
 }
 
 .opportunity-create-button {
-  align-self: center;
+  align-self: stretch;
+  justify-content: center;
+  width: 100%;
   white-space: nowrap;
 }
 
 .opportunity-create-action {
-  align-self: center;
+  align-self: start;
   display: grid;
-  gap: 8px;
-  justify-items: end;
-  max-width: 280px;
+  gap: 10px;
+  justify-items: stretch;
+  width: 100%;
+  max-width: 360px;
+}
+
+.opportunity-create-action label,
+.opportunity-create-action select {
+  width: 100%;
 }
 
 .priority-tag.generated {

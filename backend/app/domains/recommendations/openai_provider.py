@@ -8,6 +8,7 @@ from app.domains.page_packages.generation import (
 from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
+    provider_error_message,
     system_prompt,
     validated_result,
 )
@@ -66,7 +67,9 @@ class OpenAIRecommendationGenerator:
         except ProviderGenerationError:
             raise
         except Exception as error:
-            raise ProviderGenerationError("OpenAI generation failed") from error
+            raise ProviderGenerationError(
+                provider_error_message("OpenAI generation failed", error)
+            ) from error
 
     def generate_page_package(self, context: PagePackageContext):
         try:
@@ -99,4 +102,6 @@ class OpenAIRecommendationGenerator:
         except ProviderGenerationError:
             raise
         except Exception as error:
-            raise ProviderGenerationError("OpenAI page generation failed") from error
+            raise ProviderGenerationError(
+                provider_error_message("OpenAI page generation failed", error)
+            ) from error
