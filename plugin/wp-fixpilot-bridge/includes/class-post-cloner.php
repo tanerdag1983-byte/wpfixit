@@ -31,7 +31,10 @@ final class WPFixPilot_Post_Cloner
         array $allowedMetaKeys
     ): int|WP_Error {
         $source = get_post($sourceId);
-        if (!$source instanceof WP_Post || $source->post_type !== 'page') {
+        if (
+            !$source instanceof WP_Post
+            || !in_array($source->post_type, ['page', 'post'], true)
+        ) {
             return new WP_Error(
                 'wp_fixpilot_source_missing',
                 'Bronpagina niet gevonden.',
@@ -40,7 +43,7 @@ final class WPFixPilot_Post_Cloner
         }
 
         $newId = wp_insert_post([
-            'post_type' => 'page',
+            'post_type' => $source->post_type,
             'post_status' => 'draft',
             'post_title' => $title,
             'post_content' => (string) $source->post_content,
@@ -51,7 +54,7 @@ final class WPFixPilot_Post_Cloner
         if (is_wp_error($newId)) {
             return $newId;
         }
-        if (!$this->is_valid_draft_page(get_post((int) $newId))) {
+        if (!$this->is_valid_draft_post(get_post((int) $newId), $source->post_type)) {
             return $this->failed_clone_error((int) $newId);
         }
 
@@ -89,10 +92,10 @@ final class WPFixPilot_Post_Cloner
         return (int) $newId;
     }
 
-    private function is_valid_draft_page(mixed $post): bool
+    private function is_valid_draft_post(mixed $post, string $expectedPostType): bool
     {
         return $post instanceof WP_Post
-            && $post->post_type === 'page'
+            && $post->post_type === $expectedPostType
             && $post->post_status === 'draft';
     }
 

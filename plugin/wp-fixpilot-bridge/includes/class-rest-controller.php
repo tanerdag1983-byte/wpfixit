@@ -145,7 +145,7 @@ final class WPFixPilot_REST_Controller
             'wordpress_version' => get_bloginfo('version'),
             'plugin_version' => defined('WPFIXPILOT_BRIDGE_VERSION')
                 ? WPFIXPILOT_BRIDGE_VERSION
-                : '0.3.2',
+                : '0.3.3',
             'seo_plugin' => $this->detect_seo_plugin(),
         ]);
     }

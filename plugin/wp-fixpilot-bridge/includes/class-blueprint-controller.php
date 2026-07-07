@@ -331,7 +331,7 @@ final class WPFixPilot_Blueprint_Controller
                 );
             }
 
-            if (!$this->is_page_draft(get_post($existingDraftId))) {
+            if (!$this->is_content_draft(get_post($existingDraftId))) {
                 return new WP_Error(
                     'wp_fixpilot_blueprint_conflict',
                     'Het bestaande WordPress-concept is geen concept meer.',
@@ -403,7 +403,7 @@ final class WPFixPilot_Blueprint_Controller
             if (
                 is_wp_error($draftStatusResult)
                 || $draftStatusResult === 0
-                || !$this->is_page_draft(get_post($draftId))
+                || !$this->is_content_draft(get_post($draftId))
             ) {
                 $cleanup = $this->cleanup_draft($draftId);
                 if (is_wp_error($cleanup)) {
@@ -644,7 +644,11 @@ final class WPFixPilot_Blueprint_Controller
     private function source_page(int $sourceId): WP_Post|WP_Error
     {
         $source = get_post($sourceId);
-        if (!$source instanceof WP_Post || $source->post_type !== 'page') {
+        if (
+            !$source instanceof WP_Post
+            || !in_array($source->post_type, ['page', 'post'], true)
+            || $source->post_status === 'trash'
+        ) {
             return new WP_Error(
                 'wp_fixpilot_source_missing',
                 'Bronpagina niet gevonden.',
@@ -660,7 +664,7 @@ final class WPFixPilot_Blueprint_Controller
         $post = get_post($blueprintId);
         if (
             !$post instanceof WP_Post
-            || $post->post_type !== 'page'
+            || !in_array($post->post_type, ['page', 'post'], true)
             || get_post_meta($blueprintId, '_wp_fixpilot_blueprint', true) !== '1'
         ) {
             return new WP_Error(
@@ -1344,10 +1348,10 @@ final class WPFixPilot_Blueprint_Controller
             : $value;
     }
 
-    private function is_page_draft(mixed $post): bool
+    private function is_content_draft(mixed $post): bool
     {
         return $post instanceof WP_Post
-            && $post->post_type === 'page'
+            && in_array($post->post_type, ['page', 'post'], true)
             && $post->post_status === 'draft';
     }
 }

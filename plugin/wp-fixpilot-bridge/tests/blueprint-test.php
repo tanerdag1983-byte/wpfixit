@@ -303,6 +303,11 @@ seed_source_page(19);
 seed_source_page(20, 'Schema failure bron');
 seed_source_page(21, 'Replacement failure bron');
 seed_source_page(22, 'SEO failure bron');
+seed_source_page(24, 'Zomervakantie voor de deur?');
+$GLOBALS['wpfixpilot_posts'][24]->post_type = 'post';
+$GLOBALS['wpfixpilot_posts'][24]->post_parent = 0;
+$GLOBALS['wpfixpilot_posts'][24]->menu_order = 0;
+unset($GLOBALS['wpfixpilot_meta'][24]['_wp_page_template']);
 $unsupportedSource = new WP_Post();
 $unsupportedSource->ID = 23;
 $unsupportedSource->post_type = 'post';
@@ -653,6 +658,39 @@ foreach ($insertMutationCases as $insertMutationCase) {
     unset($GLOBALS['wpfixpilot_insert_post_mutations'][$insertMutationCloneId]);
 }
 
+$GLOBALS['wpfixpilot_next_post_id'] = 200;
+
+$blogController = new WPFixPilot_Blueprint_Controller([
+    new Test_Blueprint_Adapter([24]),
+]);
+$blogCapture = $blogController->capture([
+    'source_page_id' => 24,
+    'name' => 'Blogartikel',
+    'page_type' => 'blog',
+    'version' => 1,
+]);
+assert(!is_wp_error($blogCapture));
+$blogBlueprintId = (int) $blogCapture['wordpress_blueprint_id'];
+assert(get_post($blogBlueprintId)->post_type === 'post');
+assert(get_post($blogBlueprintId)->post_status === 'draft');
+
+$blogDraft = $blogController->create_draft($blogBlueprintId, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $blogCapture['structure_hash'],
+    'idempotency_key' => 'blog-proposal-123',
+    'replacements' => valid_replacements(),
+    'seo' => [
+        'title' => 'Zomervakantie checklist',
+        'description' => 'Controleer deze zeven punten voordat u met de auto vertrekt.',
+        'keyword' => 'zomervakantie auto checklist',
+    ],
+]);
+assert(!is_wp_error($blogDraft));
+assert(get_post($blogDraft['wordpress_object_id'])->post_type === 'post');
+assert(get_post($blogDraft['wordpress_object_id'])->post_status === 'draft');
+wp_delete_post((int) $blogDraft['wordpress_object_id'], true);
+wp_delete_post($blogBlueprintId, true);
+unset($GLOBALS['wpfixpilot_posts'][24], $GLOBALS['wpfixpilot_meta'][24]);
 $GLOBALS['wpfixpilot_next_post_id'] = 200;
 
 $controller = new WPFixPilot_Blueprint_Controller([
@@ -2238,7 +2276,7 @@ assert(array_column($inventory['items'], 'id') === [
 ]);
 
 $health = $restController->health()->get_data();
-assert($health['plugin_version'] === '0.3.2');
+assert($health['plugin_version'] === '0.3.3');
 
 $optionalFieldController = new WPFixPilot_Blueprint_Controller([
     new Optional_Field_Blueprint_Adapter([21]),
