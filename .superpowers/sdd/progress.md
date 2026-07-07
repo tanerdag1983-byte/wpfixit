@@ -13,3 +13,11 @@ Task 6: complete (commit 97036d3, final review approved; backend 210 passed, foc
 Task 7: complete (commits 5040aa7..1c9cceb, final review approved; backend 214 passed, frontend 26 files/78 tests passed, lint/build clean, PHP blueprint lifecycle passed).
 Task 8: complete (commit 57368ee, final review approved; backend 214 passed, frontend 26 files/80 tests passed, lint/build clean).
 Task 9: in progress (release commit d9eb2c0 is on GitHub main; GitHub CI, Render API and Vercel production are green; WordPress staging plugin install and source-to-draft acceptance remain).
+
+# Manual WordPress Handoff And Proposal Versions SDD Progress
+
+Plan: docs/superpowers/plans/2026-07-07-manual-wordpress-handoff-and-proposal-versions.md
+Start: e92d290
+
+Task 1: complete (commits e92d290..ffb2608, final review approved; backend 222 passed, 1 skipped for missing `WP_FIXPILOT_POSTGRES_TEST_URL`, focused page-package persistence 4 passed, Alembic PostgreSQL upgrade clean).
+Task 2: complete (commits ffb2608..ee41f77 plus follow-up hardening, local review approved; focused proposal-version and handoff regressions 10 passed, backend ruff passed).

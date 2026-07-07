@@ -545,7 +545,10 @@ def accept_page_package_regeneration_candidate(
     _require_manager(session, user, project.organization_id)
     try:
         accepted = accept_regeneration_candidate_with_revocations(
-            session, candidate_id, user.id
+            session,
+            candidate_id,
+            user.id,
+            expected_project_id=project_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -565,7 +568,11 @@ def discard_page_package_regeneration_candidate(
     project = _project_or_404(session, user, project_id)
     _require_manager(session, user, project.organization_id)
     try:
-        candidate = discard_regeneration_candidate(session, candidate_id)
+        candidate = discard_regeneration_candidate(
+            session,
+            candidate_id,
+            expected_project_id=project_id,
+        )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"candidate": _candidate_payload(candidate)}
@@ -626,6 +633,7 @@ async def redeem_page_package_proposal_handoff(
             payload.code,
             payload.site_url,
             payload.wordpress_user_id,
+            expected_project_id=project_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -662,6 +670,7 @@ async def complete_page_package_proposal_handoff(
             handoff_id,
             wordpress_object_id=payload.wordpress_object_id,
             edit_url=payload.edit_url,
+            expected_project_id=project_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -684,7 +693,11 @@ def revoke_page_package_proposal_handoff(
     project = _project_or_404(session, user, project_id)
     _require_manager(session, user, project.organization_id)
     try:
-        handoff = revoke_page_package_handoff(session, handoff_id)
+        handoff = revoke_page_package_handoff(
+            session,
+            handoff_id,
+            expected_project_id=project_id,
+        )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"handoff": _handoff_payload(handoff)}

@@ -114,10 +114,16 @@ def accept_regeneration_candidate_with_revocations(
     session: Session,
     candidate_id: str,
     actor_id: str,
+    *,
+    expected_project_id: str | None = None,
 ) -> AcceptedRegenerationCandidate:
     candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
     if candidate is None:
         raise ValueError("Regeneration candidate not found")
+    if expected_project_id is not None:
+        proposal = session.get(PagePackageProposal, candidate.base_version_id)
+        if proposal is None or proposal.project_id != expected_project_id:
+            raise ValueError("Regeneration candidate not found")
     revoked_handoff_ids = open_handoff_ids(session, candidate.base_version_id)
     proposal = accept_regeneration_candidate(session, candidate_id, actor_id)
     return AcceptedRegenerationCandidate(
@@ -206,10 +212,16 @@ def create_regeneration_candidate(
 def discard_regeneration_candidate(
     session: Session,
     candidate_id: str,
+    *,
+    expected_project_id: str | None = None,
 ) -> PagePackageRegenerationCandidate:
     candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
     if candidate is None:
         raise ValueError("Regeneration candidate not found")
+    if expected_project_id is not None:
+        proposal = session.get(PagePackageProposal, candidate.base_version_id)
+        if proposal is None or proposal.project_id != expected_project_id:
+            raise ValueError("Regeneration candidate not found")
     candidate.status = "discarded"
     session.commit()
     session.refresh(candidate)
@@ -221,6 +233,8 @@ def redeem_page_package_handoff(
     code: str,
     site_url: str,
     wordpress_user_id: int,
+    *,
+    expected_project_id: str | None = None,
 ) -> RedeemedPagePackageHandoff:
     del wordpress_user_id
     handoff = session.scalar(
@@ -229,6 +243,8 @@ def redeem_page_package_handoff(
         )
     )
     if handoff is None:
+        raise ValueError("Handoff code is invalid")
+    if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff code is invalid")
     if handoff.state != "issued":
         raise ValueError("Handoff code is not available")
@@ -260,9 +276,12 @@ def complete_page_package_handoff(
     *,
     wordpress_object_id: int,
     edit_url: str,
+    expected_project_id: str | None = None,
 ) -> PagePackageHandoff:
     handoff = session.get(PagePackageHandoff, handoff_id)
     if handoff is None:
+        raise ValueError("Handoff not found")
+    if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff not found")
     if handoff.state == "completed":
         return handoff
@@ -270,7 +289,16 @@ def complete_page_package_handoff(
         raise ValueError("Handoff is not redeemable")
 
     proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
-    if proposal is None or proposal.state not in {"approved", "draft_created"}:
+    if proposal is None:
+        raise ValueError("Proposal version is no longer eligible")
+    if proposal.state == "approved":
+        if (
+            not proposal.is_current
+            or not proposal.approved_by
+            or proposal.approved_at is None
+        ):
+            raise ValueError("Proposal version is no longer eligible")
+    elif proposal.state != "draft_created":
         raise ValueError("Proposal version is no longer eligible")
 
     handoff.state = "completed"
@@ -288,9 +316,13 @@ def complete_page_package_handoff(
 def revoke_page_package_handoff(
     session: Session,
     handoff_id: str,
+    *,
+    expected_project_id: str | None = None,
 ) -> PagePackageHandoff:
     handoff = session.get(PagePackageHandoff, handoff_id)
     if handoff is None:
+        raise ValueError("Handoff not found")
+    if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff not found")
     if handoff.state == "completed":
         raise ValueError("Completed handoff cannot be revoked")

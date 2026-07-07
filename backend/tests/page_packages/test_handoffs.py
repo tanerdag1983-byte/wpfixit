@@ -81,6 +81,42 @@ def approved_page_proposal(
     return proposal
 
 
+def approved_other_project_proposal(
+    session: Session,
+    projects: ProjectFixtures,
+    *,
+    proposal_id: str = "proposal-other-approved",
+) -> object:
+    connection = session.get(WordPressConnection, "wp-other")
+    if connection is None:
+        connection = WordPressConnection(
+            id="wp-other",
+            project_id=projects.other_project.id,
+            site_url="https://other.example",
+            encrypted_secret="encrypted-secret",
+            seo_plugin="yoast",
+            health_state="healthy",
+        )
+        session.add(connection)
+        session.commit()
+
+    proposal = page_proposal_factory(
+        session,
+        projects,
+        proposal_id=proposal_id,
+        state="approved",
+        version_number=1,
+        is_current=True,
+        proposal_group_id=f"group-{proposal_id}",
+        current_version_id=proposal_id,
+    )
+    proposal.project_id = projects.other_project.id
+    proposal.approved_by = projects.member.id
+    proposal.approved_at = datetime.now(UTC)
+    session.commit()
+    return proposal
+
+
 def test_accept_candidate_revokes_previous_handoffs(
     client,
     session: Session,
@@ -295,3 +331,171 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
 
     assert revoke.status_code == 200
     assert revoke.json()["handoff"]["state"] == "revoked"
+
+
+def test_candidate_routes_reject_cross_project_access(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    proposal = approved_other_project_proposal(session, projects)
+    session.add(
+        PagePackageRegenerationCandidate(
+            id="candidate-other",
+            proposal_group_id=proposal.proposal_group_id,
+            base_version_id=proposal.id,
+            generation_mode="block",
+            target_block_id="faq",
+            instruction="Maak dit korter.",
+            candidate_package={"title": "Other project"},
+            candidate_rendered_html="<h1>Other project</h1>",
+            status="ready",
+        )
+    )
+    session.commit()
+
+    accept = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/candidates/candidate-other/accept"
+    )
+    discard = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/candidates/candidate-other/discard"
+    )
+
+    assert accept.status_code == 409
+    assert accept.json()["detail"] == "Regeneration candidate not found"
+    assert discard.status_code == 404
+    assert discard.json()["detail"] == "Regeneration candidate not found"
+
+
+def test_handoff_routes_reject_cross_project_access(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "encryption_key", ENCRYPTION_KEY)
+    auth_as(projects.member)
+    approved_page_proposal(session, projects)
+    proposal = approved_other_project_proposal(
+        session,
+        projects,
+        proposal_id="proposal-other-handoff",
+    )
+    session.add(
+        OrganizationMember(
+            organization_id=projects.other_project.organization_id,
+            profile_id=projects.member.id,
+            role="admin",
+        )
+    )
+    session.commit()
+    connection = session.get(WordPressConnection, "wp-other")
+    assert connection is not None
+    connection.encrypted_secret = encrypt_text("other-bridge-secret")
+    member_connection = session.get(WordPressConnection, "wp-member")
+    assert member_connection is not None
+    member_connection.encrypted_secret = encrypt_text("bridge-secret")
+    session.commit()
+
+    issued = issue_page_package_handoff(session, proposal, projects.member.id)
+    handoff = issued.record
+
+    redeem_payload = {
+        "code": issued.raw_code,
+        "site_url": "https://other.example",
+        "wordpress_user_id": 42,
+    }
+    redeem = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/handoffs/redeem",
+        json=redeem_payload,
+        headers=_plugin_headers(
+            "bridge-secret",
+            f"/projects/{projects.member_project.id}/page-proposals/handoffs/redeem",
+            redeem_payload,
+        ),
+    )
+
+    assert redeem.status_code == 409
+    assert redeem.json()["detail"] == "Handoff code is invalid"
+
+    redeemed = client.post(
+        f"/projects/{projects.other_project.id}/page-proposals/handoffs/redeem",
+        json=redeem_payload,
+        headers=_plugin_headers(
+            "other-bridge-secret",
+            f"/projects/{projects.other_project.id}/page-proposals/handoffs/redeem",
+            redeem_payload,
+        ),
+    )
+    assert redeemed.status_code == 200
+
+    complete_payload = {
+        "wordpress_object_id": 77,
+        "edit_url": "https://other.example/wp-admin/post.php?post=77",
+    }
+    wrong_complete_route = (
+        f"/projects/{projects.member_project.id}/page-proposals/handoffs/{handoff.id}/complete"
+    )
+    wrong_complete = client.post(
+        wrong_complete_route,
+        json=complete_payload,
+        headers=_plugin_headers(
+            "bridge-secret",
+            wrong_complete_route,
+            complete_payload,
+        ),
+    )
+    assert wrong_complete.status_code == 409
+    assert wrong_complete.json()["detail"] == "Handoff not found"
+
+    wrong_revoke = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/handoffs/{handoff.id}/revoke"
+    )
+    assert wrong_revoke.status_code == 409
+    assert wrong_revoke.json()["detail"] == "Handoff not found"
+
+
+def test_complete_handoff_rejects_stale_approved_version(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "encryption_key", ENCRYPTION_KEY)
+    auth_as(projects.member)
+    proposal = approved_page_proposal(session, projects)
+    connection = session.get(WordPressConnection, "wp-member")
+    assert connection is not None
+    connection.encrypted_secret = encrypt_text("bridge-secret")
+    session.commit()
+
+    issued = issue_page_package_handoff(session, proposal, projects.member.id)
+    handoff = session.get(PagePackageHandoff, issued.record.id)
+    assert handoff is not None
+    handoff.state = "redeemed"
+    handoff.redeemed_at = datetime.now(UTC)
+    session.commit()
+
+    proposal.is_current = False
+    proposal.current_version_id = "proposal-newer"
+    session.commit()
+
+    complete_payload = {
+        "wordpress_object_id": 88,
+        "edit_url": "https://member.example/wp-admin/post.php?post=88",
+    }
+    complete_route = (
+        f"/projects/{proposal.project_id}/page-proposals/handoffs/{handoff.id}/complete"
+    )
+    response = client.post(
+        complete_route,
+        json=complete_payload,
+        headers=_plugin_headers("bridge-secret", complete_route, complete_payload),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Proposal version is no longer eligible"
