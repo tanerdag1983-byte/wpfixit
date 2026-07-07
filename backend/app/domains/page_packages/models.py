@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -81,6 +82,13 @@ class PagePackageProposal(Base):
             name="fk_page_package_proposals_blueprint_identity",
             ondelete="RESTRICT",
         ),
+        CheckConstraint(
+            "("
+            "(is_current = true AND id = current_version_id) OR "
+            "(is_current = false AND id != current_version_id)"
+            ")",
+            name="ck_page_package_proposals_current_pointer_matches_flag",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -110,6 +118,7 @@ class PagePackageProposal(Base):
     parent_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("page_package_proposals.id", ondelete="RESTRICT")
     )
+    current_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
     is_current: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -171,6 +180,21 @@ class PagePackageRegenerationCandidate(Base):
     candidate_package: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     candidate_rendered_html: Mapped[str] = mapped_column(
         Text, default="", nullable=False
+    )
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(128))
+    input_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
     )
     status: Mapped[str] = mapped_column(
         String(24),
@@ -234,3 +258,12 @@ class PagePackageHandoff(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+Index(
+    "ix_page_package_proposals_current_version_per_group",
+    PagePackageProposal.proposal_group_id,
+    unique=True,
+    sqlite_where=PagePackageProposal.is_current.is_(True),
+    postgresql_where=PagePackageProposal.is_current.is_(True),
+)

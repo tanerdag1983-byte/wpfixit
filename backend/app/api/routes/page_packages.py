@@ -286,6 +286,7 @@ def create_page_package_proposal(
         job_id=job.id,
         state="generating",
         proposal_group_id="",
+        current_version_id="",
         package={},
         rendered_html="",
         config_snapshot={
@@ -305,6 +306,7 @@ def create_page_package_proposal(
         proposed_by=user.id,
     )
     proposal.proposal_group_id = proposal.id
+    proposal.current_version_id = proposal.id
     session.add_all([job, proposal])
     session.commit()
     background_tasks.add_task(

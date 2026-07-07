@@ -37,6 +37,10 @@ def upgrade() -> None:
     )
     op.add_column(
         "page_package_proposals",
+        sa.Column("current_version_id", sa.String(length=64), nullable=True),
+    )
+    op.add_column(
+        "page_package_proposals",
         sa.Column(
             "is_current",
             sa.Boolean(),
@@ -72,15 +76,30 @@ def upgrade() -> None:
 
     op.execute(
         "update page_package_proposals "
-        "set proposal_group_id = id "
+        "set proposal_group_id = id, current_version_id = id "
         "where proposal_group_id is null"
     )
     op.alter_column("page_package_proposals", "proposal_group_id", nullable=False)
+    op.alter_column("page_package_proposals", "current_version_id", nullable=False)
     op.create_index(
         "ix_page_package_proposals_proposal_group_id",
         "page_package_proposals",
         ["proposal_group_id"],
         unique=False,
+    )
+    op.create_check_constraint(
+        "ck_page_package_proposals_current_pointer_matches_flag",
+        "page_package_proposals",
+        "((is_current = true AND id = current_version_id) OR "
+        "(is_current = false AND id != current_version_id))",
+    )
+    op.create_index(
+        "ix_page_package_proposals_current_version_per_group",
+        "page_package_proposals",
+        ["proposal_group_id"],
+        unique=True,
+        postgresql_where=sa.text("is_current"),
+        sqlite_where=sa.text("is_current = 1"),
     )
 
     op.create_table(
@@ -93,6 +112,21 @@ def upgrade() -> None:
         sa.Column("instruction", sa.Text(), nullable=True),
         sa.Column("candidate_package", sa.JSON(), nullable=False),
         sa.Column("candidate_rendered_html", sa.Text(), nullable=False),
+        sa.Column("provider", sa.String(length=64), nullable=True),
+        sa.Column("model", sa.String(length=255), nullable=True),
+        sa.Column("prompt_version", sa.String(length=128), nullable=True),
+        sa.Column(
+            "input_tokens",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+        sa.Column(
+            "output_tokens",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
         sa.Column(
             "status",
             sa.String(length=24),
@@ -181,6 +215,15 @@ def downgrade() -> None:
     op.drop_table("page_package_regeneration_candidates")
 
     op.drop_index(
+        "ix_page_package_proposals_current_version_per_group",
+        table_name="page_package_proposals",
+    )
+    op.drop_constraint(
+        "ck_page_package_proposals_current_pointer_matches_flag",
+        "page_package_proposals",
+        type_="check",
+    )
+    op.drop_index(
         "ix_page_package_proposals_proposal_group_id",
         table_name="page_package_proposals",
     )
@@ -193,6 +236,7 @@ def downgrade() -> None:
     op.drop_column("page_package_proposals", "target_block_id")
     op.drop_column("page_package_proposals", "generation_mode")
     op.drop_column("page_package_proposals", "is_current")
+    op.drop_column("page_package_proposals", "current_version_id")
     op.drop_column("page_package_proposals", "parent_version_id")
     op.drop_column("page_package_proposals", "version_number")
     op.drop_column("page_package_proposals", "proposal_group_id")

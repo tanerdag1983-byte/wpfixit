@@ -132,6 +132,7 @@ def test_delete_lock_blocks_new_proposal_and_successor_references() -> None:
                     job_id=job_id,
                     state="generating",
                     proposal_group_id=proposal_id,
+                    current_version_id=proposal_id,
                     blueprint_id=blueprint_id,
                     blueprint_version=1,
                     blueprint_structure_hash=f"hash-{suffix}",
