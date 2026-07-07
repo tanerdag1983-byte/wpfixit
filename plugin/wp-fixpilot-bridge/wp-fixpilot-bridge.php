@@ -17,6 +17,8 @@ define('WPFIXPILOT_BRIDGE_VERSION', '0.3.4');
 
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';
+require_once __DIR__ . '/includes/class-import-session-store.php';
+require_once __DIR__ . '/includes/class-manual-handoff-controller.php';
 require_once __DIR__ . '/includes/seo-adapters/interface-seo-adapter.php';
 require_once __DIR__ . '/includes/seo-adapters/class-adapter-changes.php';
 require_once __DIR__ . '/includes/seo-adapters/class-yoast-adapter.php';

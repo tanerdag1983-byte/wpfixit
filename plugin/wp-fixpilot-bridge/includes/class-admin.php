@@ -4,6 +4,15 @@ declare(strict_types=1);
 
 final class WPFixPilot_Admin
 {
+    private WPFixPilot_Manual_Handoff_Controller $manualHandoffController;
+
+    public function __construct(
+        ?WPFixPilot_Manual_Handoff_Controller $manualHandoffController = null
+    ) {
+        $this->manualHandoffController = $manualHandoffController
+            ?? new WPFixPilot_Manual_Handoff_Controller();
+    }
+
     public function register(): void
     {
         add_options_page(
@@ -14,7 +23,18 @@ final class WPFixPilot_Admin
             [$this, 'render_settings_page']
         );
 
+        add_submenu_page(
+            null,
+            'WP FixPilot import',
+            'WP FixPilot import',
+            'edit_pages',
+            'wp-fixpilot-import',
+            [$this->manualHandoffController, 'render_import_page']
+        );
+
         add_action('admin_post_wp_fixpilot_regenerate_secret', [$this, 'regenerate_secret']);
+        add_action('admin_post_wp_fixpilot_redeem_handoff', [$this->manualHandoffController, 'handle_redeem']);
+        add_action('admin_post_wp_fixpilot_confirm_import', [$this->manualHandoffController, 'handle_confirm_import']);
     }
 
     public function regenerate_secret(): void
