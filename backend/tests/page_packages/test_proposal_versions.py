@@ -7,6 +7,11 @@ from app.domains.page_packages.models import (
     PagePackageRegenerationCandidate,
 )
 from app.domains.page_packages.service import accept_regeneration_candidate
+from tests.page_packages.test_proposal_routes import (
+    BlueprintBridge,
+    generated_blueprint_proposal,
+    prepare_project,
+)
 from tests.recommendations.conftest import ProjectFixtures
 
 
@@ -141,3 +146,61 @@ def test_accepting_a_candidate_creates_a_new_current_version(
     assert next_version.prompt_version == "prompt-v2"
     assert next_version.input_tokens == 19
     assert next_version.output_tokens == 23
+
+
+def test_regenerate_block_creates_candidate_without_mutating_current(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = generated_blueprint_proposal(
+        client, projects, opportunity, monkeypatch
+    )
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda current_session, project_id: bridge,
+    )
+    approved = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/approve"
+    )
+    assert approved.status_code == 200
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-2"
+
+        def generate_page_package(self, context):
+            return {
+                "package": proposal["package"],
+                "input_tokens": 12,
+                "output_tokens": 8,
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/regenerate",
+        json={
+            "mode": "block",
+            "target_block_id": "hero",
+            "instruction": "Maak de antwoorden concreter.",
+        },
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["base_version"]["id"] == proposal["id"]
+    assert body["candidate"]["status"] == "generating"
+
+    stored = session.get(PagePackageProposal, proposal["id"])
+    assert stored is not None
+    assert stored.is_current is True
+    assert stored.state == "approved"

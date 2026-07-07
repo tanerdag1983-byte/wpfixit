@@ -1,8 +1,11 @@
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,10 +18,13 @@ from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.generation import (
     PolicyPagePackageGenerator,
     prompt_version,
+    regeneration_candidate_payload,
     validate_blueprint_replacements,
 )
 from app.domains.page_packages.models import (
+    PagePackageHandoff,
     PagePackageProposal,
+    PagePackageRegenerationCandidate,
     ProjectPagePackageSettings,
 )
 from app.domains.page_packages.schemas import (
@@ -28,7 +34,19 @@ from app.domains.page_packages.schemas import (
     PagePackageGenerationResult,
     PagePackageProposalWrite,
     PagePackageSettingsWrite,
+    PageProposalHandoffCompleteRequest,
+    PageProposalHandoffRedeemRequest,
+    PageProposalRegenerationRequest,
     PageProposalRequest,
+)
+from app.domains.page_packages.service import (
+    accept_regeneration_candidate_with_revocations,
+    complete_page_package_handoff,
+    create_regeneration_candidate,
+    discard_regeneration_candidate,
+    issue_page_package_handoff,
+    redeem_page_package_handoff,
+    revoke_page_package_handoff,
 )
 from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership, get_project
@@ -481,6 +499,197 @@ def approve_page_package_proposal(
     return _proposal_payload(session, proposal)
 
 
+@router.post("/page-proposals/{proposal_id}/regenerate", status_code=202)
+def regenerate_page_package_proposal(
+    project_id: str,
+    proposal_id: str,
+    payload: PageProposalRegenerationRequest,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
+    if proposal.state != "approved" or not proposal.is_current:
+        raise HTTPException(
+            status_code=409,
+            detail="Only the current approved proposal can be regenerated",
+        )
+    candidate = create_regeneration_candidate(
+        session,
+        proposal,
+        mode=payload.mode,
+        target_block_id=payload.target_block_id,
+        instruction=payload.instruction,
+        candidate_package=regeneration_candidate_payload(proposal.package, payload),
+        candidate_rendered_html=proposal.rendered_html,
+        provider=proposal.provider,
+        model=proposal.model,
+        prompt_version=proposal.prompt_version,
+        status="generating",
+    )
+    return {
+        "base_version": _proposal_payload(session, proposal),
+        "candidate": _candidate_payload(candidate),
+    }
+
+
+@router.post("/page-proposals/candidates/{candidate_id}/accept")
+def accept_page_package_regeneration_candidate(
+    project_id: str,
+    candidate_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    try:
+        accepted = accept_regeneration_candidate_with_revocations(
+            session, candidate_id, user.id
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "current_version": _proposal_payload(session, accepted.proposal),
+        "revoked_handoff_ids": accepted.revoked_handoff_ids,
+    }
+
+
+@router.post("/page-proposals/candidates/{candidate_id}/discard")
+def discard_page_package_regeneration_candidate(
+    project_id: str,
+    candidate_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    try:
+        candidate = discard_regeneration_candidate(session, candidate_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"candidate": _candidate_payload(candidate)}
+
+
+@router.post("/page-proposals/{proposal_id}/handoffs")
+def issue_page_package_proposal_handoff(
+    project_id: str,
+    proposal_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
+    try:
+        issued = issue_page_package_handoff(session, proposal, user.id)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+    connection = session.scalar(
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="WordPress connection not found")
+    return {
+        "handoff": _handoff_payload(issued.record),
+        "code": issued.raw_code,
+        "import_url": _build_handoff_import_url(connection.site_url, issued.raw_code),
+    }
+
+
+@router.post("/page-proposals/handoffs/redeem")
+async def redeem_page_package_proposal_handoff(
+    project_id: str,
+    payload: PageProposalHandoffRedeemRequest,
+    request: Request,
+    session: SessionDependency,
+    x_wp_fixpilot_timestamp: str = Header(...),
+    x_wp_fixpilot_nonce: str = Header(...),
+    x_wp_fixpilot_signature: str = Header(...),
+) -> dict:
+    _verify_plugin_request(
+        session,
+        project_id,
+        request.url.path,
+        "POST",
+        payload.model_dump(),
+        x_wp_fixpilot_timestamp=x_wp_fixpilot_timestamp,
+        x_wp_fixpilot_nonce=x_wp_fixpilot_nonce,
+        x_wp_fixpilot_signature=x_wp_fixpilot_signature,
+    )
+    try:
+        redeemed = redeem_page_package_handoff(
+            session,
+            payload.code,
+            payload.site_url,
+            payload.wordpress_user_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "handoff": _handoff_payload(redeemed.handoff),
+        "package": _import_package_payload(redeemed.proposal),
+    }
+
+
+@router.post("/page-proposals/handoffs/{handoff_id}/complete")
+async def complete_page_package_proposal_handoff(
+    project_id: str,
+    handoff_id: str,
+    payload: PageProposalHandoffCompleteRequest,
+    request: Request,
+    session: SessionDependency,
+    x_wp_fixpilot_timestamp: str = Header(...),
+    x_wp_fixpilot_nonce: str = Header(...),
+    x_wp_fixpilot_signature: str = Header(...),
+) -> dict:
+    _verify_plugin_request(
+        session,
+        project_id,
+        request.url.path,
+        "POST",
+        payload.model_dump(),
+        x_wp_fixpilot_timestamp=x_wp_fixpilot_timestamp,
+        x_wp_fixpilot_nonce=x_wp_fixpilot_nonce,
+        x_wp_fixpilot_signature=x_wp_fixpilot_signature,
+    )
+    try:
+        handoff = complete_page_package_handoff(
+            session,
+            handoff_id,
+            wordpress_object_id=payload.wordpress_object_id,
+            edit_url=payload.edit_url,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal version not found")
+    return {
+        "handoff": _handoff_payload(handoff),
+        "proposal_version": _proposal_payload(session, proposal),
+    }
+
+
+@router.post("/page-proposals/handoffs/{handoff_id}/revoke")
+def revoke_page_package_proposal_handoff(
+    project_id: str,
+    handoff_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict:
+    project = _project_or_404(session, user, project_id)
+    _require_manager(session, user, project.organization_id)
+    try:
+        handoff = revoke_page_package_handoff(session, handoff_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"handoff": _handoff_payload(handoff)}
+
+
 @router.post("/page-proposals/{proposal_id}/create-draft")
 def create_wordpress_draft(
     project_id: str,
@@ -732,6 +941,14 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         "project_id": proposal.project_id,
         "opportunity_id": proposal.opportunity_id,
         "state": proposal.state,
+        "proposal_group_id": proposal.proposal_group_id,
+        "version_number": proposal.version_number,
+        "parent_version_id": proposal.parent_version_id,
+        "current_version_id": proposal.current_version_id,
+        "is_current": proposal.is_current,
+        "generation_mode": proposal.generation_mode,
+        "target_block_id": proposal.target_block_id,
+        "user_instruction": proposal.user_instruction,
         "package": proposal.package,
         "rendered_html": proposal.rendered_html,
         "config_snapshot": proposal.config_snapshot,
@@ -756,6 +973,100 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         if job
         else None,
     }
+
+
+def _candidate_payload(candidate: PagePackageRegenerationCandidate) -> dict:
+    return {
+        "id": candidate.id,
+        "proposal_group_id": candidate.proposal_group_id,
+        "base_version_id": candidate.base_version_id,
+        "generation_mode": candidate.generation_mode,
+        "target_block_id": candidate.target_block_id,
+        "instruction": candidate.instruction,
+        "status": candidate.status,
+        "provider": candidate.provider,
+        "model": candidate.model,
+        "prompt_version": candidate.prompt_version,
+        "input_tokens": candidate.input_tokens,
+        "output_tokens": candidate.output_tokens,
+        "created_at": candidate.created_at,
+        "updated_at": candidate.updated_at,
+    }
+
+
+def _handoff_payload(handoff: PagePackageHandoff) -> dict:
+    return {
+        "id": handoff.id,
+        "project_id": handoff.project_id,
+        "proposal_version_id": handoff.proposal_version_id,
+        "wordpress_connection_id": handoff.wordpress_connection_id,
+        "state": handoff.state,
+        "expires_at": handoff.expires_at,
+        "redeemed_at": handoff.redeemed_at,
+        "completed_at": handoff.completed_at,
+        "revoked_at": handoff.revoked_at,
+        "wordpress_object_id": handoff.wordpress_object_id,
+        "wordpress_edit_url": handoff.wordpress_edit_url,
+        "created_at": handoff.created_at,
+    }
+
+
+def _import_package_payload(proposal: PagePackageProposal) -> dict:
+    return {
+        "proposal_version_id": proposal.id,
+        "project_id": proposal.project_id,
+        "proposal_group_id": proposal.proposal_group_id,
+        "version_number": proposal.version_number,
+        "package": proposal.package,
+        "config_snapshot": proposal.config_snapshot,
+        "state": proposal.state,
+    }
+
+
+def _build_handoff_import_url(site_url: str, raw_code: str) -> str:
+    return (
+        f"{site_url.rstrip('/')}/wp-admin/admin.php"
+        f"?page=wpfixpilot-import#code={raw_code}"
+    )
+
+
+def _verify_plugin_request(
+    session: Session,
+    project_id: str,
+    route_path: str,
+    method: str,
+    payload: dict,
+    *,
+    x_wp_fixpilot_timestamp: str,
+    x_wp_fixpilot_nonce: str,
+    x_wp_fixpilot_signature: str,
+) -> None:
+    connection = session.scalar(
+        select(WordPressConnection).where(WordPressConnection.project_id == project_id)
+    )
+    if connection is None:
+        raise HTTPException(status_code=404, detail="WordPress connection not found")
+    secret = decrypt_text(connection.encrypted_secret)
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    canonical = "\n".join(
+        [
+            method.upper(),
+            route_path,
+            x_wp_fixpilot_timestamp,
+            x_wp_fixpilot_nonce,
+            hashlib.sha256(body.encode()).hexdigest(),
+        ]
+    )
+    expected = hmac.new(
+        secret.encode(),
+        canonical.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, x_wp_fixpilot_signature):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid WordPress bridge signature",
+        )
 
 
 def _project_or_404(

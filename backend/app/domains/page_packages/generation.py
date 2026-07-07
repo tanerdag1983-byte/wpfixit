@@ -8,6 +8,7 @@ from app.domains.page_packages.schemas import (
     GeneratedPagePackage,
     PagePackageContext,
     PagePackageGenerationResult,
+    PageProposalRegenerationRequest,
     plain_text,
     safe_html,
 )
@@ -178,6 +179,21 @@ def prompt_version(context: PagePackageContext, model: str) -> str:
             sort_keys=True,
         ).encode()
     ).hexdigest()
+
+
+def regeneration_candidate_payload(
+    proposal_package: dict,
+    payload: PageProposalRegenerationRequest,
+) -> dict:
+    candidate = json.loads(
+        json.dumps(proposal_package, ensure_ascii=False, sort_keys=True)
+    )
+    candidate["_regeneration"] = {
+        "mode": payload.mode,
+        "target_block_id": payload.target_block_id,
+        "instruction": payload.instruction,
+    }
+    return candidate
 
 
 class PolicyPagePackageGenerator:

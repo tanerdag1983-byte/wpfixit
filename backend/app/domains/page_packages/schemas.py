@@ -190,3 +190,34 @@ class PagePackageGenerationResult(BaseModel):
 
 class PagePackageProposalWrite(BaseModel):
     package: GeneratedBlueprintPackage
+
+
+class PageProposalRegenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    mode: Literal["full", "block"]
+    target_block_id: str | None = Field(default=None, min_length=1, max_length=128)
+    instruction: str | None = Field(default=None, max_length=4_000)
+
+    @field_validator("target_block_id")
+    @classmethod
+    def validate_target_block_id(cls, value: str | None, info) -> str | None:
+        mode = info.data.get("mode")
+        if mode == "block" and not value:
+            raise ValueError("target_block_id is required for block regeneration")
+        return value
+
+
+class PageProposalHandoffRedeemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    code: str = Field(min_length=8, max_length=512)
+    site_url: str = Field(min_length=1, max_length=2048)
+    wordpress_user_id: int = Field(ge=1)
+
+
+class PageProposalHandoffCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    wordpress_object_id: int = Field(ge=1)
+    edit_url: str = Field(min_length=1, max_length=2048)

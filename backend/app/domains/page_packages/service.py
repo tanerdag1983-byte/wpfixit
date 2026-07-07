@@ -27,6 +27,18 @@ class IssuedPagePackageHandoff:
     raw_code: str
 
 
+@dataclass
+class RedeemedPagePackageHandoff:
+    handoff: PagePackageHandoff
+    proposal: PagePackageProposal
+
+
+@dataclass
+class AcceptedRegenerationCandidate:
+    proposal: PagePackageProposal
+    revoked_handoff_ids: list[str]
+
+
 def accept_regeneration_candidate(
     session: Session,
     candidate_id: str,
@@ -98,6 +110,22 @@ def accept_regeneration_candidate(
     return next_version
 
 
+def accept_regeneration_candidate_with_revocations(
+    session: Session,
+    candidate_id: str,
+    actor_id: str,
+) -> AcceptedRegenerationCandidate:
+    candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
+    if candidate is None:
+        raise ValueError("Regeneration candidate not found")
+    revoked_handoff_ids = open_handoff_ids(session, candidate.base_version_id)
+    proposal = accept_regeneration_candidate(session, candidate_id, actor_id)
+    return AcceptedRegenerationCandidate(
+        proposal=proposal,
+        revoked_handoff_ids=revoked_handoff_ids,
+    )
+
+
 def issue_page_package_handoff(
     session: Session,
     proposal: PagePackageProposal,
@@ -137,6 +165,155 @@ def issue_page_package_handoff(
     return IssuedPagePackageHandoff(record=handoff, raw_code=raw_code)
 
 
+def create_regeneration_candidate(
+    session: Session,
+    proposal: PagePackageProposal,
+    *,
+    mode: str,
+    target_block_id: str | None,
+    instruction: str | None,
+    candidate_package: dict,
+    candidate_rendered_html: str,
+    provider: str | None,
+    model: str | None,
+    prompt_version: str | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    status: str = "generating",
+) -> PagePackageRegenerationCandidate:
+    candidate = PagePackageRegenerationCandidate(
+        id=str(uuid4()),
+        proposal_group_id=proposal.proposal_group_id,
+        base_version_id=proposal.id,
+        generation_mode=mode,
+        target_block_id=target_block_id,
+        instruction=instruction,
+        candidate_package=candidate_package,
+        candidate_rendered_html=candidate_rendered_html,
+        provider=provider,
+        model=model,
+        prompt_version=prompt_version,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        status=status,
+    )
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+    return candidate
+
+
+def discard_regeneration_candidate(
+    session: Session,
+    candidate_id: str,
+) -> PagePackageRegenerationCandidate:
+    candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
+    if candidate is None:
+        raise ValueError("Regeneration candidate not found")
+    candidate.status = "discarded"
+    session.commit()
+    session.refresh(candidate)
+    return candidate
+
+
+def redeem_page_package_handoff(
+    session: Session,
+    code: str,
+    site_url: str,
+    wordpress_user_id: int,
+) -> RedeemedPagePackageHandoff:
+    del wordpress_user_id
+    handoff = session.scalar(
+        select(PagePackageHandoff).where(
+            PagePackageHandoff.code_hash == _hash_handoff_code(code)
+        )
+    )
+    if handoff is None:
+        raise ValueError("Handoff code is invalid")
+    if handoff.state != "issued":
+        raise ValueError("Handoff code is not available")
+    if handoff.expires_at <= _utcnow_like(handoff.expires_at):
+        handoff.state = "expired"
+        session.commit()
+        raise ValueError("Handoff code expired")
+
+    connection = session.get(WordPressConnection, handoff.wordpress_connection_id)
+    if connection is None:
+        raise ValueError("WordPress connection not found")
+    if connection.site_url.rstrip("/") != site_url.rstrip("/"):
+        raise ValueError("WordPress site mismatch")
+
+    proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+    if proposal is None or proposal.state != "approved" or not proposal.is_current:
+        raise ValueError("Proposal version is no longer eligible")
+
+    handoff.state = "redeemed"
+    handoff.redeemed_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(handoff)
+    return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
+
+
+def complete_page_package_handoff(
+    session: Session,
+    handoff_id: str,
+    *,
+    wordpress_object_id: int,
+    edit_url: str,
+) -> PagePackageHandoff:
+    handoff = session.get(PagePackageHandoff, handoff_id)
+    if handoff is None:
+        raise ValueError("Handoff not found")
+    if handoff.state == "completed":
+        return handoff
+    if handoff.state != "redeemed":
+        raise ValueError("Handoff is not redeemable")
+
+    proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+    if proposal is None or proposal.state not in {"approved", "draft_created"}:
+        raise ValueError("Proposal version is no longer eligible")
+
+    handoff.state = "completed"
+    handoff.completed_at = datetime.now(UTC)
+    handoff.wordpress_object_id = wordpress_object_id
+    handoff.wordpress_edit_url = edit_url
+    proposal.state = "draft_created"
+    proposal.wordpress_object_id = wordpress_object_id
+    proposal.wordpress_edit_url = edit_url
+    session.commit()
+    session.refresh(handoff)
+    return handoff
+
+
+def revoke_page_package_handoff(
+    session: Session,
+    handoff_id: str,
+) -> PagePackageHandoff:
+    handoff = session.get(PagePackageHandoff, handoff_id)
+    if handoff is None:
+        raise ValueError("Handoff not found")
+    if handoff.state == "completed":
+        raise ValueError("Completed handoff cannot be revoked")
+    if handoff.state != "revoked":
+        handoff.state = "revoked"
+        handoff.revoked_at = datetime.now(UTC)
+        session.commit()
+        session.refresh(handoff)
+    return handoff
+
+
+def open_handoff_ids(session: Session, proposal_version_id: str) -> list[str]:
+    return [
+        handoff.id
+        for handoff in session.scalars(
+            select(PagePackageHandoff).where(
+                PagePackageHandoff.proposal_version_id == proposal_version_id,
+                PagePackageHandoff.state.in_(tuple(REVOCABLE_HANDOFF_STATES)),
+            )
+        ).all()
+    ]
+
+
 def _revoke_open_handoffs(session: Session, proposal_version_id: str) -> None:
     now = datetime.now(UTC)
     handoffs = session.scalars(
@@ -152,6 +329,12 @@ def _revoke_open_handoffs(session: Session, proposal_version_id: str) -> None:
 
 def _hash_handoff_code(raw_code: str) -> str:
     return hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
+
+
+def _utcnow_like(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now(UTC)
 
 
 def _require_handoff_manager(
