@@ -103,7 +103,12 @@ def issue_page_package_handoff(
     proposal: PagePackageProposal,
     actor_id: str,
 ) -> IssuedPagePackageHandoff:
-    if proposal.state != "approved" or not proposal.is_current:
+    if (
+        proposal.state != "approved"
+        or not proposal.is_current
+        or not proposal.approved_by
+        or proposal.approved_at is None
+    ):
         raise ValueError("Only the approved current proposal version can be handed off")
     _require_handoff_manager(session, proposal, actor_id)
 

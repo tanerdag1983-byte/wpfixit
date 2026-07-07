@@ -108,3 +108,22 @@ The only limitation is evidence-related: I cannot claim a fresh RED step for thi
 
 - No blocking Task 1 persistence concern remains from this review-fix slice.
 - `current_version_id` is enforced by the row-level check plus the partial unique current-row index; it is not a self-referential foreign key, which avoids cyclic flush problems during current-version transitions while still preserving the Task 1 interface and invariant.
+
+## Follow-up Fix Pass: Approval Metadata Requirement For Handoff Issuance
+
+### What I changed
+
+- Tightened `issue_page_package_handoff()` so `proposal.state == "approved"` is no longer sufficient by itself.
+- Handoff issuance now also requires persisted approval metadata: `approved_by` must be present and `approved_at` must be non-null.
+- Updated the focused handoff fixture to represent a real approved proposal by setting both fields.
+- Added a focused regression test that rejects a proposal left in `approved` state after `approved_at` is cleared.
+
+### Commands run and outputs summary
+
+1. `cd backend && .venv/bin/python -m pytest --import-mode=importlib tests/page_packages/test_handoffs.py tests/page_packages/test_proposal_versions.py -q`
+   - RED before fix: `1 failed, 3 passed`
+   - GREEN after fix: `4 passed in 0.11s`
+
+### Residual concerns
+
+- No additional Task 1 concern remains from this approval-metadata finding.

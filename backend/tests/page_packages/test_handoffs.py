@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
 from app.domains.page_packages.models import PagePackageHandoff
@@ -34,6 +36,7 @@ def approved_page_proposal(
         is_current=True,
     )
     proposal.approved_by = projects.member.id
+    proposal.approved_at = datetime.now(UTC)
     session.commit()
     return proposal
 
@@ -76,5 +79,23 @@ def test_handoff_issuance_requires_owner_or_admin(
         assert str(error) == "Only organization owners or admins can issue handoffs"
     else:
         raise AssertionError("expected non-manager handoff issuance to be rejected")
+
+    assert session.query(PagePackageHandoff).count() == 0
+
+
+def test_handoff_issuance_rejects_missing_approval_metadata(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    proposal = approved_page_proposal(session, projects)
+    proposal.approved_at = None
+    session.commit()
+
+    try:
+        issue_page_package_handoff(session, proposal, projects.member.id)
+    except ValueError as error:
+        assert str(error) == "Only the approved current proposal version can be handed off"
+    else:
+        raise AssertionError("expected incomplete approval metadata to be rejected")
 
     assert session.query(PagePackageHandoff).count() == 0
