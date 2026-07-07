@@ -706,7 +706,13 @@ seed_post(207, [
 
 seed_post(208, [
     'post_title' => 'Broken Gutenberg Fixture',
-    'post_content' => 'not-json-content',
+    'post_content' => '',
+]);
+
+seed_post(209, [
+    'post_type' => 'post',
+    'post_title' => 'Classic Editor Blog Fixture',
+    'post_content' => '<h2>Vakantiecheck</h2><p>Controleer uw auto voor vertrek.</p>',
 ]);
 
 require_once __DIR__ . '/../includes/builder-adapters/interface-builder-adapter.php';
@@ -740,6 +746,37 @@ $adapters = [
 assert(
     $adapters['gutenberg']->uses_page(203) === false,
     'WPBakery shortcode content is not a Gutenberg page'
+);
+
+assert(
+    $adapters['gutenberg']->uses_page(209) === true,
+    'classic editor HTML is handled as Gutenberg freeform content'
+);
+$classicSchema = $adapters['gutenberg']->schema(209);
+assert(!is_wp_error($classicSchema), 'classic editor schema should succeed');
+assert(count($classicSchema['blocks']) === 1, 'classic editor has one freeform block');
+assert(
+    $classicSchema['blocks'][0]['layout'] === 'core/freeform',
+    'classic editor uses the freeform layout'
+);
+assert(
+    $classicSchema['blocks'][0]['fields'][0]['value_type'] === 'rich_text',
+    'classic editor HTML remains rich text'
+);
+$classicFieldId = $classicSchema['blocks'][0]['fields'][0]['id'];
+assert(
+    $adapters['gutenberg']->apply_replacements(
+        209,
+        $classicSchema,
+        [$classicFieldId => '<h2>Nieuwe vakantiecheck</h2><p>Plan onderhoud.</p>']
+    ) === true,
+    'classic editor replacement succeeds'
+);
+$classicBlocks = parse_blocks((string) get_post(209)?->post_content);
+assert(
+    $classicBlocks[0]['innerHTML']
+    === '<h2>Nieuwe vakantiecheck</h2><p>Plan onderhoud.</p>',
+    'classic editor replacement preserves the approved HTML'
 );
 
 $fixtures = [
@@ -1054,7 +1091,7 @@ assert(is_wp_error($bricksWriteFailure), 'bricks write failure');
 unset($GLOBALS['wpfixpilot_update_post_meta_failures'][205]['_bricks_page_content_2']);
 
 $gutenbergBroken = $adapters['gutenberg']->schema(208);
-assert(is_wp_error($gutenbergBroken), 'gutenberg malformed data should error');
+assert(is_wp_error($gutenbergBroken), 'missing Gutenberg data should error');
 
 $gutenbergSchema = $adapters['gutenberg']->schema(207);
 assert(!is_wp_error($gutenbergSchema), 'gutenberg schema');

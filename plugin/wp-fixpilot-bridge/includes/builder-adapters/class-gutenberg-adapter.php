@@ -23,6 +23,10 @@ final class WPFixPilot_Gutenberg_Adapter implements
             return false;
         }
 
+        if (str_contains((string) $post->post_content, '[vc_')) {
+            return false;
+        }
+
         $blocks = parse_blocks((string) $post->post_content);
 
         return is_array($blocks) && $this->has_named_block($blocks);
@@ -36,6 +40,12 @@ final class WPFixPilot_Gutenberg_Adapter implements
                 continue;
             }
             if (is_string($block['blockName'] ?? null) && $block['blockName'] !== '') {
+                return true;
+            }
+            if (
+                ($block['blockName'] ?? null) === null
+                && trim(wp_strip_all_tags((string) ($block['innerHTML'] ?? ''))) !== ''
+            ) {
                 return true;
             }
             $innerBlocks = $block['innerBlocks'] ?? [];
@@ -253,7 +263,7 @@ final class WPFixPilot_Gutenberg_Adapter implements
             $currentPath = [...$pathSegments, (string) $index];
             $fields = $this->fields_from_block($block, $currentPath);
             if ($fields !== []) {
-                $blockName = (string) ($block['blockName'] ?? 'core/block');
+                $blockName = $this->normalized_block_name($block);
                 $schemaBlocks[] = [
                     'id' => wpfixpilot_field_id(
                         'gutenberg',
@@ -285,7 +295,7 @@ final class WPFixPilot_Gutenberg_Adapter implements
      */
     private function fields_from_block(array $block, array $pathSegments): array
     {
-        $blockName = (string) ($block['blockName'] ?? '');
+        $blockName = $this->normalized_block_name($block);
         $fields = [];
 
         foreach ((array) ($block['attrs'] ?? []) as $key => $value) {
@@ -351,7 +361,7 @@ final class WPFixPilot_Gutenberg_Adapter implements
     private function normalize_block(array $block): array
     {
         $normalized = $block;
-        $blockName = (string) ($block['blockName'] ?? '');
+        $blockName = $this->normalized_block_name($block);
         $hasEditableAttribute = false;
         foreach ((array) ($normalized['attrs'] ?? []) as $key => $value) {
             if (
@@ -443,10 +453,13 @@ final class WPFixPilot_Gutenberg_Adapter implements
             return true;
         }
 
-        $blocks[$index]['innerHTML'] = $this->replace_wrapped_text(
-            (string) ($blocks[$index]['innerHTML'] ?? ''),
-            $replacement
-        );
+        $blocks[$index]['innerHTML'] = $this->normalized_block_name($blocks[$index])
+            === 'core/freeform'
+            ? $replacement
+            : $this->replace_wrapped_text(
+                (string) ($blocks[$index]['innerHTML'] ?? ''),
+                $replacement
+            );
         $blocks[$index]['innerContent'] = [$blocks[$index]['innerHTML']];
 
         return true;
@@ -536,7 +549,13 @@ final class WPFixPilot_Gutenberg_Adapter implements
 
     private function editable_inner_html_type(string $blockName): ?string
     {
-        if (in_array($blockName, ['core/paragraph', 'core/html', 'core/list'], true)) {
+        if (
+            in_array(
+                $blockName,
+                ['core/paragraph', 'core/html', 'core/list', 'core/freeform'],
+                true
+            )
+        ) {
             return 'rich_text';
         }
 
@@ -567,6 +586,16 @@ final class WPFixPilot_Gutenberg_Adapter implements
         $value = str_replace(['_', '-', '/'], ' ', $value);
 
         return ucfirst($value);
+    }
+
+    /** @param array<string, mixed> $block */
+    private function normalized_block_name(array $block): string
+    {
+        $blockName = $block['blockName'] ?? null;
+
+        return is_string($blockName) && $blockName !== ''
+            ? $blockName
+            : 'core/freeform';
     }
 
     /** @return array<string, array<string, mixed>> */
