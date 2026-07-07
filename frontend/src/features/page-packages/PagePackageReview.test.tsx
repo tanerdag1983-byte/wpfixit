@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PagePackageReview } from "./PagePackageReview";
 
 const apiRequest = vi.fn();
+const openWindow = vi.fn();
 
 vi.mock("../../lib/api", () => ({
   apiRequest: (...args: unknown[]) => apiRequest(...args),
@@ -101,6 +102,8 @@ const activeCandidate = {
 describe("PagePackageReview", () => {
   beforeEach(() => {
     apiRequest.mockReset();
+    openWindow.mockReset();
+    vi.stubGlobal("open", openWindow);
     window.sessionStorage.clear();
     window.sessionStorage.setItem("page-proposal-id:project-1", "proposal-1");
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
@@ -110,11 +113,18 @@ describe("PagePackageReview", () => {
       if (path.endsWith("/approve")) {
         return Promise.resolve({ ...proposal, state: "approved" });
       }
-      if (path.endsWith("/create-draft")) {
+      if (path.endsWith("/handoffs")) {
         return Promise.resolve({
-          ...proposal,
-          state: "draft_created",
-          wordpress_edit_url: "https://example.com/wp-admin/post.php?post=987",
+          handoff: {
+            id: "handoff-1",
+            project_id: "project-1",
+            proposal_version_id: "proposal-1",
+            state: "issued",
+            expires_at: "2026-07-07T10:00:00Z",
+          },
+          code: "opaque-code",
+          import_url:
+            "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
         });
       }
       return Promise.resolve(proposal);
@@ -238,12 +248,12 @@ describe("PagePackageReview", () => {
     ).toBeVisible();
   });
 
-  it("saves edits and requires approval before draft creation", async () => {
+  it("saves edits and requires approval before starting the WordPress import flow", async () => {
     render(<PagePackageReview projectId="project-1" />);
     const title = await screen.findByLabelText("Paginatitel");
     fireEvent.change(title, { target: { value: "Aangepaste DSG pagina" } });
 
-    expect(screen.getByRole("button", { name: "WordPress-concept aanmaken" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "WordPress-import openen" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Wijzigingen opslaan" }));
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
@@ -254,16 +264,25 @@ describe("PagePackageReview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Voorstel goedkeuren" }));
 
     expect(
-      await screen.findByRole("button", { name: "WordPress-concept aanmaken" }),
+      await screen.findByRole("button", { name: "WordPress-import openen" }),
     ).toBeEnabled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "WordPress-concept aanmaken" }),
+    fireEvent.click(screen.getByRole("button", { name: "WordPress-import openen" }));
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/proposal-1/handoffs",
+        { method: "POST" },
+      ),
+    );
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
+      "_blank",
+      "noopener,noreferrer",
     );
     expect(
-      await screen.findByRole("link", { name: "Concept openen in WordPress" }),
+      await screen.findByRole("link", { name: "Importpagina opnieuw openen" }),
     ).toHaveAttribute(
       "href",
-      "https://example.com/wp-admin/post.php?post=987",
+      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
     );
   });
 });

@@ -67,6 +67,12 @@ export type ProposalHandoff = {
   wordpress_edit_url?: string | null;
 };
 
+export type ProposalHandoffIssueResponse = {
+  handoff: ProposalHandoff;
+  code: string;
+  import_url: string;
+};
+
 export type Proposal = {
   id: string;
   state: ProposalState;

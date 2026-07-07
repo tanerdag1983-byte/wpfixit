@@ -9,6 +9,7 @@ import type {
   PagePackage,
   Proposal,
   ProposalCandidate,
+  ProposalHandoffIssueResponse,
 } from "./proposalTypes";
 
 export function PagePackageReview({ projectId }: { projectId: string }) {
@@ -18,6 +19,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [importUrl, setImportUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const proposalId = window.sessionStorage.getItem(
@@ -40,6 +42,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         setProposal(result);
         setCandidate(readActiveCandidate(result));
         if (result.package?.title) setDraft(result.package);
+        setImportUrl(null);
         setLoading(false);
         if (result.state === "generating") {
           pollTimer = window.setTimeout(loadProposal, 1500);
@@ -183,17 +186,18 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     setBusy(true);
     setMessage("");
     try {
-      const result = await apiRequest<Proposal>(
-        `/projects/${projectId}/page-proposals/${proposal.id}/create-draft`,
+      const result = await apiRequest<ProposalHandoffIssueResponse>(
+        `/projects/${projectId}/page-proposals/${proposal.id}/handoffs`,
         { method: "POST" },
       );
-      setProposal(result);
-      setCandidate(readActiveCandidate(result));
-      setDraft(result.package);
-      setMessage("Het WordPress-concept is aangemaakt en nog niet gepubliceerd.");
+      setImportUrl(result.import_url);
+      window.open(result.import_url, "_blank", "noopener,noreferrer");
+      setMessage(
+        "De WordPress-importpagina is geopend. Rond daar het concept aanmaken af.",
+      );
     } catch (error) {
       setMessage(
-        error instanceof Error ? error.message : "WordPress-concept maken mislukt.",
+        error instanceof Error ? error.message : "WordPress-import starten mislukt.",
       );
     } finally {
       setBusy(false);
@@ -377,8 +381,18 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 onClick={createDraft}
                 type="button"
               >
-                WordPress-concept aanmaken
+                WordPress-import openen
               </button>
+              {importUrl && (
+                <a
+                  className="secondary-button wordpress-edit-link"
+                  href={importUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Importpagina opnieuw openen
+                </a>
+              )}
               {proposal.wordpress_edit_url && (
                 <a
                   className="secondary-button wordpress-edit-link"
