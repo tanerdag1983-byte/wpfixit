@@ -29,6 +29,24 @@ final class WPFixPilot_Import_Session_Store
         return is_array($payload) ? $payload : null;
     }
 
+    public function update_payload(string $sessionId, array $payload): void
+    {
+        $session = $this->get($sessionId);
+        if (!is_array($session)) {
+            return;
+        }
+
+        set_transient(
+            self::PREFIX . $sessionId,
+            [
+                'handoff_id' => $session['handoff_id'] ?? '',
+                'payload' => $payload,
+                'created_at' => $session['created_at'] ?? time(),
+            ],
+            self::TTL
+        );
+    }
+
     public function delete(string $sessionId): void
     {
         delete_transient(self::PREFIX . $sessionId);

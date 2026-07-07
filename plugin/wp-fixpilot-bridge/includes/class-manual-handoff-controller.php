@@ -8,9 +8,12 @@ final class WPFixPilot_Manual_Handoff_Controller
 
     private string $backendBaseUrl;
 
+    private ?object $pagePackageController;
+
     public function __construct(
         ?WPFixPilot_Import_Session_Store $store = null,
-        ?string $backendBaseUrl = null
+        ?string $backendBaseUrl = null,
+        ?object $pagePackageController = null
     ) {
         $this->store = $store ?? new WPFixPilot_Import_Session_Store();
         $configuredBaseUrl = (string) get_option('wp_fixpilot_backend_base_url', '');
@@ -18,6 +21,7 @@ final class WPFixPilot_Manual_Handoff_Controller
             $backendBaseUrl ?? $configuredBaseUrl,
             '/'
         );
+        $this->pagePackageController = $pagePackageController;
     }
 
     public function redeem_code(string $code, int $wordpressUserId): array|WP_Error
@@ -112,5 +116,133 @@ final class WPFixPilot_Manual_Handoff_Controller
         if (!current_user_can('edit_pages')) {
             return;
         }
+    }
+
+    public function confirm_import(string $sessionId, int $wordpressUserId): array|WP_Error
+    {
+        $session = $this->store->get($sessionId);
+        if (!is_array($session)) {
+            return new WP_Error(
+                'wp_fixpilot_import_session_missing',
+                'De importsessie is verlopen.',
+                ['status' => 410]
+            );
+        }
+
+        $payload = (array) ($session['payload'] ?? []);
+        if ((int) ($payload['wordpress_user_id'] ?? 0) !== $wordpressUserId) {
+            return new WP_Error(
+                'wp_fixpilot_import_forbidden',
+                'Deze importsessie hoort bij een andere WordPress-gebruiker.',
+                ['status' => 403]
+            );
+        }
+
+        $completedDraft = $payload['completed_draft'] ?? null;
+        if (is_array($completedDraft)) {
+            return $completedDraft;
+        }
+
+        $package = (array) ($payload['package'] ?? []);
+        $draft = $this->page_package_controller()->create_draft([
+            'template_id' => $package['template_id'] ?? null,
+            'expected_template_hash' => $package['expected_template_hash'] ?? '',
+            'builder' => $package['builder'] ?? '',
+            'mapping' => (array) ($package['mapping'] ?? []),
+            'seo_plugin' => $package['seo_plugin'] ?? '',
+            'idempotency_key' => $package['idempotency_key'] ?? '',
+            'proposal_version_id' => $package['proposal_version_id'] ?? '',
+            'snapshot_hash' => $package['snapshot_hash'] ?? '',
+            'package' => (array) ($package['package'] ?? []),
+        ]);
+        if (is_wp_error($draft)) {
+            return $draft;
+        }
+
+        $completion = $this->report_completion(
+            (string) ($payload['handoff']['project_id'] ?? ''),
+            (string) ($session['handoff_id'] ?? ''),
+            [
+                'wordpress_object_id' => (int) ($draft['wordpress_object_id'] ?? 0),
+                'edit_url' => (string) ($draft['edit_url'] ?? ''),
+            ]
+        );
+        if (is_wp_error($completion)) {
+            return $completion;
+        }
+
+        $payload['completed_draft'] = $draft;
+        $this->store->update_payload($sessionId, $payload);
+
+        return $draft;
+    }
+
+    private function report_completion(
+        string $projectId,
+        string $handoffId,
+        array $draft
+    ): true|WP_Error {
+        if ($this->backendBaseUrl === '' || $projectId === '' || $handoffId === '') {
+            return new WP_Error(
+                'wp_fixpilot_backend_missing',
+                'WP FixPilot backend URL ontbreekt.',
+                ['status' => 500]
+            );
+        }
+
+        $route = sprintf(
+            '/projects/%s/page-proposals/handoffs/%s/complete',
+            rawurlencode($projectId),
+            rawurlencode($handoffId)
+        );
+        $body = wp_json_encode($draft);
+        $timestamp = (string) time();
+        $nonce = wp_generate_password(20, false, false);
+        $secret = (string) get_option('wp_fixpilot_secret', '');
+
+        $response = wp_remote_post(
+            $this->backendBaseUrl . $route,
+            [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'x-wp-fixpilot-timestamp' => $timestamp,
+                    'x-wp-fixpilot-nonce' => $nonce,
+                    'x-wp-fixpilot-signature' => WPFixPilot_Auth::sign(
+                        $secret,
+                        'POST',
+                        $route,
+                        $timestamp,
+                        $nonce,
+                        $body
+                    ),
+                ],
+                'body' => $body,
+                'timeout' => 30,
+            ]
+        );
+
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        $status = wp_remote_retrieve_response_code($response);
+        if ($status < 200 || $status >= 300) {
+            return new WP_Error(
+                'wp_fixpilot_complete_failed',
+                'De draft-import kon niet worden afgerond.',
+                ['status' => $status ?: 502]
+            );
+        }
+
+        return true;
+    }
+
+    private function page_package_controller(): object
+    {
+        if ($this->pagePackageController === null) {
+            $this->pagePackageController = new WPFixPilot_Page_Package_Controller();
+        }
+
+        return $this->pagePackageController;
     }
 }

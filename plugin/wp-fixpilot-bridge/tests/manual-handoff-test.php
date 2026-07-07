@@ -16,6 +16,7 @@ $GLOBALS['wpfixpilot_options'] = [
     'wp_fixpilot_secret' => 'bridge-secret',
 ];
 $GLOBALS['wpfixpilot_http_requests'] = [];
+$GLOBALS['wpfixpilot_created_drafts'] = [];
 $GLOBALS['wpfixpilot_browser_history_fragment_cleared'] = false;
 
 function is_wp_error(mixed $value): bool { return $value instanceof WP_Error; }
@@ -29,6 +30,16 @@ function get_site_url(): string { return 'https://member.example'; }
 function wp_remote_post(string $url, array $args = []): array
 {
     $GLOBALS['wpfixpilot_http_requests'][] = ['url' => $url, 'args' => $args];
+    if (str_ends_with($url, '/complete')) {
+        return [
+            'response' => ['code' => 200],
+            'body' => json_encode([
+                'handoff' => ['state' => 'completed'],
+                'proposal_version' => ['state' => 'draft_created'],
+            ]),
+        ];
+    }
+
     return [
         'response' => ['code' => 200],
         'body' => json_encode([
@@ -57,9 +68,24 @@ function esc_html(string $value): string { return $value; }
 function esc_attr(string $value): string { return $value; }
 function sanitize_text_field(string $value): string { return trim($value); }
 function wp_unslash(string $value): string { return $value; }
+function wp_json_encode(mixed $value): string { return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); }
 
 require_once __DIR__ . '/../includes/class-import-session-store.php';
+require_once __DIR__ . '/../includes/class-auth.php';
 require_once __DIR__ . '/../includes/class-manual-handoff-controller.php';
+
+final class Test_Page_Package_Controller
+{
+    public function create_draft(array $payload): array
+    {
+        $GLOBALS['wpfixpilot_created_drafts'][] = $payload;
+        return [
+            'wordpress_object_id' => 20,
+            'edit_url' => 'https://example.com/wp-admin/post.php?post=20',
+            'status' => 'draft',
+        ];
+    }
+}
 
 $store = new WPFixPilot_Import_Session_Store();
 $sessionId = $store->create('handoff-1', [
@@ -75,5 +101,26 @@ assert(!is_wp_error($redeemed));
 assert($redeemed['summary']['proposal_version'] === 7);
 assert($redeemed['summary']['draft_only'] === true);
 assert($GLOBALS['wpfixpilot_browser_history_fragment_cleared'] === true);
+
+$importController = new WPFixPilot_Manual_Handoff_Controller(
+    $store,
+    'https://api.example.test',
+    new Test_Page_Package_Controller()
+);
+$confirmed = $importController->confirm_import('session-1', 12);
+assert(!is_wp_error($confirmed));
+assert($confirmed['wordpress_object_id'] === 20);
+assert($confirmed['edit_url'] === 'https://example.com/wp-admin/post.php?post=20');
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 2);
+assert(
+    $GLOBALS['wpfixpilot_http_requests'][1]['url']
+    === 'https://api.example.test/projects/project-1/page-proposals/handoffs/handoff-1/complete'
+);
+
+$repeat = $importController->confirm_import('session-1', 12);
+assert(!is_wp_error($repeat));
+assert($repeat['wordpress_object_id'] === 20);
+assert(count($GLOBALS['wpfixpilot_created_drafts']) === 1);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 2);
 
 echo "manual handoff tests passed\n";
