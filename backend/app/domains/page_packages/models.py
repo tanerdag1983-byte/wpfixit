@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -97,6 +98,32 @@ class PagePackageProposal(Base):
     state: Mapped[str] = mapped_column(
         String(24), default="generating", server_default="generating", nullable=False
     )
+    proposal_group_id: Mapped[str] = mapped_column(
+        String(64), index=True, nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+    parent_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("page_package_proposals.id", ondelete="RESTRICT")
+    )
+    is_current: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+    )
+    generation_mode: Mapped[str] = mapped_column(
+        String(24),
+        default="full",
+        server_default="full",
+        nullable=False,
+    )
+    target_block_id: Mapped[str | None] = mapped_column(String(128))
+    user_instruction: Mapped[str | None] = mapped_column(Text)
     blueprint_id: Mapped[str | None] = mapped_column(String(64))
     blueprint_version: Mapped[int | None] = mapped_column(Integer)
     blueprint_structure_hash: Mapped[str | None] = mapped_column(String(128))
@@ -115,6 +142,91 @@ class PagePackageProposal(Base):
     wordpress_edit_url: Mapped[str | None] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+PagePackageProposalVersion = PagePackageProposal
+
+
+class PagePackageRegenerationCandidate(Base):
+    __tablename__ = "page_package_regeneration_candidates"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    proposal_group_id: Mapped[str] = mapped_column(
+        String(64), index=True, nullable=False
+    )
+    base_version_id: Mapped[str] = mapped_column(
+        ForeignKey("page_package_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generation_mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    target_block_id: Mapped[str | None] = mapped_column(String(128))
+    instruction: Mapped[str | None] = mapped_column(Text)
+    candidate_package: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    candidate_rendered_html: Mapped[str] = mapped_column(
+        Text, default="", nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24),
+        default="generating",
+        server_default="generating",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class PagePackageHandoff(Base):
+    __tablename__ = "page_package_handoffs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proposal_version_id: Mapped[str] = mapped_column(
+        ForeignKey("page_package_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    wordpress_connection_id: Mapped[str] = mapped_column(
+        ForeignKey("wordpress_connections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    issued_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(24),
+        default="issued",
+        server_default="issued",
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wordpress_object_id: Mapped[int | None] = mapped_column(Integer)
+    wordpress_edit_url: Mapped[str | None] = mapped_column(String(2048))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

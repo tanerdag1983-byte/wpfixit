@@ -446,6 +446,7 @@ def test_delete_rejects_blueprint_used_by_proposal_before_wordpress_call(
         opportunity_id=opportunity.id,
         job_id=job.id,
         state="proposed",
+        proposal_group_id="blueprint-proposal",
         blueprint_id=created["id"],
         blueprint_version=created["version"],
         blueprint_structure_hash=created["structure_hash"],
