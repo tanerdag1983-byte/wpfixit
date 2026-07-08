@@ -22,21 +22,63 @@ from app.domains.recommendations.schemas import (
 )
 
 
+def _extract_page_package_payload(payload, contract):
+    if not isinstance(payload, dict):
+        return payload
+
+    contract_keys = set(contract.model_fields)
+    required_keys = {
+        name
+        for name, field in contract.model_fields.items()
+        if field.is_required()
+    }
+
+    direct_subset = {
+        key: value for key, value in payload.items() if key in contract_keys
+    }
+    if required_keys.issubset(direct_subset):
+        return direct_subset
+
+    preferred_wrappers = (
+        "landing_page",
+        "page_package",
+        "blueprint_package",
+        "generated_package",
+        "generated_page_package",
+        "generated_blueprint_package",
+        "package",
+        "blueprint",
+        "result",
+        "output",
+    )
+    for key in preferred_wrappers:
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            nested_subset = _extract_page_package_payload(nested, contract)
+            if isinstance(nested_subset, dict):
+                nested_keys = set(nested_subset)
+                if required_keys.issubset(nested_keys):
+                    return nested_subset
+
+    for value in payload.values():
+        if isinstance(value, dict):
+            nested_subset = _extract_page_package_payload(value, contract)
+            if isinstance(nested_subset, dict):
+                nested_keys = set(nested_subset)
+                if required_keys.issubset(nested_keys):
+                    return nested_subset
+
+    return payload
+
+
 def _parse_page_package_content(content: str, context: PagePackageContext):
     contract = page_package_contract(context)
     try:
         return contract.model_validate_json(content)
     except ValidationError:
-        if context.blueprint_schema is None:
-            raise
         payload = json.loads(content)
-        if not isinstance(payload, dict):
-            raise
-        for key in ("landing_page", "page_package", "blueprint_package"):
-            nested = payload.get(key)
-            if isinstance(nested, dict):
-                return contract.model_validate(nested)
-        raise
+        normalized = _extract_page_package_payload(payload, contract)
+        return contract.model_validate(normalized)
 
 
 class OpenAICompatibleRecommendationGenerator:
