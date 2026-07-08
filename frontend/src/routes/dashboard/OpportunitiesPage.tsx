@@ -259,7 +259,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                   type="button"
                 >
                   {creatingProposalId === item.id
-                    ? "Voorstel maken..."
+                    ? "Opnieuw genereren..."
                     : "Opnieuw genereren"}
                 </button>
                 {proposalErrors[item.id] && (
