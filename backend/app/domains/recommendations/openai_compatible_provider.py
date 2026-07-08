@@ -1,6 +1,7 @@
 import json
 
 import requests
+from pydantic import ValidationError
 
 from app.domains.page_packages.generation import (
     generation_result,
@@ -19,6 +20,23 @@ from app.domains.recommendations.schemas import (
     PageFacts,
     RecommendationResult,
 )
+
+
+def _parse_page_package_content(content: str, context: PagePackageContext):
+    contract = page_package_contract(context)
+    try:
+        return contract.model_validate_json(content)
+    except ValidationError:
+        if context.blueprint_schema is None:
+            raise
+        payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise
+        for key in ("landing_page", "page_package", "blueprint_package"):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                return contract.model_validate(nested)
+        raise
 
 
 class OpenAICompatibleRecommendationGenerator:
@@ -63,8 +81,9 @@ class OpenAICompatibleRecommendationGenerator:
             )
             response.raise_for_status()
             payload = response.json()
-            package = page_package_contract(context).model_validate_json(
-                payload["choices"][0]["message"]["content"]
+            package = _parse_page_package_content(
+                payload["choices"][0]["message"]["content"],
+                context,
             )
             usage = payload.get("usage", {})
             return generation_result(

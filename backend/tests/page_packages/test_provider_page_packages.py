@@ -174,6 +174,39 @@ def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> Non
     assert result.package.replacements[0].field_id == "acf-title"
 
 
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_unwraps_landing_page_blueprint_payload(
+    monkeypatch, provider
+) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "landing_page": blueprint_package().model_dump()
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    result = OpenAICompatibleRecommendationGenerator(
+        "https://gateway.example/v1", "secret", "model-test", provider=provider
+    ).generate_page_package(blueprint_context())
+
+    assert result.package.title == "DSG revisie specialist Schiedam"
+    assert result.package.replacements[0].field_id == "acf-title"
+
+
 def test_anthropic_uses_blueprint_contract(monkeypatch) -> None:
     class Response:
         def raise_for_status(self):
