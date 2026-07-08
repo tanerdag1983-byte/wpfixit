@@ -50,16 +50,25 @@ def page_package_system_prompt(context: PagePackageContext) -> str:
             "builderdata terug. Gebruik voor URL-velden en interne links uitsluitend "
             "de aangeleverde goedgekeurde URL's."
         )
+    schema_prompt = json.dumps(
+        page_package_contract(context).model_json_schema(),
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     return (
         "Maak een complete Nederlandse SEO-landingspagina als strikt JSON volgens "
         "het opgegeven schema. Gebruik het focuszoekwoord natuurlijk, houd merk- en "
         "voertuigentiteiten exact gescheiden en verzin geen garanties, prijzen, "
         "locaties of certificeringen. Gebruik alleen de aangeleverde interne links. "
+        "Herhaal nooit de inputcontext en geef geen toelichting buiten het JSON-"
+        "object. Laat onbekende velden volledig weg en geef uitsluitend velden terug "
+        "die in het contractschema staan. "
         "Alle HTML moet "
         "semantisch zijn en mag geen scripts, formulieren, inline event handlers of "
         "javascript-URL's bevatten. Het resultaat is een concept voor menselijke "
         "beoordeling en mag nooit automatisch worden gepubliceerd."
         f"{blueprint_rules}\n\n"
+        f"Contractschema:\n{schema_prompt}\n\n"
         f"Projectcontext:\n{context.company_context[:10_000] or 'Niet ingesteld.'}"
     )
 

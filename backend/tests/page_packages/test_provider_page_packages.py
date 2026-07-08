@@ -150,6 +150,8 @@ def test_gemini_generates_page_package(monkeypatch) -> None:
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
 def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> None:
+    captured = {}
+
     class Response:
         def raise_for_status(self):
             return None
@@ -166,11 +168,19 @@ def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> Non
                 "usage": {},
             }
 
-    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    def post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("requests.post", post)
     result = OpenAICompatibleRecommendationGenerator(
         "https://gateway.example/v1", "secret", "model-test", provider=provider
     ).generate_page_package(blueprint_context())
 
+    system_content = captured["messages"][0]["content"].lower()
+    assert "contractschema" in system_content
+    assert '"replacements"' in system_content
+    assert "herhaal nooit de inputcontext" in system_content
     assert result.package.replacements[0].field_id == "acf-title"
 
 
