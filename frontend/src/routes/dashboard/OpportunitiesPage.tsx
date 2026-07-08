@@ -127,6 +127,13 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   async function createPageProposal(item: KeywordOpportunity) {
     const pageType = proposalPageTypes[item.id];
     if (!pageType) return;
+    await startPageProposal(item, pageType);
+  }
+
+  async function startPageProposal(
+    item: KeywordOpportunity,
+    pageType: PageType,
+  ) {
     setCreatingProposalId(item.id);
     setProposalErrors((current) => ({ ...current, [item.id]: "" }));
     try {
@@ -144,6 +151,32 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
           : "Paginavoorstel maken mislukt.",
       }));
     } finally {
+      setCreatingProposalId(null);
+    }
+  }
+
+  async function regenerateProposal(item: KeywordOpportunity) {
+    const proposalId = item.proposal_summary?.current_version_id;
+    if (!proposalId) return;
+    setCreatingProposalId(item.id);
+    setProposalErrors((current) => ({ ...current, [item.id]: "" }));
+    try {
+      const proposal = await apiRequest<{
+        blueprint: { page_type: PageType } | null;
+      }>(`/projects/${projectId}/page-proposals/${proposalId}`);
+      const pageType = proposal.blueprint?.page_type;
+      if (!pageType) {
+        throw new Error("Het paginatype van dit voorstel is onbekend.");
+      }
+      await startPageProposal(item, pageType);
+    } catch (error) {
+      setProposalErrors((current) => ({
+        ...current,
+        [item.id]:
+          error instanceof Error
+            ? error.message
+            : "Opnieuw genereren mislukt.",
+      }));
       setCreatingProposalId(null);
     }
   }
@@ -222,11 +255,18 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 </button>
                 <button
                   className="text-button"
-                  onClick={() => openProposal(item.proposal_summary!.current_version_id)}
+                  onClick={() => void regenerateProposal(item)}
                   type="button"
                 >
-                  Opnieuw genereren
+                  {creatingProposalId === item.id
+                    ? "Voorstel maken..."
+                    : "Opnieuw genereren"}
                 </button>
+                {proposalErrors[item.id] && (
+                  <p className="opportunity-create-error" role="alert">
+                    {proposalErrors[item.id]}
+                  </p>
+                )}
               </div>
             ) : item.target_classification === "new_page" ? (
               <div className="opportunity-create-action">

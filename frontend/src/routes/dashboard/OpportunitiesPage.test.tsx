@@ -111,6 +111,71 @@ describe("OpportunitiesPage", () => {
     expect(window.location.hash).toBe("#page-proposal");
   });
 
+  it("regenerates a saved proposal using its existing page type", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [
+            { id: "blueprint-1", name: "Dienstpagina", page_type: "service", version: 2, state: "ready", is_default_for_page_type: true },
+          ],
+        });
+      }
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [
+            {
+              id: "keyword-1",
+              keyword: "automatische transmissie revisie",
+              search_volume: 320,
+              cpc: 4.25,
+              competition_level: "medium",
+              keyword_difficulty: 38,
+              intent: "commercial",
+              target_url: null,
+              target_classification: "new_page",
+              target_score: 0,
+              target_evidence: ["no_distinctive_page_match"],
+              recommended_action:
+                "Maak een nieuwe landingspagina voor dit zoekwoord.",
+              source: "dataforseo",
+              proposal_summary: {
+                state: "failed",
+                current_version_id: "proposal-2",
+              },
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/page-proposals/proposal-2")) {
+        return Promise.resolve({
+          blueprint: { page_type: "service" },
+        });
+      }
+      if (path.endsWith("/page-proposal") && init?.method === "POST") {
+        return Promise.resolve({ id: "proposal-3" });
+      }
+      return Promise.resolve({ synced: 1 });
+    });
+
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Opnieuw genereren" }));
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/proposal-2",
+      ),
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/keyword-opportunities/keyword-1/page-proposal",
+        { method: "POST", body: JSON.stringify({ page_type: "service" }) },
+      ),
+    );
+    expect(window.sessionStorage.getItem("page-proposal-id:project-1")).toBe("proposal-3");
+    expect(window.location.hash).toBe("#page-proposal");
+  });
+
   it("syncs and reloads keyword opportunities", async () => {
     render(<OpportunitiesPage projectId="project-1" />);
     await screen.findByText("automatische transmissie revisie");
