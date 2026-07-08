@@ -3,6 +3,7 @@ import hmac
 import json
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote_plus
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -582,6 +583,7 @@ def discard_page_package_regeneration_candidate(
 def issue_page_package_proposal_handoff(
     project_id: str,
     proposal_id: str,
+    request: Request,
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
@@ -603,7 +605,15 @@ def issue_page_package_proposal_handoff(
     return {
         "handoff": _handoff_payload(issued.record),
         "code": issued.raw_code,
-        "import_url": _build_handoff_import_url(connection.site_url, issued.raw_code),
+        "import_url": _build_handoff_import_url(
+            connection.site_url,
+            issued.raw_code,
+            backend_base_url=_handoff_backend_base_url(
+                request,
+                project_id,
+                proposal_id,
+            ),
+        ),
     }
 
 
@@ -1057,10 +1067,31 @@ def _import_package_payload(proposal: PagePackageProposal) -> dict:
     }
 
 
-def _build_handoff_import_url(site_url: str, raw_code: str) -> str:
+def _build_handoff_import_url(
+    site_url: str,
+    raw_code: str,
+    *,
+    backend_base_url: str,
+) -> str:
     return (
         f"{site_url.rstrip('/')}/wp-admin/admin.php"
         f"?page=wp-fixpilot-import&code={raw_code}"
+        f"&backend={quote_plus(backend_base_url)}"
+    )
+
+
+def _handoff_backend_base_url(
+    request: Request,
+    project_id: str,
+    proposal_id: str,
+) -> str:
+    issue_suffix = f"/projects/{project_id}/page-proposals/{proposal_id}/handoffs"
+    path = request.url.path
+    prefix = path[: -len(issue_suffix)] if path.endswith(issue_suffix) else ""
+    return (
+        f"{request.base_url}".rstrip("/")
+        + prefix
+        + f"/projects/{project_id}/page-proposals/handoffs"
     )
 
 

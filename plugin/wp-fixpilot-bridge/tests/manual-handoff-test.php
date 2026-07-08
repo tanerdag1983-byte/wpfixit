@@ -66,9 +66,11 @@ function wp_create_nonce(string $action): string { return 'nonce'; }
 function current_user_can(string $capability): bool { return $capability === 'edit_pages'; }
 function get_current_user_id(): int { return 12; }
 function esc_url(string $value): string { return $value; }
+function esc_url_raw(string $value): string { return $value; }
 function esc_html(string $value): string { return $value; }
 function esc_attr(string $value): string { return $value; }
 function sanitize_text_field(string $value): string { return trim($value); }
+function untrailingslashit(string $value): string { return rtrim($value, '/'); }
 function wp_unslash(string $value): string { return $value; }
 function wp_json_encode(mixed $value): string { return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); }
 function wp_nonce_field(string $action): void { echo '<input type="hidden" name="_wpnonce" value="nonce" />'; }
@@ -109,10 +111,17 @@ assert($redeemed['summary']['draft_only'] === true);
 assert($GLOBALS['wpfixpilot_browser_history_fragment_cleared'] === true);
 
 $GLOBALS['wpfixpilot_redirect_to'] = null;
-$_GET = ['code' => 'opaque-code'];
+$_GET = [
+    'code' => 'opaque-code',
+    'backend' => 'https://frontend.example/api/projects/project-1/page-proposals/handoffs/',
+];
 ob_start();
 $controller->render_import_page();
 ob_end_clean();
+assert(
+    $GLOBALS['wpfixpilot_options']['wp_fixpilot_backend_base_url']
+    === 'https://frontend.example/api/projects/project-1/page-proposals/handoffs'
+);
 assert(
     $GLOBALS['wpfixpilot_redirect_to']
     === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=redeemed&session_id=session-1'

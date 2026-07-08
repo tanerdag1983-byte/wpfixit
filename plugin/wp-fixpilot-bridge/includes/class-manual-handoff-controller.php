@@ -99,6 +99,11 @@ final class WPFixPilot_Manual_Handoff_Controller
             return;
         }
 
+        $backend = esc_url_raw((string) ($_GET['backend'] ?? ''));
+        if ($backend !== '') {
+            update_option('wp_fixpilot_backend_base_url', untrailingslashit($backend), false);
+        }
+
         $code = sanitize_text_field((string) ($_GET['code'] ?? ''));
         if ($code !== '' && !isset($_GET['session_id'])) {
             $result = $this->redeem_code($code, get_current_user_id());

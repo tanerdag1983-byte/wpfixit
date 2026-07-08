@@ -4,6 +4,7 @@ import json
 import secrets
 import time
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy.orm import Session
 
@@ -260,6 +261,11 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     issued = issue.json()
     assert "?page=wp-fixpilot-import&code=" in issued["import_url"]
     assert "#code=" not in issued["import_url"]
+    query = parse_qs(urlparse(issued["import_url"]).query)
+    assert query["page"] == ["wp-fixpilot-import"]
+    assert query["backend"] == [
+        f"http://testserver/projects/{proposal.project_id}/page-proposals/handoffs"
+    ]
 
     handoff = session.get(PagePackageHandoff, issued["handoff"]["id"])
     assert handoff is not None
