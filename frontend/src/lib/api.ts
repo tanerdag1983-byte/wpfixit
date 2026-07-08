@@ -12,7 +12,7 @@ export function resolveApiBaseUrl(
   ) {
     return "http://localhost:8000";
   }
-  return "https://wp-fixpilot-api.onrender.com";
+  return "/api";
 }
 
 const apiBaseUrl = resolveApiBaseUrl(

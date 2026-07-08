@@ -18,12 +18,12 @@ describe("resolveApiBaseUrl", () => {
     );
   });
 
-  it("falls back to the Render API for previews when the env var is missing", () => {
+  it("falls back to the Vercel API proxy for previews when the env var is missing", () => {
     expect(
       resolveApiBaseUrl(
         undefined,
         "wpfixit-git-feature-platform-build-tanerdag1983-9949s-projects.vercel.app",
       ),
-    ).toBe("https://wp-fixpilot-api.onrender.com");
+    ).toBe("/api");
   });
 });
