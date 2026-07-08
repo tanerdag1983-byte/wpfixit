@@ -99,6 +99,21 @@ final class WPFixPilot_Manual_Handoff_Controller
             return;
         }
 
+        $code = sanitize_text_field((string) ($_GET['code'] ?? ''));
+        if ($code !== '' && !isset($_GET['session_id'])) {
+            $result = $this->redeem_code($code, get_current_user_id());
+            if (is_wp_error($result)) {
+                $this->redirect_to_import_page(['notice' => 'redeem_failed']);
+                return;
+            }
+
+            $this->redirect_to_import_page([
+                'notice' => 'redeemed',
+                'session_id' => (string) ($result['session_id'] ?? ''),
+            ]);
+            return;
+        }
+
         $sessionId = sanitize_text_field((string) ($_GET['session_id'] ?? ''));
         $notice = sanitize_text_field((string) ($_GET['notice'] ?? ''));
         $session = $sessionId !== '' ? $this->store->get($sessionId) : null;

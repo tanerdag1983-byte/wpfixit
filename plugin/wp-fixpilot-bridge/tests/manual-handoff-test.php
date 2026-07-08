@@ -108,6 +108,16 @@ assert($redeemed['summary']['proposal_version'] === 7);
 assert($redeemed['summary']['draft_only'] === true);
 assert($GLOBALS['wpfixpilot_browser_history_fragment_cleared'] === true);
 
+$GLOBALS['wpfixpilot_redirect_to'] = null;
+$_GET = ['code' => 'opaque-code'];
+ob_start();
+$controller->render_import_page();
+ob_end_clean();
+assert(
+    $GLOBALS['wpfixpilot_redirect_to']
+    === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=redeemed&session_id=session-1'
+);
+
 $_GET['session_id'] = 'session-1';
 ob_start();
 $controller->render_import_page();
@@ -132,9 +142,9 @@ $confirmed = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($confirmed));
 assert($confirmed['wordpress_object_id'] === 20);
 assert($confirmed['edit_url'] === 'https://example.com/wp-admin/post.php?post=20');
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 4);
 assert(
-    $GLOBALS['wpfixpilot_http_requests'][2]['url']
+    $GLOBALS['wpfixpilot_http_requests'][3]['url']
     === 'https://api.example.test/projects/project-1/page-proposals/handoffs/handoff-1/complete'
 );
 
@@ -142,7 +152,7 @@ $repeat = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($repeat));
 assert($repeat['wordpress_object_id'] === 20);
 assert(count($GLOBALS['wpfixpilot_created_drafts']) === 1);
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 4);
 
 $_POST = ['session_id' => 'session-1', 'wordpress_user_id' => 12];
 $importController->handle_confirm_import();
@@ -150,7 +160,7 @@ assert(
     $GLOBALS['wpfixpilot_redirect_to']
     === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=imported&session_id=session-1'
 );
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 4);
 
 $_GET['notice'] = 'imported';
 ob_start();

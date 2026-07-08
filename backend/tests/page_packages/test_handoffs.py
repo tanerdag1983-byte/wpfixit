@@ -258,8 +258,8 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
 
     assert issue.status_code == 200
     issued = issue.json()
-    assert "#code=" in issued["import_url"]
-    assert "code=" not in issued["import_url"].split("#", 1)[0]
+    assert "?page=wp-fixpilot-import&code=" in issued["import_url"]
+    assert "#code=" not in issued["import_url"]
 
     handoff = session.get(PagePackageHandoff, issued["handoff"]["id"])
     assert handoff is not None

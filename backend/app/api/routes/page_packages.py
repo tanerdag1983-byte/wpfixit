@@ -1060,7 +1060,7 @@ def _import_package_payload(proposal: PagePackageProposal) -> dict:
 def _build_handoff_import_url(site_url: str, raw_code: str) -> str:
     return (
         f"{site_url.rstrip('/')}/wp-admin/admin.php"
-        f"?page=wpfixpilot-import#code={raw_code}"
+        f"?page=wp-fixpilot-import&code={raw_code}"
     )
 
 

@@ -124,7 +124,7 @@ describe("PagePackageReview", () => {
           },
           code: "opaque-code",
           import_url:
-            "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
+            "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import&code=opaque-code",
         });
       }
       return Promise.resolve(proposal);
@@ -274,7 +274,7 @@ describe("PagePackageReview", () => {
       ),
     );
     expect(openWindow).toHaveBeenCalledWith(
-      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
+      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import&code=opaque-code",
       "_blank",
       "noopener,noreferrer",
     );
@@ -282,7 +282,7 @@ describe("PagePackageReview", () => {
       await screen.findByRole("link", { name: "Importpagina opnieuw openen" }),
     ).toHaveAttribute(
       "href",
-      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import#code=opaque-code",
+      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import&code=opaque-code",
     );
   });
 });
