@@ -1,8 +1,24 @@
 import { supabase } from "./supabase";
 
-const apiBaseUrl =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  "http://localhost:8000";
+export function resolveApiBaseUrl(
+  configuredBaseUrl?: string,
+  hostname?: string,
+) {
+  if (configuredBaseUrl) return configuredBaseUrl;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1"
+  ) {
+    return "http://localhost:8000";
+  }
+  return "https://wp-fixpilot-api.onrender.com";
+}
+
+const apiBaseUrl = resolveApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL as string | undefined,
+  window.location.hostname,
+);
 const developmentAccessToken = import.meta.env.VITE_DEV_ACCESS_TOKEN as
   | string
   | undefined;

@@ -1,43 +1,29 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { apiRequest, resolveAccessToken } from "./api";
+import { resolveApiBaseUrl } from "./api";
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-describe("resolveAccessToken", () => {
-  it("uses a local development token when no Supabase session exists", () => {
-    expect(resolveAccessToken(undefined, "demo-token")).toBe("demo-token");
+describe("resolveApiBaseUrl", () => {
+  it("prefers the configured API base URL when present", () => {
+    expect(
+      resolveApiBaseUrl("https://custom-api.example.com", "localhost"),
+    ).toBe("https://custom-api.example.com");
   });
 
-  it("prefers the authenticated Supabase session", () => {
-    expect(resolveAccessToken("session-token", "demo-token")).toBe(
-      "session-token",
+  it("keeps localhost for local development without an explicit env var", () => {
+    expect(resolveApiBaseUrl(undefined, "localhost")).toBe(
+      "http://localhost:8000",
+    );
+    expect(resolveApiBaseUrl(undefined, "127.0.0.1")).toBe(
+      "http://localhost:8000",
     );
   });
 
-  it("formats FastAPI validation details instead of showing object text", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          detail: [
-            {
-              loc: ["body", "company_name"],
-              msg: "Field required",
-              type: "missing",
-            },
-          ],
-        }),
-        {
-          status: 422,
-          headers: { "Content-Type": "application/json" },
-        },
+  it("falls back to the Render API for previews when the env var is missing", () => {
+    expect(
+      resolveApiBaseUrl(
+        undefined,
+        "wpfixit-git-feature-platform-build-tanerdag1983-9949s-projects.vercel.app",
       ),
-    );
-
-    await expect(apiRequest("/projects/project-1/company-profile")).rejects.toThrow(
-      "company_name: Field required",
-    );
+    ).toBe("https://wp-fixpilot-api.onrender.com");
   });
 });
