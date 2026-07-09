@@ -649,7 +649,7 @@ async def redeem_page_package_proposal_handoff(
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {
         "handoff": _handoff_payload(redeemed.handoff),
-        "package": _import_package_payload(redeemed.proposal),
+        "package": _import_package_payload(session, redeemed.proposal),
     }
 
 
@@ -1055,7 +1055,22 @@ def _handoff_payload(handoff: PagePackageHandoff) -> dict:
     }
 
 
-def _import_package_payload(proposal: PagePackageProposal) -> dict:
+def _import_package_payload(session: Session, proposal: PagePackageProposal) -> dict:
+    blueprint = None
+    if proposal.blueprint_id is not None:
+        stored = session.get(PageBlueprint, proposal.blueprint_id)
+        if stored is not None and stored.project_id == proposal.project_id:
+            blueprint = {
+                "id": stored.id,
+                "name": stored.name,
+                "page_type": stored.page_type,
+                "version": proposal.blueprint_version,
+                "structure_hash": proposal.blueprint_structure_hash,
+                "builder": stored.builder,
+                "seo_plugin": stored.seo_plugin,
+                "wordpress_blueprint_id": stored.wordpress_blueprint_id,
+                "source_wordpress_page_id": stored.source_wordpress_page_id,
+            }
     return {
         "proposal_version_id": proposal.id,
         "project_id": proposal.project_id,
@@ -1063,6 +1078,7 @@ def _import_package_payload(proposal: PagePackageProposal) -> dict:
         "version_number": proposal.version_number,
         "package": proposal.package,
         "config_snapshot": proposal.config_snapshot,
+        "blueprint": blueprint,
         "state": proposal.state,
     }
 
