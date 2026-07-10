@@ -1,12 +1,16 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.routes.page_packages import _import_package_payload
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import (
     PagePackageRegenerationCandidate,
     ProjectPagePackageSettings,
 )
+from app.domains.page_packages.schemas import GeneratedBlueprintPackage
 from app.domains.recommendations.models import (
     AiConnection,
     CompanyProfile,
@@ -43,6 +47,57 @@ def proposal_blueprint_package() -> dict:
         }
     ]
     return package
+
+
+def test_import_payload_returns_normalized_legacy_package(monkeypatch) -> None:
+    normalized = proposal_blueprint_package()
+    legacy = {"landing_page": {"title": "Oude titel"}}
+    blueprint = SimpleNamespace(
+        id="blueprint-service-v2",
+        project_id="project-member",
+        content_schema=valid_blueprint_schema(),
+        name="Dienstpagina",
+        page_type="service",
+        version=2,
+        structure_hash="hash-v2",
+        builder="acf",
+        seo_plugin="yoast",
+        wordpress_blueprint_id=902,
+        source_wordpress_page_id="template-page",
+    )
+    proposal = SimpleNamespace(
+        package=legacy,
+        blueprint_id=blueprint.id,
+        project_id="project-member",
+        opportunity_id="opportunity-new",
+        config_snapshot={"content_schema": blueprint.content_schema},
+        id="proposal-1",
+        proposal_group_id="group-1",
+        version_number=1,
+        blueprint_version=2,
+        blueprint_structure_hash="hash-v2",
+        state="approved",
+    )
+
+    class SessionStub:
+        def get(self, model, identifier):
+            if model is PageBlueprint:
+                return blueprint
+            return SimpleNamespace(id=identifier)
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._generation_context",
+        lambda *args: SimpleNamespace(blueprint_schema=valid_blueprint_schema()),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.page_packages.normalize_blueprint_package",
+        lambda package, context: GeneratedBlueprintPackage.model_validate(normalized),
+    )
+
+    payload = _import_package_payload(SessionStub(), proposal)
+
+    assert payload["package"]["title"] == normalized["title"]
+    assert payload["package"] != legacy
 
 
 class BlueprintBridge:

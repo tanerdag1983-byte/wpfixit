@@ -1159,7 +1159,7 @@ def _import_package_payload(session: Session, proposal: PagePackageProposal) -> 
         "project_id": proposal.project_id,
         "proposal_group_id": proposal.proposal_group_id,
         "version_number": proposal.version_number,
-        "package": proposal.package,
+        "package": package,
         "config_snapshot": proposal.config_snapshot,
         "blueprint": blueprint,
         "state": proposal.state,
