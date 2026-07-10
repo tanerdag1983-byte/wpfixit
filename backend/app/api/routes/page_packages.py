@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +56,9 @@ from app.domains.recommendations.models import (
     AiConnection,
     CompanyProfile,
     ProjectAiPolicy,
+)
+from app.domains.recommendations.openai_compatible_provider import (
+    normalize_blueprint_package,
 )
 from app.domains.recommendations.provider_factory import build_generator
 from app.domains.subscriptions.models import UsageEvent
@@ -1114,6 +1118,27 @@ def _handoff_payload(handoff: PagePackageHandoff) -> dict:
 
 
 def _import_package_payload(session: Session, proposal: PagePackageProposal) -> dict:
+    package = proposal.package
+    blueprint = None
+    if proposal.blueprint_id is not None:
+        blueprint = session.get(PageBlueprint, proposal.blueprint_id)
+    project = session.get(Project, proposal.project_id)
+    opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+    if (
+        isinstance(package, dict)
+        and blueprint is not None
+        and project is not None
+        and opportunity is not None
+        and blueprint.content_schema == proposal.config_snapshot.get("content_schema")
+    ):
+        context = _generation_context(session, project, opportunity, blueprint)
+        try:
+            package = normalize_blueprint_package(package, context).model_dump(
+                mode="json"
+            )
+        except (TypeError, ValueError, ValidationError):
+            package = proposal.package
+
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)

@@ -236,6 +236,18 @@ def _repair_blueprint_replacement_ids(
     return repaired
 
 
+def normalize_blueprint_package(
+    payload: dict,
+    context: PagePackageContext,
+) -> GeneratedBlueprintPackage:
+    """Normalize stored legacy output before it is sent to the WordPress bridge."""
+    try:
+        return GeneratedBlueprintPackage.model_validate(payload)
+    except ValidationError:
+        normalized = _legacy_blueprint_payload(payload, context)
+        return GeneratedBlueprintPackage.model_validate(normalized)
+
+
 class OpenAICompatibleRecommendationGenerator:
     def __init__(
         self,

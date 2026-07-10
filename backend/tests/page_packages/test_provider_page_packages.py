@@ -10,6 +10,7 @@ from app.domains.recommendations.anthropic_provider import (
 from app.domains.recommendations.gemini_provider import GeminiRecommendationGenerator
 from app.domains.recommendations.openai_compatible_provider import (
     OpenAICompatibleRecommendationGenerator,
+    normalize_blueprint_package,
 )
 from app.domains.recommendations.openai_provider import OpenAIRecommendationGenerator
 from tests.page_packages.test_generation import (
@@ -263,6 +264,34 @@ def test_openai_compatible_repairs_legacy_landing_page_into_blueprint_contract(
     replacement_ids = {item.field_id for item in result.package.replacements}
     assert result.package.title == "DSG revisie specialist Schiedam"
     assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
+
+
+def test_normalize_stored_legacy_blueprint_package() -> None:
+    package = normalize_blueprint_package(
+        {
+            "landing_page": {
+                "title": "DSG revisie specialist Schiedam",
+                "slug": "dsg-revisie-schiedam",
+                "seo_title": "DSG revisie specialist Schiedam | SHM Transmissie",
+                "meta_description": (
+                    "Laat uw DSG transmissie deskundig onderzoeken en reviseren "
+                    "door SHM Transmissie in Schiedam."
+                ),
+                "focus_keyword": "dsg revisie schiedam",
+                "hero_title": "DSG revisie Schiedam",
+                "introduction_html": "<p>Gerichte diagnose.</p>",
+                "cta": {"button_url": "/offerte-aanvragen/"},
+            }
+        },
+        blueprint_context(),
+    )
+
+    assert package.title == "DSG revisie specialist Schiedam"
+    assert {item.field_id for item in package.replacements} >= {
+        "acf-title",
+        "acf-copy",
+        "acf-cta-url",
+    }
 
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
