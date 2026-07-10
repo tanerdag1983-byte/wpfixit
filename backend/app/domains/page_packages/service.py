@@ -255,6 +255,12 @@ def redeem_page_package_handoff(
     if normalized_connection_url != normalized_site_url:
         raise ValueError("WordPress site mismatch")
 
+    if handoff.state == "completed":
+        proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+        if proposal is None:
+            raise ValueError("Proposal version is no longer available")
+        return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
+
     if handoff.state == "redeemed":
         proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
         if proposal is None or proposal.state != "approved" or not proposal.is_current:

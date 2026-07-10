@@ -88,6 +88,26 @@ final class WPFixPilot_Manual_Handoff_Controller
                 'wordpress_user_id' => $wordpressUserId,
             ]
         );
+        if (
+            ($handoff['state'] ?? '') === 'completed'
+            && !empty($handoff['wordpress_edit_url'])
+            && !empty($handoff['wordpress_object_id'])
+        ) {
+            $this->store->update_payload(
+                $sessionId,
+                [
+                    'handoff' => $handoff,
+                    'package' => $package,
+                    'proposal_version_id' => $proposalVersion,
+                    'wordpress_user_id' => $wordpressUserId,
+                    'completed_draft' => [
+                        'wordpress_object_id' => (int) $handoff['wordpress_object_id'],
+                        'edit_url' => (string) $handoff['wordpress_edit_url'],
+                        'status' => 'draft',
+                    ],
+                ]
+            );
+        }
 
         $GLOBALS['wpfixpilot_browser_history_fragment_cleared'] = true;
 
