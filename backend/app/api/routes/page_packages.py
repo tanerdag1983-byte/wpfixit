@@ -3,9 +3,11 @@ import hmac
 import json
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote_plus
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -54,6 +56,9 @@ from app.domains.recommendations.models import (
     AiConnection,
     CompanyProfile,
     ProjectAiPolicy,
+)
+from app.domains.recommendations.openai_compatible_provider import (
+    normalize_blueprint_package,
 )
 from app.domains.recommendations.provider_factory import build_generator
 from app.domains.subscriptions.models import UsageEvent
@@ -191,20 +196,15 @@ def validate_page_package_settings(
     mapped_required = {
         slot for slot in REQUIRED_SLOTS if settings.slot_mapping.get(slot)
     }
-    mapped_slots = {
-        slot for slot in MAPPABLE_SLOTS if settings.slot_mapping.get(slot)
-    }
+    mapped_slots = {slot for slot in MAPPABLE_SLOTS if settings.slot_mapping.get(slot)}
     mapped_path_values = [settings.slot_mapping[slot] for slot in mapped_slots]
     mapped_paths = set(mapped_path_values)
     duplicate_paths = {
         path for path in mapped_paths if mapped_path_values.count(path) > 1
     }
-    duplicate_paths_are_safe = (
-        not duplicate_paths
-        or (
-            settings.builder == "acf"
-            and all(path.startswith("acf-block:") for path in duplicate_paths)
-        )
+    duplicate_paths_are_safe = not duplicate_paths or (
+        settings.builder == "acf"
+        and all(path.startswith("acf-block:") for path in duplicate_paths)
     )
     valid = (
         inspection.get("builder") == settings.builder
@@ -383,15 +383,9 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
             package = GeneratedBlueprintPackage.model_validate(generated.package)
             package = validate_blueprint_replacements(package, context)
             allowed_links = {link.url for link in context.internal_link_candidates}
-            if any(
-                link.url not in allowed_links
-                for link in package.internal_links
-            ):
+            if any(link.url not in allowed_links for link in package.internal_links):
                 raise ValueError("AI returned an unknown internal link")
-            if (
-                package.focus_keyword.casefold()
-                != opportunity.keyword.casefold()
-            ):
+            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
                 raise ValueError("AI changed the focus keyword")
             proposal.package = package.model_dump()
             proposal.rendered_html = ""
@@ -504,6 +498,7 @@ def regenerate_page_package_proposal(
     project_id: str,
     proposal_id: str,
     payload: PageProposalRegenerationRequest,
+    background_tasks: BackgroundTasks,
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
@@ -528,10 +523,77 @@ def regenerate_page_package_proposal(
         prompt_version=proposal.prompt_version,
         status="generating",
     )
+    background_tasks.add_task(
+        _run_page_package_regeneration,
+        background_engine(session),
+        candidate.id,
+    )
     return {
         "base_version": _proposal_payload(session, proposal),
         "candidate": _candidate_payload(candidate),
     }
+
+
+def _run_page_package_regeneration(bind, candidate_id: str) -> None:
+    with Session(bind) as session:
+        candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
+        if candidate is None or candidate.status != "generating":
+            return
+        base = session.get(PagePackageProposal, candidate.base_version_id)
+        if base is None:
+            candidate.status = "failed"
+            candidate.candidate_package = {
+                "_generation_error": "Base proposal not found"
+            }
+            session.commit()
+            return
+        project = session.get(Project, base.project_id)
+        opportunity = session.get(KeywordOpportunity, base.opportunity_id)
+        blueprint = session.scalar(
+            select(PageBlueprint).where(
+                PageBlueprint.project_id == base.project_id,
+                PageBlueprint.id == base.blueprint_id,
+                PageBlueprint.version == base.blueprint_version,
+                PageBlueprint.structure_hash == base.blueprint_structure_hash,
+                PageBlueprint.state == "ready",
+            )
+        )
+        if project is None or opportunity is None or blueprint is None:
+            candidate.status = "failed"
+            candidate.candidate_package = {
+                "_generation_error": "Blueprint context is unavailable"
+            }
+            session.commit()
+            return
+        try:
+            context = _generation_context(session, project, opportunity, blueprint)
+            guidance = "Regeneratie-instructie: " + (
+                candidate.instruction or "Maak een verbeterde versie."
+            )
+            if candidate.target_block_id:
+                guidance += f" Pas primair blok {candidate.target_block_id} aan."
+            context = context.model_copy(
+                update={"company_context": context.company_context + "\n" + guidance}
+            )
+            generated = PagePackageGenerationResult.model_validate(
+                _page_package_generator(session, project).generate_page_package(context)
+            )
+            package = GeneratedBlueprintPackage.model_validate(generated.package)
+            package = validate_blueprint_replacements(package, context)
+            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
+                raise ValueError("AI changed the focus keyword")
+            candidate.candidate_package = package.model_dump()
+            candidate.candidate_rendered_html = ""
+            candidate.provider = generated.provider or candidate.provider
+            candidate.model = generated.model or candidate.model
+            candidate.prompt_version = prompt_version(context, candidate.model or "")
+            candidate.input_tokens = generated.input_tokens
+            candidate.output_tokens = generated.output_tokens
+            candidate.status = "ready"
+        except Exception as error:
+            candidate.status = "failed"
+            candidate.candidate_package = {"_generation_error": str(error)[:2_000]}
+        session.commit()
 
 
 @router.post("/page-proposals/candidates/{candidate_id}/accept")
@@ -582,6 +644,7 @@ def discard_page_package_regeneration_candidate(
 def issue_page_package_proposal_handoff(
     project_id: str,
     proposal_id: str,
+    request: Request,
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
@@ -603,7 +666,15 @@ def issue_page_package_proposal_handoff(
     return {
         "handoff": _handoff_payload(issued.record),
         "code": issued.raw_code,
-        "import_url": _build_handoff_import_url(connection.site_url, issued.raw_code),
+        "import_url": _build_handoff_import_url(
+            connection.site_url,
+            issued.raw_code,
+            backend_base_url=_handoff_backend_base_url(
+                request,
+                project_id,
+                proposal_id,
+            ),
+        ),
     }
 
 
@@ -639,7 +710,7 @@ async def redeem_page_package_proposal_handoff(
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {
         "handoff": _handoff_payload(redeemed.handoff),
-        "package": _import_package_payload(redeemed.proposal),
+        "package": _import_package_payload(session, redeemed.proposal),
     }
 
 
@@ -729,8 +800,7 @@ def create_wordpress_draft(
     context = _generation_context(session, project, opportunity, blueprint)
     validate_blueprint_replacements(package, context)
     replacements = {
-        replacement.field_id: replacement.value
-        for replacement in package.replacements
+        replacement.field_id: replacement.value for replacement in package.replacements
     }
     url_field_ids = {
         field["id"]
@@ -938,7 +1008,9 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         select(PagePackageRegenerationCandidate)
         .where(
             PagePackageRegenerationCandidate.base_version_id == proposal.id,
-            PagePackageRegenerationCandidate.status.in_(("generating", "ready")),
+            PagePackageRegenerationCandidate.status.in_(
+                ("generating", "ready", "failed")
+            ),
         )
         .order_by(PagePackageRegenerationCandidate.created_at.desc())
     )
@@ -950,7 +1022,7 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)
-        if stored is not None and stored.project_id == proposal.project_id:
+        if stored is not None and str(stored.project_id) == str(proposal.project_id):
             blueprint = {
                 "id": stored.id,
                 "name": stored.name,
@@ -1045,22 +1117,80 @@ def _handoff_payload(handoff: PagePackageHandoff) -> dict:
     }
 
 
-def _import_package_payload(proposal: PagePackageProposal) -> dict:
+def _import_package_payload(session: Session, proposal: PagePackageProposal) -> dict:
+    package = proposal.package
+    blueprint = None
+    if proposal.blueprint_id is not None:
+        blueprint = session.get(PageBlueprint, proposal.blueprint_id)
+    project = session.get(Project, proposal.project_id)
+    opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
+    if (
+        isinstance(package, dict)
+        and blueprint is not None
+        and project is not None
+        and opportunity is not None
+        and blueprint.content_schema is not None
+    ):
+        context = _generation_context(session, project, opportunity, blueprint)
+        try:
+            package = normalize_blueprint_package(package, context).model_dump(
+                mode="json"
+            )
+        except (TypeError, ValueError, ValidationError):
+            package = proposal.package
+
+    blueprint = None
+    if proposal.blueprint_id is not None:
+        stored = session.get(PageBlueprint, proposal.blueprint_id)
+        if stored is not None and str(stored.project_id) == str(proposal.project_id):
+            blueprint = {
+                "id": stored.id,
+                "name": stored.name,
+                "page_type": stored.page_type,
+                "version": proposal.blueprint_version,
+                "structure_hash": proposal.blueprint_structure_hash,
+                "builder": stored.builder,
+                "seo_plugin": stored.seo_plugin,
+                "wordpress_blueprint_id": stored.wordpress_blueprint_id,
+                "source_wordpress_page_id": stored.source_wordpress_page_id,
+            }
     return {
         "proposal_version_id": proposal.id,
         "project_id": proposal.project_id,
         "proposal_group_id": proposal.proposal_group_id,
         "version_number": proposal.version_number,
-        "package": proposal.package,
+        "package": package,
         "config_snapshot": proposal.config_snapshot,
+        "blueprint": blueprint,
         "state": proposal.state,
     }
 
 
-def _build_handoff_import_url(site_url: str, raw_code: str) -> str:
+def _build_handoff_import_url(
+    site_url: str,
+    raw_code: str,
+    *,
+    backend_base_url: str,
+) -> str:
     return (
         f"{site_url.rstrip('/')}/wp-admin/admin.php"
-        f"?page=wpfixpilot-import#code={raw_code}"
+        f"?page=wp-fixpilot-import&code={raw_code}"
+        f"&backend={quote_plus(backend_base_url)}"
+    )
+
+
+def _handoff_backend_base_url(
+    request: Request,
+    project_id: str,
+    proposal_id: str,
+) -> str:
+    issue_suffix = f"/projects/{project_id}/page-proposals/{proposal_id}/handoffs"
+    path = request.url.path
+    prefix = path[: -len(issue_suffix)] if path.endswith(issue_suffix) else ""
+    return (
+        f"{request.base_url}".rstrip("/")
+        + prefix
+        + f"/projects/{project_id}/page-proposals/handoffs"
     )
 
 

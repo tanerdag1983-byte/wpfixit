@@ -237,27 +237,42 @@ def redeem_page_package_handoff(
     expected_project_id: str | None = None,
 ) -> RedeemedPagePackageHandoff:
     del wordpress_user_id
+    normalized_site_url = site_url.rstrip("/")
     handoff = session.scalar(
         select(PagePackageHandoff).where(
             PagePackageHandoff.code_hash == _hash_handoff_code(code)
-        )
+        ).with_for_update()
     )
     if handoff is None:
         raise ValueError("Handoff code is invalid")
     if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff code is invalid")
+
+    connection = session.get(WordPressConnection, handoff.wordpress_connection_id)
+    if connection is None:
+        raise ValueError("WordPress connection not found")
+    normalized_connection_url = connection.site_url.rstrip("/")
+    if normalized_connection_url != normalized_site_url:
+        raise ValueError("WordPress site mismatch")
+
+    if handoff.state == "completed":
+        proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+        if proposal is None:
+            raise ValueError("Proposal version is no longer available")
+        return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
+
+    if handoff.state == "redeemed":
+        proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
+        if proposal is None or proposal.state != "approved" or not proposal.is_current:
+            raise ValueError("Proposal version is no longer eligible")
+        return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
+
     if handoff.state != "issued":
         raise ValueError("Handoff code is not available")
     if handoff.expires_at <= _utcnow_like(handoff.expires_at):
         handoff.state = "expired"
         session.commit()
         raise ValueError("Handoff code expired")
-
-    connection = session.get(WordPressConnection, handoff.wordpress_connection_id)
-    if connection is None:
-        raise ValueError("WordPress connection not found")
-    if connection.site_url.rstrip("/") != site_url.rstrip("/"):
-        raise ValueError("WordPress site mismatch")
 
     proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
     if proposal is None or proposal.state != "approved" or not proposal.is_current:

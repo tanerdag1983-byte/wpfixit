@@ -10,6 +10,7 @@ from app.domains.recommendations.anthropic_provider import (
 from app.domains.recommendations.gemini_provider import GeminiRecommendationGenerator
 from app.domains.recommendations.openai_compatible_provider import (
     OpenAICompatibleRecommendationGenerator,
+    normalize_blueprint_package,
 )
 from app.domains.recommendations.openai_provider import OpenAIRecommendationGenerator
 from tests.page_packages.test_generation import (
@@ -150,6 +151,8 @@ def test_gemini_generates_page_package(monkeypatch) -> None:
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
 def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> None:
+    captured = {}
+
     class Response:
         def raise_for_status(self):
             return None
@@ -157,20 +160,24 @@ def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> Non
         def json(self):
             return {
                 "choices": [
-                    {
-                        "message": {
-                            "content": blueprint_package().model_dump_json()
-                        }
-                    }
+                    {"message": {"content": blueprint_package().model_dump_json()}}
                 ],
                 "usage": {},
             }
 
-    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    def post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("requests.post", post)
     result = OpenAICompatibleRecommendationGenerator(
         "https://gateway.example/v1", "secret", "model-test", provider=provider
     ).generate_page_package(blueprint_context())
 
+    system_content = captured["messages"][0]["content"].lower()
+    assert "contractschema" in system_content
+    assert '"replacements"' in system_content
+    assert "herhaal nooit de inputcontext" in system_content
     assert result.package.replacements[0].field_id == "acf-title"
 
 
@@ -188,8 +195,155 @@ def test_openai_compatible_unwraps_landing_page_blueprint_payload(
                     {
                         "message": {
                             "content": json.dumps(
+                                {"landing_page": blueprint_package().model_dump()}
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    result = OpenAICompatibleRecommendationGenerator(
+        "https://gateway.example/v1", "secret", "model-test", provider=provider
+    ).generate_page_package(blueprint_context())
+
+    assert result.package.title == "DSG revisie specialist Schiedam"
+    assert result.package.replacements[0].field_id == "acf-title"
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_repairs_legacy_landing_page_into_blueprint_contract(
+    monkeypatch, provider
+) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
                                 {
-                                    "landing_page": blueprint_package().model_dump()
+                                    "landing_page": {
+                                        "title": "DSG revisie specialist Schiedam",
+                                        "slug": "dsg-revisie-schiedam",
+                                        "seo_title": (
+                                            "DSG revisie Schiedam door een specialist"
+                                        ),
+                                        "meta_description": (
+                                            "Laat uw DSG onderzoeken en gericht "
+                                            "reviseren door "
+                                            "SHM Transmissie in Schiedam."
+                                        ),
+                                        "focus_keyword": "dsg revisie schiedam",
+                                        "hero_title": "DSG revisie Schiedam",
+                                        "introduction_html": (
+                                            "<p>Gerichte diagnose.</p>"
+                                        ),
+                                        "cta": {"button_url": "/offerte-aanvragen/"},
+                                    }
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    result = OpenAICompatibleRecommendationGenerator(
+        "https://gateway.example/v1",
+        "secret",
+        "model-test",
+        provider=provider,
+    ).generate_page_package(blueprint_context())
+
+    replacement_ids = {item.field_id for item in result.package.replacements}
+    assert result.package.title == "DSG revisie specialist Schiedam"
+    assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
+
+
+def test_normalize_stored_legacy_blueprint_package() -> None:
+    package = normalize_blueprint_package(
+        {
+            "landing_page": {
+                "title": "DSG revisie specialist Schiedam",
+                "slug": "dsg-revisie-schiedam",
+                "seo_title": "DSG revisie specialist Schiedam | SHM Transmissie",
+                "meta_description": (
+                    "Laat uw DSG transmissie deskundig onderzoeken en reviseren "
+                    "door SHM Transmissie in Schiedam."
+                ),
+                "focus_keyword": "dsg revisie schiedam",
+                "hero_title": "DSG revisie Schiedam",
+                "introduction_html": "<p>Gerichte diagnose.</p>",
+                "cta": {"button_url": "/offerte-aanvragen/"},
+            }
+        },
+        blueprint_context(),
+    )
+
+    assert package.title == "DSG revisie specialist Schiedam"
+    assert {item.field_id for item in package.replacements} >= {
+        "acf-title",
+        "acf-copy",
+        "acf-cta-url",
+    }
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_accepts_blueprint_package_with_extra_metadata(
+    monkeypatch, provider
+) -> None:
+    payload = blueprint_package().model_dump()
+    payload.update(
+        {
+            "keyword": "dsg revisie schiedam",
+            "search_volume": 320,
+            "intent": "commercial",
+        }
+    )
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": json.dumps(payload)}}],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    result = OpenAICompatibleRecommendationGenerator(
+        "https://gateway.example/v1", "secret", "model-test", provider=provider
+    ).generate_page_package(blueprint_context())
+
+    assert result.package.title == "DSG revisie specialist Schiedam"
+    assert result.package.replacements[0].field_id == "acf-title"
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_unwraps_generic_nested_blueprint_package(
+    monkeypatch, provider
+) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "keyword": "dsg revisie schiedam",
+                                    "search_volume": 320,
+                                    "package": blueprint_package().model_dump(),
                                 }
                             )
                         }
@@ -309,9 +463,7 @@ def test_gemini_uses_blueprint_contract(monkeypatch) -> None:
                 "candidates": [
                     {
                         "content": {
-                            "parts": [
-                                {"text": blueprint_package().model_dump_json()}
-                            ]
+                            "parts": [{"text": blueprint_package().model_dump_json()}]
                         }
                     }
                 ],

@@ -42,9 +42,19 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         setProposal(result);
         setCandidate(readActiveCandidate(result));
         if (result.package?.title) setDraft(result.package);
+        if (result.active_candidate?.status === "failed") {
+          const details = result.active_candidate.candidate_package as
+            | { _generation_error?: unknown }
+            | undefined;
+          setMessage(
+            typeof details?._generation_error === "string"
+              ? details._generation_error
+              : "Nieuwe versie genereren mislukt.",
+          );
+        }
         setImportUrl(null);
         setLoading(false);
-        if (result.state === "generating") {
+        if (result.state === "generating" || result.active_candidate?.status === "generating") {
           pollTimer = window.setTimeout(loadProposal, 1500);
         }
       } catch (error) {

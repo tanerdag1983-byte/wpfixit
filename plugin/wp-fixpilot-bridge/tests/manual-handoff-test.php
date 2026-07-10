@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+define('WPFIXPILOT_TESTING', true);
+
 final class WP_Error
 {
     public function __construct(
@@ -9,6 +11,11 @@ final class WP_Error
         public string $message,
         public array $data = []
     ) {}
+
+    public function get_error_message(): string
+    {
+        return $this->message;
+    }
 }
 
 $GLOBALS['wpfixpilot_transients'] = [];
@@ -31,6 +38,25 @@ function get_site_url(): string { return 'https://member.example'; }
 function wp_remote_post(string $url, array $args = []): array
 {
     $GLOBALS['wpfixpilot_http_requests'][] = ['url' => $url, 'args' => $args];
+    $headers = $args['headers'] ?? [];
+    assert(($headers['Content-Type'] ?? '') === 'application/json');
+    assert(($headers['x-wp-fixpilot-timestamp'] ?? '') !== '');
+    assert(($headers['x-wp-fixpilot-nonce'] ?? '') !== '');
+    assert(($headers['x-wp-fixpilot-signature'] ?? '') !== '');
+
+    if (str_ends_with($url, '/error-redeem/redeem')) {
+        return [
+            'response' => ['code' => 422],
+            'body' => json_encode([
+                'detail' => [
+                    [
+                        'loc' => ['header', 'x-wp-fixpilot-signature'],
+                        'msg' => 'Field required',
+                    ],
+                ],
+            ]),
+        ];
+    }
     if (str_ends_with($url, '/complete')) {
         return [
             'response' => ['code' => 200],
@@ -54,7 +80,36 @@ function wp_remote_post(string $url, array $args = []): array
                 'proposal_version_id' => 'proposal-7',
                 'version_number' => 7,
                 'state' => 'approved',
-                'package' => ['title' => 'DSG revisie pagina'],
+                'blueprint' => [
+                    'wordpress_blueprint_id' => 321,
+                    'version' => 4,
+                    'structure_hash' => 'blueprint-hash',
+                ],
+                'config_snapshot' => [
+                    'content_schema' => [
+                        'blocks' => [
+                            [
+                                'fields' => [
+                                    ['id' => 'acf-title', 'value_type' => 'heading'],
+                                    ['id' => 'acf-url', 'value_type' => 'url'],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+                'package' => [
+                    'title' => 'DSG revisie pagina',
+                    'seo_title' => 'DSG revisie pagina | Specialist',
+                    'meta_description' => 'Plan direct een diagnose voor uw DSG revisie bij SHM Transmissie.',
+                    'focus_keyword' => 'dsg revisie pagina',
+                    'internal_links' => [
+                        ['anchor' => 'Contact', 'url' => 'https://member.example/contact/'],
+                    ],
+                    'replacements' => [
+                        ['field_id' => 'acf-title', 'value' => 'Nieuwe titel'],
+                        ['field_id' => 'acf-url', 'value' => '/offerte-aanvragen/'],
+                    ],
+                ],
             ],
         ]),
     ];
@@ -66,9 +121,11 @@ function wp_create_nonce(string $action): string { return 'nonce'; }
 function current_user_can(string $capability): bool { return $capability === 'edit_pages'; }
 function get_current_user_id(): int { return 12; }
 function esc_url(string $value): string { return $value; }
+function esc_url_raw(string $value): string { return $value; }
 function esc_html(string $value): string { return $value; }
 function esc_attr(string $value): string { return $value; }
 function sanitize_text_field(string $value): string { return trim($value); }
+function untrailingslashit(string $value): string { return rtrim($value, '/'); }
 function wp_unslash(string $value): string { return $value; }
 function wp_json_encode(mixed $value): string { return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); }
 function wp_nonce_field(string $action): void { echo '<input type="hidden" name="_wpnonce" value="nonce" />'; }
@@ -93,6 +150,22 @@ final class Test_Page_Package_Controller
     }
 }
 
+final class Test_Blueprint_Controller
+{
+    public function create_draft(int $blueprintId, array $payload): array
+    {
+        $GLOBALS['wpfixpilot_created_drafts'][] = [
+            'blueprint_id' => $blueprintId,
+            'payload' => $payload,
+        ];
+        return [
+            'wordpress_object_id' => 20,
+            'edit_url' => 'https://example.com/wp-admin/post.php?post=20',
+            'status' => 'draft',
+        ];
+    }
+}
+
 $store = new WPFixPilot_Import_Session_Store();
 $sessionId = $store->create('handoff-1', [
     'proposal_version_id' => 'proposal-7',
@@ -101,12 +174,37 @@ $sessionId = $store->create('handoff-1', [
 assert($sessionId === 'session-1');
 assert($store->get('session-1')['payload']['proposal_version_id'] === 'proposal-7');
 
-$controller = new WPFixPilot_Manual_Handoff_Controller($store, 'https://api.example.test');
+$controller = new WPFixPilot_Manual_Handoff_Controller(
+    $store,
+    'https://frontend.example/api/projects/project-1/page-proposals/handoffs'
+);
 $redeemed = $controller->redeem_code('opaque-code', 12);
 assert(!is_wp_error($redeemed));
 assert($redeemed['summary']['proposal_version'] === 7);
 assert($redeemed['summary']['draft_only'] === true);
 assert($GLOBALS['wpfixpilot_browser_history_fragment_cleared'] === true);
+
+$failedController = new WPFixPilot_Manual_Handoff_Controller($store, 'https://api.example.test/error-redeem');
+$failedRedeem = $failedController->redeem_code('expired-code', 12);
+assert(is_wp_error($failedRedeem));
+assert($failedRedeem->get_error_message() === 'header.x-wp-fixpilot-signature: Field required');
+
+$GLOBALS['wpfixpilot_redirect_to'] = null;
+$_GET = [
+    'code' => 'opaque-code',
+    'backend' => 'https://frontend.example/api/projects/project-1/page-proposals/handoffs/',
+];
+ob_start();
+$controller->render_import_page();
+ob_end_clean();
+assert(
+    $GLOBALS['wpfixpilot_options']['wp_fixpilot_backend_base_url']
+    === 'https://frontend.example/api/projects/project-1/page-proposals/handoffs'
+);
+assert(
+    $GLOBALS['wpfixpilot_redirect_to']
+    === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=redeemed&session_id=session-1'
+);
 
 $_GET['session_id'] = 'session-1';
 ob_start();
@@ -125,24 +223,42 @@ assert(
 
 $importController = new WPFixPilot_Manual_Handoff_Controller(
     $store,
-    'https://api.example.test',
-    new Test_Page_Package_Controller()
+    'https://frontend.example/api/projects/project-1/page-proposals/handoffs',
+    new Test_Page_Package_Controller(),
+    new Test_Blueprint_Controller()
 );
 $confirmed = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($confirmed));
 assert($confirmed['wordpress_object_id'] === 20);
 assert($confirmed['edit_url'] === 'https://example.com/wp-admin/post.php?post=20');
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert($GLOBALS['wpfixpilot_created_drafts'][0]['blueprint_id'] === 321);
+assert($GLOBALS['wpfixpilot_created_drafts'][0]['payload']['expected_version'] === 4);
 assert(
-    $GLOBALS['wpfixpilot_http_requests'][2]['url']
-    === 'https://api.example.test/projects/project-1/page-proposals/handoffs/handoff-1/complete'
+    $GLOBALS['wpfixpilot_created_drafts'][0]['payload']['expected_structure_hash']
+    === 'blueprint-hash'
+);
+assert(
+    $GLOBALS['wpfixpilot_created_drafts'][0]['payload']['replacements']['acf-title']
+    === 'Nieuwe titel'
+);
+assert(
+    in_array(
+        '/offerte-aanvragen/',
+        $GLOBALS['wpfixpilot_created_drafts'][0]['payload']['approved_urls'],
+        true
+    )
+);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 5);
+assert(
+    $GLOBALS['wpfixpilot_http_requests'][4]['url']
+    === 'https://frontend.example/api/projects/project-1/page-proposals/handoffs/handoff-1/complete'
 );
 
 $repeat = $importController->confirm_import('session-1', 12);
 assert(!is_wp_error($repeat));
 assert($repeat['wordpress_object_id'] === 20);
 assert(count($GLOBALS['wpfixpilot_created_drafts']) === 1);
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 5);
 
 $_POST = ['session_id' => 'session-1', 'wordpress_user_id' => 12];
 $importController->handle_confirm_import();
@@ -150,7 +266,7 @@ assert(
     $GLOBALS['wpfixpilot_redirect_to']
     === 'https://member.example/wp-admin/admin.php?page=wp-fixpilot-import&notice=imported&session_id=session-1'
 );
-assert(count($GLOBALS['wpfixpilot_http_requests']) === 3);
+assert(count($GLOBALS['wpfixpilot_http_requests']) === 5);
 
 $_GET['notice'] = 'imported';
 ob_start();

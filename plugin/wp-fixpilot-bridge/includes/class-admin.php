@@ -31,7 +31,10 @@ final class WPFixPilot_Admin
             'wp-fixpilot-import',
             [$this->manualHandoffController, 'render_import_page']
         );
+    }
 
+    public function register_action_handlers(): void
+    {
         add_action('admin_post_wp_fixpilot_regenerate_secret', [$this, 'regenerate_secret']);
         add_action('admin_post_wp_fixpilot_redeem_handoff', [$this->manualHandoffController, 'handle_redeem']);
         add_action('admin_post_wp_fixpilot_confirm_import', [$this->manualHandoffController, 'handle_confirm_import']);

@@ -4,6 +4,7 @@ import json
 import secrets
 import time
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,11 @@ from app.domains.page_packages.models import (
 from app.domains.page_packages.service import issue_page_package_handoff
 from app.domains.projects.models import OrganizationMember, Profile
 from app.domains.wordpress.models import WordPressConnection
+from tests.page_packages.test_proposal_routes import (
+    BlueprintBridge,
+    generated_blueprint_proposal,
+    prepare_project,
+)
 from tests.page_packages.test_proposal_versions import page_proposal_factory
 from tests.recommendations.conftest import ProjectFixtures
 from tests.recommendations.test_ai_connection_routes import ENCRYPTION_KEY
@@ -248,8 +254,18 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     auth_as(projects.member)
     proposal = approved_page_proposal(session, projects)
     connection = session.get(WordPressConnection, "wp-member")
-    assert connection is not None
-    connection.encrypted_secret = encrypt_text("bridge-secret")
+    if connection is None:
+        connection = WordPressConnection(
+            id="wp-member",
+            project_id=projects.member_project.id,
+            site_url="https://member.example",
+            encrypted_secret=encrypt_text("bridge-secret"),
+            seo_plugin="yoast",
+            health_state="healthy",
+        )
+        session.add(connection)
+    else:
+        connection.encrypted_secret = encrypt_text("bridge-secret")
     session.commit()
 
     issue = client.post(
@@ -258,8 +274,13 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
 
     assert issue.status_code == 200
     issued = issue.json()
-    assert "#code=" in issued["import_url"]
-    assert "code=" not in issued["import_url"].split("#", 1)[0]
+    assert "?page=wp-fixpilot-import&code=" in issued["import_url"]
+    assert "#code=" not in issued["import_url"]
+    query = parse_qs(urlparse(issued["import_url"]).query)
+    assert query["page"] == ["wp-fixpilot-import"]
+    assert query["backend"] == [
+        f"http://testserver/projects/{proposal.project_id}/page-proposals/handoffs"
+    ]
 
     handoff = session.get(PagePackageHandoff, issued["handoff"]["id"])
     assert handoff is not None
@@ -284,6 +305,19 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     assert redeemed["handoff"]["state"] == "redeemed"
     assert redeemed["package"]["proposal_version_id"] == proposal.id
 
+    repeated_redeem = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+        json=redeem_payload,
+        headers=_plugin_headers(
+            "bridge-secret",
+            f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+            redeem_payload,
+        ),
+    )
+    assert repeated_redeem.status_code == 200
+    assert repeated_redeem.json()["handoff"]["state"] == "redeemed"
+    assert repeated_redeem.json()["package"]["proposal_version_id"] == proposal.id
+
     complete_payload = {
         "wordpress_object_id": 20,
         "edit_url": "https://member.example/wp-admin/post.php?post=20",
@@ -305,6 +339,23 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     assert first_complete.status_code == 200
     assert second_complete.status_code == 200
     assert second_complete.json()["proposal_version"]["state"] == "draft_created"
+
+    completed_redeem = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+        json=redeem_payload,
+        headers=_plugin_headers(
+            "bridge-secret",
+            f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+            redeem_payload,
+        ),
+    )
+    assert completed_redeem.status_code == 200
+    assert completed_redeem.json()["handoff"]["state"] == "completed"
+    assert completed_redeem.json()["handoff"]["wordpress_object_id"] == 20
+    assert (
+        completed_redeem.json()["handoff"]["wordpress_edit_url"]
+        == "https://member.example/wp-admin/post.php?post=20"
+    )
 
     other = page_proposal_factory(
         session,
@@ -331,6 +382,75 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
 
     assert revoke.status_code == 200
     assert revoke.json()["handoff"]["state"] == "revoked"
+
+
+def test_redeem_includes_blueprint_import_metadata(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "encryption_key", ENCRYPTION_KEY)
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = generated_blueprint_proposal(
+        client, projects, opportunity, monkeypatch
+    )
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda session, project_id: bridge,
+    )
+    approve = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/approve"
+    )
+    assert approve.status_code == 200
+
+    connection = session.get(WordPressConnection, "wp-member")
+    if connection is None:
+        connection = WordPressConnection(
+            id="wp-member",
+            project_id=projects.member_project.id,
+            site_url="https://member.example",
+            encrypted_secret=encrypt_text("bridge-secret"),
+            seo_plugin="yoast",
+            health_state="healthy",
+        )
+        session.add(connection)
+    else:
+        connection.encrypted_secret = encrypt_text("bridge-secret")
+    session.commit()
+
+    issue = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/handoffs"
+    )
+    assert issue.status_code == 200
+
+    issued = issue.json()
+    redeem_payload = {
+        "code": issued["code"],
+        "site_url": "https://member.example",
+        "wordpress_user_id": 17,
+    }
+    route = f"/projects/{projects.member_project.id}/page-proposals/handoffs/redeem"
+    redeem = client.post(
+        route,
+        json=redeem_payload,
+        headers=_plugin_headers("bridge-secret", route, redeem_payload),
+    )
+
+    assert redeem.status_code == 200
+    imported = redeem.json()["package"]
+    assert imported["proposal_version_id"] == proposal["id"]
+    assert imported["blueprint"]["wordpress_blueprint_id"] == 902
+    assert imported["blueprint"]["version"] == 2
+    assert imported["blueprint"]["structure_hash"] == "hash-v2"
+    assert imported["package"]["replacements"][0]["field_id"] == "acf-title"
+    assert (
+        imported["config_snapshot"]["content_schema"]["schema_version"]
+        == "blueprint-v1"
+    )
 
 
 def test_candidate_routes_reject_cross_project_access(

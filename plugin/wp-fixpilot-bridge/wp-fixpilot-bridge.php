@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP FixPilot Bridge
  * Description: Secure inventory and publishing bridge for WP FixPilot.
- * Version: 0.3.4
+ * Version: 0.3.14
  * Requires at least: 6.5
  * Requires PHP: 8.1
  */
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPFIXPILOT_BRIDGE_VERSION', '0.3.4');
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.14');
 
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';
@@ -53,9 +53,9 @@ add_action('rest_api_init', static function (): void {
     $controller->register_routes();
 });
 
-add_action('admin_menu', static function (): void {
-    (new WPFixPilot_Admin())->register();
-});
+$wpFixPilotAdmin = new WPFixPilot_Admin();
+$wpFixPilotAdmin->register_action_handlers();
+add_action('admin_menu', [$wpFixPilotAdmin, 'register']);
 
 add_action('template_redirect', static function (): void {
     if (!is_singular()) {
