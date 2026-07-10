@@ -305,6 +305,19 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     assert redeemed["handoff"]["state"] == "redeemed"
     assert redeemed["package"]["proposal_version_id"] == proposal.id
 
+    repeated_redeem = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+        json=redeem_payload,
+        headers=_plugin_headers(
+            "bridge-secret",
+            f"/projects/{proposal.project_id}/page-proposals/handoffs/redeem",
+            redeem_payload,
+        ),
+    )
+    assert repeated_redeem.status_code == 200
+    assert repeated_redeem.json()["handoff"]["state"] == "redeemed"
+    assert repeated_redeem.json()["package"]["proposal_version_id"] == proposal.id
+
     complete_payload = {
         "wordpress_object_id": 20,
         "edit_url": "https://member.example/wp-admin/post.php?post=20",

@@ -157,7 +157,11 @@ final class WPFixPilot_Manual_Handoff_Controller
                     </p>
                 </div>
             <?php elseif ($notice === 'import_failed') : ?>
-                <div class="notice notice-error"><p>Het WordPress-concept kon niet worden aangemaakt.</p></div>
+                <div class="notice notice-error">
+                    <p>
+                        <?php echo esc_html($noticeMessage !== '' ? $noticeMessage : 'Het WordPress-concept kon niet worden aangemaakt.'); ?>
+                    </p>
+                </div>
             <?php endif; ?>
 
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
@@ -246,12 +250,22 @@ final class WPFixPilot_Manual_Handoff_Controller
         check_admin_referer('wp_fixpilot_confirm_import');
         $sessionId = sanitize_text_field(wp_unslash((string) ($_POST['session_id'] ?? '')));
         $userId = (int) ($_POST['wordpress_user_id'] ?? 0);
-        $result = $this->confirm_import($sessionId, $userId);
+        try {
+            $result = $this->confirm_import($sessionId, $userId);
+        } catch (Throwable $error) {
+            $this->redirect_to_import_page([
+                'notice' => 'import_failed',
+                'session_id' => $sessionId,
+                'message' => $error->getMessage(),
+            ]);
+            return;
+        }
 
         if (is_wp_error($result)) {
             $this->redirect_to_import_page([
                 'notice' => 'import_failed',
                 'session_id' => $sessionId,
+                'message' => $result->get_error_message(),
             ]);
             return;
         }
