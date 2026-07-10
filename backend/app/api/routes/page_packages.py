@@ -192,20 +192,15 @@ def validate_page_package_settings(
     mapped_required = {
         slot for slot in REQUIRED_SLOTS if settings.slot_mapping.get(slot)
     }
-    mapped_slots = {
-        slot for slot in MAPPABLE_SLOTS if settings.slot_mapping.get(slot)
-    }
+    mapped_slots = {slot for slot in MAPPABLE_SLOTS if settings.slot_mapping.get(slot)}
     mapped_path_values = [settings.slot_mapping[slot] for slot in mapped_slots]
     mapped_paths = set(mapped_path_values)
     duplicate_paths = {
         path for path in mapped_paths if mapped_path_values.count(path) > 1
     }
-    duplicate_paths_are_safe = (
-        not duplicate_paths
-        or (
-            settings.builder == "acf"
-            and all(path.startswith("acf-block:") for path in duplicate_paths)
-        )
+    duplicate_paths_are_safe = not duplicate_paths or (
+        settings.builder == "acf"
+        and all(path.startswith("acf-block:") for path in duplicate_paths)
     )
     valid = (
         inspection.get("builder") == settings.builder
@@ -384,15 +379,9 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
             package = GeneratedBlueprintPackage.model_validate(generated.package)
             package = validate_blueprint_replacements(package, context)
             allowed_links = {link.url for link in context.internal_link_candidates}
-            if any(
-                link.url not in allowed_links
-                for link in package.internal_links
-            ):
+            if any(link.url not in allowed_links for link in package.internal_links):
                 raise ValueError("AI returned an unknown internal link")
-            if (
-                package.focus_keyword.casefold()
-                != opportunity.keyword.casefold()
-            ):
+            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
                 raise ValueError("AI changed the focus keyword")
             proposal.package = package.model_dump()
             proposal.rendered_html = ""
@@ -505,6 +494,7 @@ def regenerate_page_package_proposal(
     project_id: str,
     proposal_id: str,
     payload: PageProposalRegenerationRequest,
+    background_tasks: BackgroundTasks,
     session: SessionDependency,
     user: UserDependency,
 ) -> dict:
@@ -529,10 +519,77 @@ def regenerate_page_package_proposal(
         prompt_version=proposal.prompt_version,
         status="generating",
     )
+    background_tasks.add_task(
+        _run_page_package_regeneration,
+        background_engine(session),
+        candidate.id,
+    )
     return {
         "base_version": _proposal_payload(session, proposal),
         "candidate": _candidate_payload(candidate),
     }
+
+
+def _run_page_package_regeneration(bind, candidate_id: str) -> None:
+    with Session(bind) as session:
+        candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
+        if candidate is None or candidate.status != "generating":
+            return
+        base = session.get(PagePackageProposal, candidate.base_version_id)
+        if base is None:
+            candidate.status = "failed"
+            candidate.candidate_package = {
+                "_generation_error": "Base proposal not found"
+            }
+            session.commit()
+            return
+        project = session.get(Project, base.project_id)
+        opportunity = session.get(KeywordOpportunity, base.opportunity_id)
+        blueprint = session.scalar(
+            select(PageBlueprint).where(
+                PageBlueprint.project_id == base.project_id,
+                PageBlueprint.id == base.blueprint_id,
+                PageBlueprint.version == base.blueprint_version,
+                PageBlueprint.structure_hash == base.blueprint_structure_hash,
+                PageBlueprint.state == "ready",
+            )
+        )
+        if project is None or opportunity is None or blueprint is None:
+            candidate.status = "failed"
+            candidate.candidate_package = {
+                "_generation_error": "Blueprint context is unavailable"
+            }
+            session.commit()
+            return
+        try:
+            context = _generation_context(session, project, opportunity, blueprint)
+            guidance = "Regeneratie-instructie: " + (
+                candidate.instruction or "Maak een verbeterde versie."
+            )
+            if candidate.target_block_id:
+                guidance += f" Pas primair blok {candidate.target_block_id} aan."
+            context = context.model_copy(
+                update={"company_context": context.company_context + "\n" + guidance}
+            )
+            generated = PagePackageGenerationResult.model_validate(
+                _page_package_generator(session, project).generate_page_package(context)
+            )
+            package = GeneratedBlueprintPackage.model_validate(generated.package)
+            package = validate_blueprint_replacements(package, context)
+            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
+                raise ValueError("AI changed the focus keyword")
+            candidate.candidate_package = package.model_dump()
+            candidate.candidate_rendered_html = ""
+            candidate.provider = generated.provider or candidate.provider
+            candidate.model = generated.model or candidate.model
+            candidate.prompt_version = prompt_version(context, candidate.model or "")
+            candidate.input_tokens = generated.input_tokens
+            candidate.output_tokens = generated.output_tokens
+            candidate.status = "ready"
+        except Exception as error:
+            candidate.status = "failed"
+            candidate.candidate_package = {"_generation_error": str(error)[:2_000]}
+        session.commit()
 
 
 @router.post("/page-proposals/candidates/{candidate_id}/accept")
@@ -739,8 +796,7 @@ def create_wordpress_draft(
     context = _generation_context(session, project, opportunity, blueprint)
     validate_blueprint_replacements(package, context)
     replacements = {
-        replacement.field_id: replacement.value
-        for replacement in package.replacements
+        replacement.field_id: replacement.value for replacement in package.replacements
     }
     url_field_ids = {
         field["id"]
@@ -948,7 +1004,9 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         select(PagePackageRegenerationCandidate)
         .where(
             PagePackageRegenerationCandidate.base_version_id == proposal.id,
-            PagePackageRegenerationCandidate.status.in_(("generating", "ready")),
+            PagePackageRegenerationCandidate.status.in_(
+                ("generating", "ready", "failed")
+            ),
         )
         .order_by(PagePackageRegenerationCandidate.created_at.desc())
     )

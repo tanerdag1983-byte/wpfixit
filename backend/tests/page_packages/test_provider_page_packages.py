@@ -159,11 +159,7 @@ def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> Non
         def json(self):
             return {
                 "choices": [
-                    {
-                        "message": {
-                            "content": blueprint_package().model_dump_json()
-                        }
-                    }
+                    {"message": {"content": blueprint_package().model_dump_json()}}
                 ],
                 "usage": {},
             }
@@ -198,9 +194,7 @@ def test_openai_compatible_unwraps_landing_page_blueprint_payload(
                     {
                         "message": {
                             "content": json.dumps(
-                                {
-                                    "landing_page": blueprint_package().model_dump()
-                                }
+                                {"landing_page": blueprint_package().model_dump()}
                             )
                         }
                     }
@@ -215,6 +209,60 @@ def test_openai_compatible_unwraps_landing_page_blueprint_payload(
 
     assert result.package.title == "DSG revisie specialist Schiedam"
     assert result.package.replacements[0].field_id == "acf-title"
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_repairs_legacy_landing_page_into_blueprint_contract(
+    monkeypatch, provider
+) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "landing_page": {
+                                        "title": "DSG revisie specialist Schiedam",
+                                        "slug": "dsg-revisie-schiedam",
+                                        "seo_title": (
+                                            "DSG revisie Schiedam door een specialist"
+                                        ),
+                                        "meta_description": (
+                                            "Laat uw DSG onderzoeken en gericht "
+                                            "reviseren door "
+                                            "SHM Transmissie in Schiedam."
+                                        ),
+                                        "focus_keyword": "dsg revisie schiedam",
+                                        "hero_title": "DSG revisie Schiedam",
+                                        "introduction_html": (
+                                            "<p>Gerichte diagnose.</p>"
+                                        ),
+                                        "cta": {"button_url": "/offerte-aanvragen/"},
+                                    }
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    result = OpenAICompatibleRecommendationGenerator(
+        "https://gateway.example/v1",
+        "secret",
+        "model-test",
+        provider=provider,
+    ).generate_page_package(blueprint_context())
+
+    replacement_ids = {item.field_id for item in result.package.replacements}
+    assert result.package.title == "DSG revisie specialist Schiedam"
+    assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
 
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
@@ -236,13 +284,7 @@ def test_openai_compatible_accepts_blueprint_package_with_extra_metadata(
 
         def json(self):
             return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(payload)
-                        }
-                    }
-                ],
+                "choices": [{"message": {"content": json.dumps(payload)}}],
                 "usage": {},
             }
 
@@ -319,9 +361,7 @@ def test_gemini_uses_blueprint_contract(monkeypatch) -> None:
                 "candidates": [
                     {
                         "content": {
-                            "parts": [
-                                {"text": blueprint_package().model_dump_json()}
-                            ]
+                            "parts": [{"text": blueprint_package().model_dump_json()}]
                         }
                     }
                 ],

@@ -157,9 +157,7 @@ def test_regenerate_block_creates_candidate_without_mutating_current(
 ) -> None:
     auth_as(projects.member)
     opportunity = prepare_project(session, projects)
-    proposal = generated_blueprint_proposal(
-        client, projects, opportunity, monkeypatch
-    )
+    proposal = generated_blueprint_proposal(client, projects, opportunity, monkeypatch)
     bridge = BlueprintBridge()
     monkeypatch.setattr(
         "app.api.routes.page_packages._page_package_client",
@@ -199,6 +197,15 @@ def test_regenerate_block_creates_candidate_without_mutating_current(
     body = response.json()
     assert body["base_version"]["id"] == proposal["id"]
     assert body["candidate"]["status"] == "generating"
+
+    from app.api.routes.page_packages import _run_page_package_regeneration
+
+    _run_page_package_regeneration(session.get_bind(), body["candidate"]["id"])
+    session.expire_all()
+    completed = session.get(PagePackageRegenerationCandidate, body["candidate"]["id"])
+    assert completed is not None
+    assert completed.status == "ready"
+    assert completed.candidate_package == proposal["package"]
 
     stored = session.get(PagePackageProposal, proposal["id"])
     assert stored is not None

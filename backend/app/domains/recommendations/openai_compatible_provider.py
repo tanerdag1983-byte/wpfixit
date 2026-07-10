@@ -1,4 +1,6 @@
 import json
+import re
+from copy import deepcopy
 
 import requests
 from pydantic import ValidationError
@@ -8,7 +10,10 @@ from app.domains.page_packages.generation import (
     page_package_contract,
     page_package_system_prompt,
 )
-from app.domains.page_packages.schemas import PagePackageContext
+from app.domains.page_packages.schemas import (
+    GeneratedBlueprintPackage,
+    PagePackageContext,
+)
 from app.domains.recommendations.provider import (
     ProviderGenerationError,
     provider_error_message,
@@ -28,9 +33,7 @@ def _extract_page_package_payload(payload, contract):
 
     contract_keys = set(contract.model_fields)
     required_keys = {
-        name
-        for name, field in contract.model_fields.items()
-        if field.is_required()
+        name for name, field in contract.model_fields.items() if field.is_required()
     }
 
     direct_subset = {
@@ -77,8 +80,160 @@ def _parse_page_package_content(content: str, context: PagePackageContext):
         return contract.model_validate_json(content)
     except ValidationError:
         payload = json.loads(content)
-        normalized = _extract_page_package_payload(payload, contract)
+        if context.blueprint_schema is not None:
+            normalized = _legacy_blueprint_payload(payload, context)
+        else:
+            normalized = _extract_page_package_payload(payload, contract)
         return contract.model_validate(normalized)
+
+
+def _legacy_blueprint_payload(payload: dict, context: PagePackageContext) -> dict:
+    """Convert older landing-page JSON into the current replacement contract."""
+    landing = payload.get("landing_page")
+    if not isinstance(landing, dict):
+        normalized = _extract_page_package_payload(payload, GeneratedBlueprintPackage)
+        return _repair_blueprint_replacement_ids(normalized, context)
+    if isinstance(landing.get("replacements"), list):
+        return _repair_blueprint_replacement_ids(landing, context)
+
+    schema = context.blueprint_schema
+    assert schema is not None
+    sections = landing.get("sections")
+    sections = sections if isinstance(sections, list) else []
+    faq_items = landing.get("faq")
+    faq_items = faq_items if isinstance(faq_items, list) else []
+    cta = landing.get("cta") if isinstance(landing.get("cta"), dict) else {}
+    section_cursor = 0
+    replacements: list[dict[str, str]] = []
+
+    for block in schema.blocks:
+        role = block.semantic_role
+        block_values: list[str] = []
+        if role == "hero":
+            block_values = [
+                str(landing.get("hero_title") or landing.get("title") or "")
+            ]
+        elif role == "introduction":
+            block_values = [str(landing.get("introduction_html") or "")]
+        elif role == "faq":
+            block_values = [
+                "".join(
+                    f"<details><summary>{item.get('question', '')}</summary>"
+                    f"{item.get('answer_html', '')}</details>"
+                    for item in faq_items
+                    if isinstance(item, dict)
+                )
+            ]
+        elif role == "cta":
+            block_values = [
+                str(cta.get("title") or landing.get("title") or ""),
+                str(cta.get("body_html") or ""),
+                str(cta.get("button_label") or "Meer informatie"),
+                str(cta.get("button_url") or ""),
+            ]
+        else:
+            while section_cursor < len(sections):
+                item = sections[section_cursor]
+                section_cursor += 1
+                if isinstance(item, dict):
+                    block_values.extend(
+                        [
+                            str(item.get("heading") or ""),
+                            str(item.get("body_html") or ""),
+                        ]
+                    )
+                    break
+
+        value_cursor = 0
+        for field in block.fields:
+            value = ""
+            label = field.label.casefold()
+            if field.value_type == "url":
+                value = str(cta.get("button_url") or "")
+            elif (
+                "titel" in label
+                or "title" in label
+                or field.value_type
+                in {
+                    "heading",
+                    "button_text",
+                }
+            ):
+                value = str(landing.get("hero_title") or landing.get("title") or "")
+            elif value_cursor < len(block_values):
+                value = block_values[value_cursor]
+                value_cursor += 1
+            if not value:
+                value = field.current_value
+            if field.required and not value:
+                value = (
+                    "Meer informatie"
+                    if field.value_type != "rich_text"
+                    else "<p>Meer informatie.</p>"
+                )
+            replacements.append({"field_id": field.id, "value": value})
+
+    return {
+        "title": str(
+            landing.get("title") or landing.get("hero_title") or context.keyword
+        ),
+        "slug": _slugify(str(landing.get("slug") or context.keyword)),
+        "seo_title": str(
+            landing.get("seo_title") or landing.get("title") or context.keyword
+        ),
+        "meta_description": str(
+            landing.get("meta_description")
+            or landing.get("introduction_html")
+            or context.keyword
+        )
+        .replace("<p>", "")
+        .replace("</p>", "")[:170],
+        "focus_keyword": str(landing.get("focus_keyword") or context.keyword),
+        "replacements": replacements,
+        "internal_links": landing.get("internal_links") or [],
+    }
+
+
+def _slugify(value: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    return value or "nieuwe-pagina"
+
+
+def _repair_blueprint_replacement_ids(
+    payload: dict, context: PagePackageContext
+) -> dict:
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("replacements"), list
+    ):
+        return payload
+    schema = context.blueprint_schema
+    assert schema is not None
+    known = {field.id for block in schema.blocks for field in block.fields}
+    available = [field.id for block in schema.blocks for field in block.fields]
+    repaired = deepcopy(payload)
+    used = {
+        item.get("field_id")
+        for item in repaired["replacements"]
+        if isinstance(item, dict) and item.get("field_id") in known
+    }
+    next_ids = [field_id for field_id in available if field_id not in used]
+    for item in repaired["replacements"]:
+        if not isinstance(item, dict) or item.get("field_id") in known:
+            continue
+        if next_ids:
+            item["field_id"] = next_ids.pop(0)
+    present = {
+        item.get("field_id")
+        for item in repaired["replacements"]
+        if isinstance(item, dict)
+    }
+    for block in schema.blocks:
+        for field in block.fields:
+            if field.required and field.id not in present:
+                repaired["replacements"].append(
+                    {"field_id": field.id, "value": field.current_value}
+                )
+    return repaired
 
 
 class OpenAICompatibleRecommendationGenerator:
