@@ -1022,7 +1022,7 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)
-        if stored is not None and stored.project_id == proposal.project_id:
+        if stored is not None and str(stored.project_id) == str(proposal.project_id):
             blueprint = {
                 "id": stored.id,
                 "name": stored.name,
@@ -1129,7 +1129,7 @@ def _import_package_payload(session: Session, proposal: PagePackageProposal) -> 
         and blueprint is not None
         and project is not None
         and opportunity is not None
-        and blueprint.content_schema == proposal.config_snapshot.get("content_schema")
+        and blueprint.content_schema is not None
     ):
         context = _generation_context(session, project, opportunity, blueprint)
         try:
@@ -1142,7 +1142,7 @@ def _import_package_payload(session: Session, proposal: PagePackageProposal) -> 
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)
-        if stored is not None and stored.project_id == proposal.project_id:
+        if stored is not None and str(stored.project_id) == str(proposal.project_id):
             blueprint = {
                 "id": stored.id,
                 "name": stored.name,
