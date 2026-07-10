@@ -241,7 +241,7 @@ def redeem_page_package_handoff(
     handoff = session.scalar(
         select(PagePackageHandoff).where(
             PagePackageHandoff.code_hash == _hash_handoff_code(code)
-        )
+        ).with_for_update()
     )
     if handoff is None:
         raise ValueError("Handoff code is invalid")
