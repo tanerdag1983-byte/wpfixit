@@ -36,6 +36,8 @@ require_once __DIR__ . '/includes/builder-adapters/class-acf-blueprint-adapter.p
 require_once __DIR__ . '/includes/class-post-cloner.php';
 require_once __DIR__ . '/includes/class-page-package-controller.php';
 require_once __DIR__ . '/includes/class-blueprint-controller.php';
+require_once __DIR__ . '/includes/class-outbound-client.php';
+require_once __DIR__ . '/includes/class-draft-job-controller.php';
 require_once __DIR__ . '/includes/class-rest-controller.php';
 
 register_activation_hook(__FILE__, static function (): void {
