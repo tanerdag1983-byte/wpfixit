@@ -5,7 +5,7 @@ import pytest
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_packages.models import PagePackageProposal
+from app.domains.page_packages.models import PagePackageHandoff, PagePackageProposal
 from app.domains.wordpress.draft_jobs import (
     cancel_ineligible_draft_jobs,
     claim_next_draft_job,
@@ -15,6 +15,7 @@ from app.domains.wordpress.draft_jobs import (
     hash_project_key,
 )
 from app.domains.wordpress.models import (
+    WordPressConnection,
     WordPressDraftJob,
     WordPressOutboundCredential,
     WordPressPage,
@@ -161,6 +162,67 @@ def test_create_or_get_job_is_idempotent(session, approved_blueprint_proposal) -
     assert first.payload["expected_version"] == 2
     assert first.payload["replacements"]["acf-title"] == "DSG revisie Schiedam"
     assert first.payload["approved_urls"] == ["/contact/"]
+
+
+def test_create_job_revokes_an_expired_redeemed_manual_handoff(
+    session, approved_blueprint_proposal
+) -> None:
+    connection = WordPressConnection(
+        id="draft-job-connection",
+        project_id=approved_blueprint_proposal.project_id,
+        site_url="https://member.example",
+        encrypted_secret="encrypted",
+    )
+    handoff = PagePackageHandoff(
+        id="expired-redeemed-handoff",
+        project_id=approved_blueprint_proposal.project_id,
+        proposal_version_id=approved_blueprint_proposal.id,
+        wordpress_connection_id=connection.id,
+        code_hash="expired-redeemed-handoff-hash",
+        issued_by="member-user",
+        state="redeemed",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        redeemed_at=datetime.now(UTC) - timedelta(minutes=2),
+    )
+    session.add_all([connection, handoff])
+    session.commit()
+
+    job = create_or_get_draft_job(session, approved_blueprint_proposal)
+    session.commit()
+
+    assert job.state == "queued"
+    assert handoff.state == "revoked"
+    assert handoff.revoked_at is not None
+
+
+def test_create_job_keeps_an_active_redeemed_manual_handoff(
+    session, approved_blueprint_proposal
+) -> None:
+    connection = WordPressConnection(
+        id="active-draft-job-connection",
+        project_id=approved_blueprint_proposal.project_id,
+        site_url="https://member.example",
+        encrypted_secret="encrypted",
+    )
+    handoff = PagePackageHandoff(
+        id="active-redeemed-handoff",
+        project_id=approved_blueprint_proposal.project_id,
+        proposal_version_id=approved_blueprint_proposal.id,
+        wordpress_connection_id=connection.id,
+        code_hash="active-redeemed-handoff-hash",
+        issued_by="member-user",
+        state="redeemed",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        redeemed_at=datetime.now(UTC),
+    )
+    session.add_all([connection, handoff])
+    session.commit()
+
+    with pytest.raises(ValueError, match="manual handoff is already in progress"):
+        create_or_get_draft_job(session, approved_blueprint_proposal)
+
+    assert handoff.state == "redeemed"
+    assert handoff.revoked_at is None
 
 
 def test_create_job_rejects_non_current_or_unapproved_proposal(

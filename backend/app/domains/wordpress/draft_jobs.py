@@ -101,9 +101,13 @@ def create_or_get_draft_job(
         )
         .with_for_update()
     ).all()
-    if any(handoff.state == "redeemed" for handoff in open_handoffs):
-        raise ValueError("manual handoff is already in progress")
     revoked_at = datetime.now(UTC)
+    if any(
+        handoff.state == "redeemed"
+        and _as_utc(handoff.expires_at) > revoked_at
+        for handoff in open_handoffs
+    ):
+        raise ValueError("manual handoff is already in progress")
     for handoff in open_handoffs:
         handoff.state = "revoked"
         handoff.revoked_at = revoked_at
