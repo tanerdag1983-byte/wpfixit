@@ -101,6 +101,13 @@ class WordPressDraftJob(Base):
             f"contract_version = '{JOB_CONTRACT_VERSION}'",
             name="ck_wordpress_draft_jobs_contract_version",
         ),
+        CheckConstraint(
+            "(state IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NOT NULL) OR "
+            "(state NOT IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NULL)",
+            name="ck_wordpress_draft_jobs_terminal_claim_hash",
+        ),
         ForeignKeyConstraint(
             ["project_id", "proposal_version_id"],
             ["page_package_proposals.project_id", "page_package_proposals.id"],
@@ -130,6 +137,7 @@ class WordPressDraftJob(Base):
     claim_token: Mapped[str | None] = mapped_column(String(128))
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminal_claim_token_hash: Mapped[str | None] = mapped_column(String(64))
     wordpress_object_id: Mapped[int | None] = mapped_column(Integer)
     wordpress_edit_url: Mapped[str | None] = mapped_column(String(2048))
     error_code: Mapped[str | None] = mapped_column(String(64))

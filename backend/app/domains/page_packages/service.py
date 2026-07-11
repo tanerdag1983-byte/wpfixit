@@ -15,7 +15,8 @@ from app.domains.page_packages.models import (
 )
 from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership
-from app.domains.wordpress.models import WordPressConnection
+from app.domains.wordpress.draft_jobs import cancel_ineligible_draft_jobs
+from app.domains.wordpress.models import WordPressConnection, WordPressDraftJob
 
 HANDOFF_TTL = timedelta(minutes=10)
 REVOCABLE_HANDOFF_STATES = {"issued", "redeemed"}
@@ -53,7 +54,11 @@ def accept_regeneration_candidate(
     current = session.get(PagePackageProposal, candidate.base_version_id)
     if current is None:
         raise ValueError("Base proposal version not found")
-    if not current.is_current or current.current_version_id != current.id:
+    if (
+        not current.is_current
+        or current.current_version_id != current.id
+        or current.state != "approved"
+    ):
         raise ValueError("Base proposal version is no longer current")
 
     job = Job(
@@ -105,6 +110,12 @@ def accept_regeneration_candidate(
         synchronize_session="fetch",
     )
     session.add_all([job, next_version])
+    cancel_ineligible_draft_jobs(
+        session,
+        current.project_id,
+        current.proposal_group_id,
+        eligible_proposal_version_id=next_version_id,
+    )
     session.commit()
     session.refresh(next_version)
     return next_version
@@ -137,6 +148,14 @@ def issue_page_package_handoff(
     proposal: PagePackageProposal,
     actor_id: str,
 ) -> IssuedPagePackageHandoff:
+    locked_proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == proposal.id)
+        .with_for_update()
+    )
+    if locked_proposal is None:
+        raise ValueError("Proposal version is no longer available")
+    proposal = locked_proposal
     if (
         proposal.state != "approved"
         or not proposal.is_current
@@ -144,6 +163,14 @@ def issue_page_package_handoff(
         or proposal.approved_at is None
     ):
         raise ValueError("Only the approved current proposal version can be handed off")
+    outbound_job = session.scalar(
+        select(WordPressDraftJob.id).where(
+            WordPressDraftJob.proposal_version_id == proposal.id,
+            WordPressDraftJob.state.in_(("queued", "claimed", "completed")),
+        )
+    )
+    if outbound_job is not None:
+        raise ValueError("Outbound WordPress delivery already exists")
     _require_handoff_manager(session, proposal, actor_id)
 
     connection = session.scalar(
@@ -238,10 +265,22 @@ def redeem_page_package_handoff(
 ) -> RedeemedPagePackageHandoff:
     del wordpress_user_id
     normalized_site_url = site_url.rstrip("/")
-    handoff = session.scalar(
+    candidate = session.scalar(
         select(PagePackageHandoff).where(
             PagePackageHandoff.code_hash == _hash_handoff_code(code)
-        ).with_for_update()
+        )
+    )
+    if candidate is None:
+        raise ValueError("Handoff code is invalid")
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == candidate.proposal_version_id)
+        .with_for_update()
+    )
+    handoff = session.scalar(
+        select(PagePackageHandoff)
+        .where(PagePackageHandoff.id == candidate.id)
+        .with_for_update()
     )
     if handoff is None:
         raise ValueError("Handoff code is invalid")
@@ -256,14 +295,16 @@ def redeem_page_package_handoff(
         raise ValueError("WordPress site mismatch")
 
     if handoff.state == "completed":
-        proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
         if proposal is None:
             raise ValueError("Proposal version is no longer available")
         return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
 
     if handoff.state == "redeemed":
-        proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
-        if proposal is None or proposal.state != "approved" or not proposal.is_current:
+        if (
+            proposal is None
+            or proposal.state != "draft_in_progress"
+            or not proposal.is_current
+        ):
             raise ValueError("Proposal version is no longer eligible")
         return RedeemedPagePackageHandoff(handoff=handoff, proposal=proposal)
 
@@ -274,10 +315,18 @@ def redeem_page_package_handoff(
         session.commit()
         raise ValueError("Handoff code expired")
 
-    proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
     if proposal is None or proposal.state != "approved" or not proposal.is_current:
         raise ValueError("Proposal version is no longer eligible")
 
+    outbound_job = session.scalar(
+        select(WordPressDraftJob.id).where(
+            WordPressDraftJob.proposal_version_id == proposal.id,
+            WordPressDraftJob.state.in_(("queued", "claimed", "completed")),
+        )
+    )
+    if outbound_job is not None:
+        raise ValueError("Outbound WordPress delivery already exists")
+    proposal.state = "draft_in_progress"
     handoff.state = "redeemed"
     handoff.redeemed_at = datetime.now(UTC)
     session.commit()
@@ -293,7 +342,19 @@ def complete_page_package_handoff(
     edit_url: str,
     expected_project_id: str | None = None,
 ) -> PagePackageHandoff:
-    handoff = session.get(PagePackageHandoff, handoff_id)
+    candidate = session.get(PagePackageHandoff, handoff_id)
+    if candidate is None:
+        raise ValueError("Handoff not found")
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == candidate.proposal_version_id)
+        .with_for_update()
+    )
+    handoff = session.scalar(
+        select(PagePackageHandoff)
+        .where(PagePackageHandoff.id == handoff_id)
+        .with_for_update()
+    )
     if handoff is None:
         raise ValueError("Handoff not found")
     if expected_project_id is not None and handoff.project_id != expected_project_id:
@@ -303,17 +364,16 @@ def complete_page_package_handoff(
     if handoff.state != "redeemed":
         raise ValueError("Handoff is not redeemable")
 
-    proposal = session.get(PagePackageProposal, handoff.proposal_version_id)
     if proposal is None:
         raise ValueError("Proposal version is no longer eligible")
-    if proposal.state == "approved":
-        if (
-            not proposal.is_current
-            or not proposal.approved_by
-            or proposal.approved_at is None
-        ):
+    if proposal.state == "draft_in_progress":
+        if not proposal.is_current or not proposal.approved_by:
             raise ValueError("Proposal version is no longer eligible")
-    elif proposal.state != "draft_created":
+    elif proposal.state == "draft_created":
+        if proposal.wordpress_object_id != wordpress_object_id:
+            raise ValueError("Proposal already has another WordPress draft")
+        return handoff
+    else:
         raise ValueError("Proposal version is no longer eligible")
 
     handoff.state = "completed"
@@ -334,13 +394,27 @@ def revoke_page_package_handoff(
     *,
     expected_project_id: str | None = None,
 ) -> PagePackageHandoff:
-    handoff = session.get(PagePackageHandoff, handoff_id)
+    candidate = session.get(PagePackageHandoff, handoff_id)
+    if candidate is None:
+        raise ValueError("Handoff not found")
+    session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == candidate.proposal_version_id)
+        .with_for_update()
+    )
+    handoff = session.scalar(
+        select(PagePackageHandoff)
+        .where(PagePackageHandoff.id == handoff_id)
+        .with_for_update()
+    )
     if handoff is None:
         raise ValueError("Handoff not found")
     if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff not found")
     if handoff.state == "completed":
         raise ValueError("Completed handoff cannot be revoked")
+    if handoff.state == "redeemed":
+        raise ValueError("Redeemed handoff cannot be revoked")
     if handoff.state != "revoked":
         handoff.state = "revoked"
         handoff.revoked_at = datetime.now(UTC)

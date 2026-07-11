@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
@@ -7,6 +8,8 @@ from app.domains.page_packages.models import (
     PagePackageRegenerationCandidate,
 )
 from app.domains.page_packages.service import accept_regeneration_candidate
+from app.domains.wordpress.draft_jobs import hash_draft_job_payload
+from app.domains.wordpress.models import WordPressDraftJob
 from tests.page_packages.test_proposal_routes import (
     BlueprintBridge,
     generated_blueprint_proposal,
@@ -127,7 +130,16 @@ def test_accepting_a_candidate_creates_a_new_current_version(
         output_tokens=23,
         status="ready",
     )
-    session.add(candidate)
+    old_draft_job = WordPressDraftJob(
+        id="outbound-job-v1",
+        project_id=current.project_id,
+        proposal_version_id=current.id,
+        contract_version="wordpress-draft-job-v1",
+        state="queued",
+        payload={},
+        payload_hash=hash_draft_job_payload({}),
+    )
+    session.add_all([candidate, old_draft_job])
     session.commit()
 
     next_version = accept_regeneration_candidate(session, candidate.id, "user-2")
@@ -146,6 +158,35 @@ def test_accepting_a_candidate_creates_a_new_current_version(
     assert next_version.prompt_version == "prompt-v2"
     assert next_version.input_tokens == 19
     assert next_version.output_tokens == 23
+    session.refresh(old_draft_job)
+    assert old_draft_job.state == "cancelled"
+
+
+def test_accepting_candidate_rejects_active_delivery_lease(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    current = page_proposal_factory(
+        session,
+        projects,
+        proposal_id="proposal-delivering",
+        state="draft_in_progress",
+        proposal_group_id="proposal-delivering",
+    )
+    candidate = PagePackageRegenerationCandidate(
+        id="candidate-delivering",
+        proposal_group_id=current.proposal_group_id,
+        base_version_id=current.id,
+        generation_mode="full",
+        candidate_package={"title": "Nieuwe versie"},
+        candidate_rendered_html="",
+        status="ready",
+    )
+    session.add(candidate)
+    session.commit()
+
+    with pytest.raises(ValueError, match="no longer current"):
+        accept_regeneration_candidate(session, candidate.id, "user-2")
 
 
 def test_regenerate_block_creates_candidate_without_mutating_current(

@@ -318,6 +318,15 @@ def test_issue_redeem_complete_and_revoke_handoff_routes(
     assert repeated_redeem.json()["handoff"]["state"] == "redeemed"
     assert repeated_redeem.json()["package"]["proposal_version_id"] == proposal.id
 
+    revoke_redeemed = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/handoffs/"
+        f"{handoff.id}/revoke"
+    )
+    assert revoke_redeemed.status_code == 409
+    assert revoke_redeemed.json()["detail"] == "Redeemed handoff cannot be revoked"
+    session.refresh(proposal)
+    assert proposal.state == "draft_in_progress"
+
     complete_payload = {
         "wordpress_object_id": 20,
         "edit_url": "https://member.example/wp-admin/post.php?post=20",

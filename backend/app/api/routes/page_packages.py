@@ -63,7 +63,12 @@ from app.domains.recommendations.openai_compatible_provider import (
 from app.domains.recommendations.provider_factory import build_generator
 from app.domains.subscriptions.models import UsageEvent
 from app.domains.wordpress.client import WordPressClient
-from app.domains.wordpress.models import WordPressConnection, WordPressPage
+from app.domains.wordpress.draft_jobs import cancel_ineligible_draft_jobs
+from app.domains.wordpress.models import (
+    WordPressConnection,
+    WordPressDraftJob,
+    WordPressPage,
+)
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["page-packages"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -489,6 +494,12 @@ def approve_page_package_proposal(
     proposal.state = "approved"
     proposal.approved_by = user.id
     proposal.approved_at = datetime.now(UTC)
+    cancel_ineligible_draft_jobs(
+        session,
+        proposal.project_id,
+        proposal.proposal_group_id,
+        eligible_proposal_version_id=proposal.id,
+    )
     session.commit()
     return _proposal_payload(session, proposal)
 
@@ -791,6 +802,22 @@ def create_wordpress_draft(
             status_code=409,
             detail="Approve the page proposal before creating a WordPress draft",
         )
+    outbound_job = session.scalar(
+        select(WordPressDraftJob).where(
+            WordPressDraftJob.proposal_version_id == proposal.id,
+            WordPressDraftJob.state.in_(("queued", "claimed", "completed")),
+        )
+    )
+    if outbound_job is not None:
+        if outbound_job.state == "completed" and outbound_job.wordpress_object_id:
+            proposal.state = "draft_created"
+            proposal.wordpress_object_id = outbound_job.wordpress_object_id
+            proposal.wordpress_edit_url = outbound_job.wordpress_edit_url
+            session.commit()
+            return _proposal_payload(session, proposal)
+        raise HTTPException(
+            status_code=409, detail="Outbound WordPress delivery is already active"
+        )
     blueprint = _proposal_blueprint_or_409(session, proposal)
     _require_current_wordpress_blueprint(session, project_id, blueprint)
     opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
@@ -816,6 +843,8 @@ def create_wordpress_draft(
             if replacement.field_id in url_field_ids
         }
     )
+    proposal.state = "draft_in_progress"
+    session.flush()
     try:
         result = _page_package_client(session, project_id).create_blueprint_draft(
             blueprint.wordpress_blueprint_id,

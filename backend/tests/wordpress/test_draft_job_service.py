@@ -273,6 +273,33 @@ def test_cancel_ineligible_jobs_keeps_completed_job_immutable(
     assert job.state == "completed"
 
 
+def test_cancel_ineligible_jobs_leaves_claimed_job_completable(
+    session, approved_blueprint_proposal
+) -> None:
+    job = create_or_get_draft_job(session, approved_blueprint_proposal)
+    session.commit()
+    claimed = claim_next_draft_job(session, job.project_id, "https://member.example")
+    assert claimed is not None
+
+    cancelled = cancel_ineligible_draft_jobs(
+        session,
+        approved_blueprint_proposal.project_id,
+        approved_blueprint_proposal.proposal_group_id,
+        eligible_proposal_version_id="replacement-version",
+    )
+    completed = complete_draft_job(
+        session,
+        job.id,
+        claimed.claim_token,
+        wordpress_object_id=987,
+        wordpress_edit_url=None,
+    )
+
+    assert cancelled == 0
+    assert completed.state == "completed"
+    assert approved_blueprint_proposal.state == "draft_created"
+
+
 def test_claim_rejects_another_wordpress_site(
     session, approved_blueprint_proposal
 ) -> None:
@@ -330,6 +357,15 @@ def test_fail_and_replay_preserve_one_terminal_result(
     assert replay.id == failed.id
     assert replay.state == "failed"
     assert replay.claim_token is None
+
+    with pytest.raises(ValueError, match="claim_invalid"):
+        fail_draft_job(
+            session,
+            job.id,
+            "different-claim-token-with-valid-length",
+            error_code="blueprint_drift",
+            error_message="Blueprint changed",
+        )
 
 
 def test_failure_rejects_oversized_error_fields(

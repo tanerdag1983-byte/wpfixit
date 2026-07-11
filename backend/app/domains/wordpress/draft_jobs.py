@@ -68,8 +68,17 @@ def normalize_site_url(value: str) -> str:
 def create_or_get_draft_job(
     session: "Session", proposal: "PagePackageProposal"
 ) -> "WordPressDraftJob":
+    from app.domains.page_packages.models import PagePackageHandoff, PagePackageProposal
     from app.domains.wordpress.models import WordPressDraftJob
 
+    locked_proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == proposal.id)
+        .with_for_update()
+    )
+    if locked_proposal is None:
+        raise ValueError("draft job proposal not found")
+    proposal = locked_proposal
     existing = session.scalar(
         select(WordPressDraftJob).where(
             WordPressDraftJob.proposal_version_id == proposal.id
@@ -84,6 +93,20 @@ def create_or_get_draft_job(
         or proposal.current_version_id != proposal.id
     ):
         raise ValueError("draft job requires the current approved proposal version")
+    open_handoffs = session.scalars(
+        select(PagePackageHandoff)
+        .where(
+            PagePackageHandoff.proposal_version_id == proposal.id,
+            PagePackageHandoff.state.in_(("issued", "redeemed")),
+        )
+        .with_for_update()
+    ).all()
+    if any(handoff.state == "redeemed" for handoff in open_handoffs):
+        raise ValueError("manual handoff is already in progress")
+    revoked_at = datetime.now(UTC)
+    for handoff in open_handoffs:
+        handoff.state = "revoked"
+        handoff.revoked_at = revoked_at
 
     payload = _draft_job_payload(session, proposal)
     job = WordPressDraftJob(
@@ -150,21 +173,68 @@ def claim_next_draft_job(
         .execution_options(synchronize_session=False)
     )
     session.expire_all()
-    job = session.scalar(
+    candidate = session.scalar(
         select(WordPressDraftJob)
         .where(
             WordPressDraftJob.project_id == project_id,
             WordPressDraftJob.state == "queued",
         )
         .order_by(WordPressDraftJob.created_at, WordPressDraftJob.id)
-        .with_for_update(skip_locked=True)
         .limit(1)
     )
-    if job is None:
+    if candidate is None:
         credential.last_seen_at = requested_at
         return None
 
+    from app.domains.page_packages.models import PagePackageHandoff, PagePackageProposal
+
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == candidate.proposal_version_id)
+        .with_for_update()
+    )
+    job = session.scalar(
+        select(WordPressDraftJob)
+        .where(
+            WordPressDraftJob.id == candidate.id,
+            WordPressDraftJob.state == "queued",
+        )
+        .with_for_update(skip_locked=True)
+    )
+    if job is None:
+        return None
+    if proposal is None or not proposal.is_current or not proposal.approved_by:
+        job.state = "cancelled"
+        job.cancelled_at = requested_at
+        session.flush()
+        return None
+    if proposal.state not in {"approved", "draft_in_progress"}:
+        job.state = "cancelled"
+        job.cancelled_at = requested_at
+        session.flush()
+        return None
+    redeemed_handoff = session.scalar(
+        select(PagePackageHandoff.id).where(
+            PagePackageHandoff.proposal_version_id == proposal.id,
+            PagePackageHandoff.state == "redeemed",
+        )
+    )
+    if redeemed_handoff is not None:
+        return None
+    issued_handoffs = session.scalars(
+        select(PagePackageHandoff)
+        .where(
+            PagePackageHandoff.proposal_version_id == proposal.id,
+            PagePackageHandoff.state == "issued",
+        )
+        .with_for_update()
+    ).all()
+    for handoff in issued_handoffs:
+        handoff.state = "revoked"
+        handoff.revoked_at = requested_at
+
     claim_token = secrets.token_urlsafe(32)
+    proposal.state = "draft_in_progress"
     job.state = "claimed"
     job.claim_token = claim_token
     job.claimed_at = requested_at
@@ -186,6 +256,10 @@ def complete_draft_job(
 ) -> "WordPressDraftJob":
     from app.domains.wordpress.models import WordPressDraftJob
 
+    candidate = session.get(WordPressDraftJob, job_id)
+    if candidate is None:
+        raise ValueError("draft_job_not_found")
+    _lock_job_proposal(session, candidate)
     job = session.scalar(
         select(WordPressDraftJob)
         .where(WordPressDraftJob.id == job_id)
@@ -194,6 +268,7 @@ def complete_draft_job(
     if job is None:
         raise ValueError("draft_job_not_found")
     if job.state == "completed":
+        _require_terminal_claim(job, claim_token)
         if (
             job.wordpress_object_id != wordpress_object_id
             or job.wordpress_edit_url != wordpress_edit_url
@@ -208,7 +283,9 @@ def complete_draft_job(
     job.wordpress_object_id = wordpress_object_id
     job.wordpress_edit_url = wordpress_edit_url
     job.completed_at = now or datetime.now(UTC)
+    job.terminal_claim_token_hash = hash_project_key(claim_token)
     _clear_claim(job)
+    _mark_proposal_draft_created(session, job)
     session.flush()
     return job
 
@@ -228,6 +305,10 @@ def fail_draft_job(
         raise ValueError("draft_job_error_code_invalid")
     if len(error_message) > 500:
         raise ValueError("draft_job_error_message_invalid")
+    candidate = session.get(WordPressDraftJob, job_id)
+    if candidate is None:
+        raise ValueError("draft_job_not_found")
+    _lock_job_proposal(session, candidate)
     job = session.scalar(
         select(WordPressDraftJob)
         .where(WordPressDraftJob.id == job_id)
@@ -236,6 +317,7 @@ def fail_draft_job(
     if job is None:
         raise ValueError("draft_job_not_found")
     if job.state == "failed":
+        _require_terminal_claim(job, claim_token)
         if job.error_code != error_code or job.error_message != error_message:
             raise ValueError("draft_job_result_conflict")
         return job
@@ -244,7 +326,9 @@ def fail_draft_job(
     job.error_code = error_code
     job.error_message = error_message
     job.failed_at = now or datetime.now(UTC)
+    job.terminal_claim_token_hash = hash_project_key(claim_token)
     _clear_claim(job)
+    _release_proposal_delivery_lease(session, job)
     session.flush()
     return job
 
@@ -270,7 +354,7 @@ def cancel_ineligible_draft_jobs(
             WordPressDraftJob.project_id == project_id,
             PagePackageProposal.project_id == project_id,
             PagePackageProposal.proposal_group_id == proposal_group_id,
-            WordPressDraftJob.state.in_(("queued", "claimed")),
+            WordPressDraftJob.state == "queued",
             WordPressDraftJob.proposal_version_id
             != (eligible_proposal_version_id or ""),
         )
@@ -396,6 +480,78 @@ def _clear_claim(job: "WordPressDraftJob") -> None:
     job.claim_token = None
     job.claim_expires_at = None
     job.claimed_at = None
+
+
+def _require_terminal_claim(job: "WordPressDraftJob", claim_token: str) -> None:
+    if not secrets.compare_digest(
+        job.terminal_claim_token_hash or "", hash_project_key(claim_token)
+    ):
+        raise ValueError("draft_job_claim_invalid")
+
+
+def _mark_proposal_draft_created(
+    session: "Session", job: "WordPressDraftJob"
+) -> None:
+    from app.domains.page_packages.models import PagePackageHandoff, PagePackageProposal
+
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == job.proposal_version_id)
+        .with_for_update()
+    )
+    if proposal is None:
+        raise ValueError("draft_job_proposal_not_found")
+    if (
+        not proposal.is_current
+        or proposal.state != "draft_in_progress"
+        or proposal.wordpress_object_id not in {None, job.wordpress_object_id}
+    ):
+        raise ValueError("draft_job_result_conflict")
+    proposal.state = "draft_created"
+    proposal.wordpress_object_id = job.wordpress_object_id
+    proposal.wordpress_edit_url = job.wordpress_edit_url
+    now = datetime.now(UTC)
+    open_handoffs = session.scalars(
+        select(PagePackageHandoff)
+        .where(
+            PagePackageHandoff.proposal_version_id == proposal.id,
+            PagePackageHandoff.state.in_(("issued", "redeemed")),
+        )
+        .with_for_update()
+    ).all()
+    for handoff in open_handoffs:
+        handoff.state = "revoked"
+        handoff.revoked_at = now
+
+
+def _release_proposal_delivery_lease(
+    session: "Session", job: "WordPressDraftJob"
+) -> None:
+    from app.domains.page_packages.models import PagePackageProposal
+
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == job.proposal_version_id)
+        .with_for_update()
+    )
+    if (
+        proposal is not None
+        and proposal.is_current
+        and proposal.state == "draft_in_progress"
+    ):
+        proposal.state = "approved"
+
+
+def _lock_job_proposal(session: "Session", job: "WordPressDraftJob") -> None:
+    from app.domains.page_packages.models import PagePackageProposal
+
+    proposal = session.scalar(
+        select(PagePackageProposal)
+        .where(PagePackageProposal.id == job.proposal_version_id)
+        .with_for_update()
+    )
+    if proposal is None:
+        raise ValueError("draft_job_proposal_not_found")
 
 
 def _as_utc(value: datetime) -> datetime:

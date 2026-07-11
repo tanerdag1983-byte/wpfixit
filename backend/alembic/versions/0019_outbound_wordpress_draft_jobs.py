@@ -64,6 +64,7 @@ def upgrade() -> None:
         sa.Column("claim_token", sa.String(length=128), nullable=True),
         sa.Column("claim_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("terminal_claim_token_hash", sa.String(length=64), nullable=True),
         sa.Column("wordpress_object_id", sa.Integer(), nullable=True),
         sa.Column("wordpress_edit_url", sa.String(length=2048), nullable=True),
         sa.Column("error_code", sa.String(length=64), nullable=True),
@@ -103,6 +104,13 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "contract_version = 'wordpress-draft-job-v1'",
             name="ck_wordpress_draft_jobs_contract_version",
+        ),
+        sa.CheckConstraint(
+            "(state IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NOT NULL) OR "
+            "(state NOT IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NULL)",
+            name="ck_wordpress_draft_jobs_terminal_claim_hash",
         ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
