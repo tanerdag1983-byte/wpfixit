@@ -7,6 +7,7 @@ const apiRequest = vi.fn();
 
 vi.mock("../../lib/api", () => ({
   apiRequest: (...args: unknown[]) => apiRequest(...args),
+  apiBaseUrl: "https://api.example.com",
 }));
 
 describe("WordPressBridgePanel", () => {
@@ -100,6 +101,11 @@ describe("WordPressBridgePanel", () => {
 
   it("shows a newly created project key only once", async () => {
     render(<WordPressBridgePanel projectId="project-1" />);
+
+    expect(screen.getByLabelText("Backend URL")).toHaveValue(
+      "https://api.example.com",
+    );
+    expect(screen.getByLabelText("Project ID")).toHaveValue("project-1");
 
     fireEvent.change(screen.getByLabelText("WordPress URL"), {
       target: { value: "https://example.com" },

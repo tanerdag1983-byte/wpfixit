@@ -15,7 +15,7 @@ export function resolveApiBaseUrl(
   return "/api";
 }
 
-const apiBaseUrl = resolveApiBaseUrl(
+export const apiBaseUrl = resolveApiBaseUrl(
   import.meta.env.VITE_API_BASE_URL as string | undefined,
   window.location.hostname,
 );

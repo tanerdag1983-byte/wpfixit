@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { apiRequest } from "../../lib/api";
+import { apiBaseUrl, apiRequest } from "../../lib/api";
 
 type WordPressConnection = {
   project_id: string;
@@ -252,6 +252,16 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
       <div className="settings-divider" />
       <p className="eyebrow">Uitgaande concepttaken</p>
       <h3>WordPress projectkey</h3>
+      <div className="settings-field-grid connection-form">
+        <label>
+          Backend URL
+          <input aria-label="Backend URL" readOnly value={apiBaseUrl} />
+        </label>
+        <label>
+          Project ID
+          <input aria-label="Project ID" readOnly value={projectId} />
+        </label>
+      </div>
       {outboundCredential && (
         <p className="settings-empty">
           Gekoppeld aan {outboundCredential.site_url}
