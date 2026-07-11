@@ -34,12 +34,13 @@ The release floors include `cryptography>=48.0.1`, `msgpack>=1.2.1`, and
 The tested WordPress bridge artifact is:
 
 ```text
-artifacts/wp-fixpilot-bridge-0.3.2.zip
-SHA-256: 927bda866790343e371639fe5f73a8f51660a23198a9740e047b0e6626a472c2
+/Users/tanerdag/Downloads/wp-fixpilot-bridge-update.zip
+Version: 0.3.15
+SHA-256: be984a8085482730edcd825a10b3acd8024ee1db51183209163159ddc8fac5f7
 ```
 
 Install this zip on staging before validating a managed blueprint release. The
-plugin health response and plugin header must both report `0.3.2`.
+plugin health response and plugin header must both report `0.3.15`.
 
 Run the staging acceptance flow without publishing the generated page:
 
@@ -60,6 +61,29 @@ Run the staging acceptance flow without publishing the generated page:
 Also test the lifecycle guard by attempting to delete an in-use blueprint. The
 API must reject the deletion while a proposal or successor version references
 it; no WordPress draft may be created from a deleted database blueprint.
+
+## Outbound WordPress Draft Jobs
+
+The outbound bridge lets WordPress fetch approved draft jobs without inbound
+requests from WP FixPilot or per-customer IP allowlists. Install the current
+`wp-fixpilot-bridge-update.zip`, create a project key in WP FixPilot, and save it
+with the API URL in **Instellingen > WP FixPilot > Uitgaande concepttaken**.
+The project key is displayed once and must not be logged or committed.
+
+Before accepting a release:
+
+1. Select **Verbinding testen** in WordPress and confirm the project is accepted.
+2. Approve a page proposal and select **WordPress-concept aanmaken**.
+3. Select **Concepttaken ophalen** in WordPress, or wait for the five-minute cron.
+4. Confirm the job completes with exactly one normal WordPress `page` in `draft` status.
+5. Fetch again and confirm no duplicate page is created.
+6. Compare the draft with its blueprint and confirm layout, media, templates, and
+   non-editable metadata remain unchanged.
+7. Rotate the project key, confirm the old key receives HTTP 401, then save and
+   test the new key.
+
+Manual handoff remains available only as a fallback after an outbound job fails
+or is cancelled. Neither route may publish a page automatically.
 
 ## Monitoring
 
