@@ -105,6 +105,11 @@ def test_dashboard_creates_job_and_plugin_claims_completes_it(
     assert repeated.status_code == 200
     assert repeated.json()["id"] == created.json()["id"]
     assert created.json()["state"] == "queued"
+    proposal_read = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{approved_blueprint_proposal.id}"
+    )
+    assert proposal_read.json()["draft_job"]["id"] == created.json()["id"]
 
     direct_while_queued = client.post(
         f"/projects/{projects.member_project.id}/page-proposals/"

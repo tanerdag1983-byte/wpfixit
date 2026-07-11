@@ -1048,6 +1048,11 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         .where(PagePackageHandoff.proposal_version_id == proposal.id)
         .order_by(PagePackageHandoff.created_at.desc())
     )
+    outbound_draft_job = session.scalar(
+        select(WordPressDraftJob).where(
+            WordPressDraftJob.proposal_version_id == proposal.id
+        )
+    )
     blueprint = None
     if proposal.blueprint_id is not None:
         stored = session.get(PageBlueprint, proposal.blueprint_id)
@@ -1095,6 +1100,18 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         "latest_handoff": _handoff_payload(latest_handoff)
         if latest_handoff is not None
         else None,
+        "draft_job": (
+            {
+                "id": outbound_draft_job.id,
+                "state": outbound_draft_job.state,
+                "error_code": outbound_draft_job.error_code,
+                "error_message": outbound_draft_job.error_message,
+                "wordpress_edit_url": outbound_draft_job.wordpress_edit_url,
+                "attempt_count": outbound_draft_job.attempt_count,
+            }
+            if outbound_draft_job is not None
+            else None
+        ),
         "created_at": proposal.created_at,
         "updated_at": proposal.updated_at,
         "job": {

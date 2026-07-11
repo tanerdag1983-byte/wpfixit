@@ -6,6 +6,7 @@ import { ProposalRegenerationPanel } from "./ProposalRegenerationPanel";
 import { ProposalVersionCompare } from "./ProposalVersionCompare";
 import type {
   BlueprintSchema,
+  DraftJob,
   PagePackage,
   Proposal,
   ProposalCandidate,
@@ -54,7 +55,12 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         }
         setImportUrl(null);
         setLoading(false);
-        if (result.state === "generating" || result.active_candidate?.status === "generating") {
+        if (
+          result.state === "generating"
+          || result.active_candidate?.status === "generating"
+          || result.draft_job?.state === "queued"
+          || result.draft_job?.state === "claimed"
+        ) {
           pollTimer = window.setTimeout(loadProposal, 1500);
         }
       } catch (error) {
@@ -191,7 +197,27 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     }
   }
 
-  async function createDraft() {
+  async function createOutboundDraft() {
+    if (!proposal) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const draftJob = await apiRequest<DraftJob>(
+        `/projects/${projectId}/page-proposals/${proposal.id}/draft-job`,
+        { method: "POST" },
+      );
+      setProposal({ ...proposal, state: "draft_in_progress", draft_job: draftJob });
+      setMessage("De concepttaak wacht op WordPress.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "WordPress-concept starten mislukt.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createManualImport() {
     if (!proposal) return;
     setBusy(true);
     setMessage("");
@@ -387,12 +413,28 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
               </div>
               <button
                 className="primary-button page-package-draft-button"
-                disabled={proposal.state !== "approved" || busy}
-                onClick={createDraft}
+                disabled={proposal.state !== "approved" || busy || !!proposal.draft_job}
+                onClick={createOutboundDraft}
                 type="button"
               >
-                WordPress-import openen
+                WordPress-concept aanmaken
               </button>
+              {proposal.draft_job && (
+                <p className={`settings-message draft-job-${proposal.draft_job.state}`}>
+                  {draftJobLabel(proposal.draft_job)}
+                </p>
+              )}
+              {(proposal.draft_job?.state === "failed"
+                || proposal.draft_job?.state === "cancelled") && (
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={createManualImport}
+                  type="button"
+                >
+                  Handmatige import openen
+                </button>
+              )}
               {importUrl && (
                 <a
                   className="secondary-button wordpress-edit-link"
@@ -433,6 +475,14 @@ function readActiveCandidate(proposal: Proposal) {
   if (proposal.active_candidate.status === "discarded") return null;
   if (proposal.active_candidate.status === "accepted") return null;
   return proposal.active_candidate;
+}
+
+function draftJobLabel(job: DraftJob): string {
+  if (job.state === "queued") return "Wachten op WordPress";
+  if (job.state === "claimed") return "WordPress maakt het concept";
+  if (job.state === "completed") return "WordPress-concept aangemaakt";
+  if (job.state === "cancelled") return "Concepttaak geannuleerd";
+  return job.error_message || "Concepttaak mislukt";
 }
 
 function PackageFields({
@@ -630,6 +680,7 @@ function stateLabel(state: Proposal["state"]) {
     generating: "Wordt gemaakt",
     proposed: "Te beoordelen",
     approved: "Goedgekeurd",
+    draft_in_progress: "Concept wordt aangemaakt",
     draft_created: "Concept aangemaakt",
     failed: "Mislukt",
   }[state];

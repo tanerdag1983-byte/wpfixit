@@ -38,6 +38,7 @@ export type ProposalState =
   | "generating"
   | "proposed"
   | "approved"
+  | "draft_in_progress"
   | "draft_created"
   | "failed";
 
@@ -73,6 +74,22 @@ export type ProposalHandoffIssueResponse = {
   import_url: string;
 };
 
+export type DraftJobState =
+  | "queued"
+  | "claimed"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type DraftJob = {
+  id: string;
+  state: DraftJobState;
+  error_code?: string | null;
+  error_message?: string | null;
+  wordpress_edit_url?: string | null;
+  attempt_count: number;
+};
+
 export type Proposal = {
   id: string;
   state: ProposalState;
@@ -96,5 +113,6 @@ export type Proposal = {
   wordpress_edit_url?: string | null;
   active_candidate?: ProposalCandidate | null;
   latest_handoff?: ProposalHandoff | null;
+  draft_job?: DraftJob | null;
   job: { state: string; progress: number; error_message?: string | null } | null;
 };

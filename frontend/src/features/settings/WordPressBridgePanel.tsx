@@ -14,11 +14,24 @@ type WordPressPagesResponse = {
   count: number;
 };
 
+type OutboundCredential = {
+  id: string;
+  project_id: string;
+  site_url: string;
+  last_seen_at?: string | null;
+  revoked_at?: string | null;
+};
+
+type OutboundCredentialCreated = OutboundCredential & { key: string };
+
 export function WordPressBridgePanel({ projectId }: { projectId: string }) {
   const [siteUrl, setSiteUrl] = useState("");
   const [secret, setSecret] = useState("");
   const [connection, setConnection] = useState<WordPressConnection | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const [outboundCredential, setOutboundCredential] =
+    useState<OutboundCredential | null>(null);
+  const [oneTimeKey, setOneTimeKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -40,6 +53,17 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
       })
       .catch(() => {
         if (active) setPageCount(null);
+      });
+    apiRequest<OutboundCredential>(
+      `/projects/${projectId}/wordpress-outbound-credential`,
+    )
+      .then((response) => {
+        if (!active) return;
+        setOutboundCredential(response);
+        if (!siteUrl) setSiteUrl(response.site_url);
+      })
+      .catch(() => {
+        if (active) setOutboundCredential(null);
       });
     return () => {
       active = false;
@@ -97,6 +121,52 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
       setMessage(`${response.audited_count} WordPress-pagina's geaudit.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Audit draaien mislukt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createProjectKey() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<OutboundCredentialCreated>(
+        `/projects/${projectId}/wordpress-outbound-credential`,
+        {
+          method: "POST",
+          body: JSON.stringify({ site_url: siteUrl }),
+        },
+      );
+      setOutboundCredential(response);
+      setOneTimeKey(response.key);
+      setMessage("Projectkey aangemaakt.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Projectkey maken mislukt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateProjectKey() {
+    if (
+      !window.confirm(
+        "De huidige projectkey stopt direct met werken. Projectkey vernieuwen?",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<OutboundCredentialCreated>(
+        `/projects/${projectId}/wordpress-outbound-credential/rotate`,
+        { method: "POST" },
+      );
+      setOutboundCredential(response);
+      setOneTimeKey(response.key);
+      setMessage("Projectkey vernieuwd. De vorige key werkt niet meer.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Projectkey vernieuwen mislukt.");
     } finally {
       setBusy(false);
     }
@@ -179,6 +249,30 @@ export function WordPressBridgePanel({ projectId }: { projectId: string }) {
       {pageCount !== null && (
         <p className="settings-empty">{pageCount} WordPress-pagina's bekend.</p>
       )}
+      <div className="settings-divider" />
+      <p className="eyebrow">Uitgaande concepttaken</p>
+      <h3>WordPress projectkey</h3>
+      {outboundCredential && (
+        <p className="settings-empty">
+          Gekoppeld aan {outboundCredential.site_url}
+          {outboundCredential.last_seen_at ? " · recent contact" : ""}
+        </p>
+      )}
+      {oneTimeKey && (
+        <label>
+          Eenmalige projectkey
+          <input aria-label="Eenmalige projectkey" readOnly value={oneTimeKey} />
+          <span className="settings-empty">Deze key wordt niet opnieuw getoond.</span>
+        </label>
+      )}
+      <button
+        className={outboundCredential ? "secondary-button" : "primary-button"}
+        disabled={busy || (!outboundCredential && !siteUrl)}
+        onClick={outboundCredential ? rotateProjectKey : createProjectKey}
+        type="button"
+      >
+        {outboundCredential ? "Projectkey vernieuwen" : "Projectkey maken"}
+      </button>
       {message && <p className="settings-message">{message}</p>}
     </section>
   );

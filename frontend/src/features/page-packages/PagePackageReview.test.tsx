@@ -113,6 +113,13 @@ describe("PagePackageReview", () => {
       if (path.endsWith("/approve")) {
         return Promise.resolve({ ...proposal, state: "approved" });
       }
+      if (path.endsWith("/draft-job") && init?.method === "POST") {
+        return Promise.resolve({
+          id: "draft-job-1",
+          state: "queued",
+          attempt_count: 0,
+        });
+      }
       if (path.endsWith("/handoffs")) {
         return Promise.resolve({
           handoff: {
@@ -248,12 +255,14 @@ describe("PagePackageReview", () => {
     ).toBeVisible();
   });
 
-  it("saves edits and requires approval before starting the WordPress import flow", async () => {
+  it("saves, approves, and queues a WordPress draft without opening a window", async () => {
     render(<PagePackageReview projectId="project-1" />);
     const title = await screen.findByLabelText("Paginatitel");
     fireEvent.change(title, { target: { value: "Aangepaste DSG pagina" } });
 
-    expect(screen.getByRole("button", { name: "WordPress-import openen" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "WordPress-concept aanmaken" }),
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Wijzigingen opslaan" }));
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
@@ -264,25 +273,52 @@ describe("PagePackageReview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Voorstel goedkeuren" }));
 
     expect(
-      await screen.findByRole("button", { name: "WordPress-import openen" }),
+      await screen.findByRole("button", { name: "WordPress-concept aanmaken" }),
     ).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "WordPress-import openen" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "WordPress-concept aanmaken" }),
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/proposal-1/draft-job",
+        { method: "POST" },
+      ),
+    );
+    expect(await screen.findByText("Wachten op WordPress")).toBeVisible();
+    expect(openWindow).not.toHaveBeenCalled();
+  });
+
+  it("keeps manual import available after an outbound failure", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/handoffs") && init?.method === "POST") {
+        return Promise.resolve({
+          handoff: { id: "handoff-1", state: "issued" },
+          code: "opaque-code",
+          import_url: "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import",
+        });
+      }
+      return Promise.resolve({
+        ...proposal,
+        state: "approved",
+        draft_job: {
+          id: "draft-job-1",
+          state: "failed",
+          error_message: "Blueprint gewijzigd",
+          attempt_count: 1,
+        },
+      });
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Handmatige import openen" }),
+    );
+
     await waitFor(() =>
       expect(apiRequest).toHaveBeenCalledWith(
         "/projects/project-1/page-proposals/proposal-1/handoffs",
         { method: "POST" },
       ),
-    );
-    expect(openWindow).toHaveBeenCalledWith(
-      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import&code=opaque-code&backend=https%3A%2F%2Ffrontend.example%2Fapi%2Fprojects%2Fproject-1%2Fpage-proposals%2Fhandoffs",
-      "_blank",
-      "noopener,noreferrer",
-    );
-    expect(
-      await screen.findByRole("link", { name: "Importpagina opnieuw openen" }),
-    ).toHaveAttribute(
-      "href",
-      "https://example.com/wp-admin/admin.php?page=wp-fixpilot-import&code=opaque-code&backend=https%3A%2F%2Ffrontend.example%2Fapi%2Fprojects%2Fproject-1%2Fpage-proposals%2Fhandoffs",
     );
   });
 });
