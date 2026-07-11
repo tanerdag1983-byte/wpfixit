@@ -18,6 +18,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "uq_page_package_proposals_project_id_id",
+        "page_package_proposals",
+        ["project_id", "id"],
+    )
     op.create_table(
         "wordpress_outbound_credentials",
         sa.Column("id", sa.String(length=64), nullable=False),
@@ -89,13 +94,22 @@ def upgrade() -> None:
             name="ck_wordpress_draft_jobs_state",
         ),
         sa.CheckConstraint(
-            "(claim_token IS NULL AND claim_expires_at IS NULL) OR "
-            "(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)",
+            "(state = 'claimed' AND claim_token IS NOT NULL AND "
+            "claim_expires_at IS NOT NULL AND claimed_at IS NOT NULL) OR "
+            "(state != 'claimed' AND claim_token IS NULL AND "
+            "claim_expires_at IS NULL AND claimed_at IS NULL)",
             name="ck_wordpress_draft_jobs_claim_fields",
+        ),
+        sa.CheckConstraint(
+            "contract_version = 'wordpress-draft-job-v1'",
+            name="ck_wordpress_draft_jobs_contract_version",
         ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
-            ["proposal_version_id"], ["page_package_proposals.id"], ondelete="CASCADE"
+            ["project_id", "proposal_version_id"],
+            ["page_package_proposals.project_id", "page_package_proposals.id"],
+            name="fk_wordpress_draft_jobs_project_proposal",
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("proposal_version_id"),
@@ -115,3 +129,7 @@ def downgrade() -> None:
     )
     op.drop_table("wordpress_draft_jobs")
     op.drop_table("wordpress_outbound_credentials")
+    op.execute(
+        "ALTER TABLE page_package_proposals "
+        "DROP CONSTRAINT IF EXISTS uq_page_package_proposals_project_id_id"
+    )

@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -81,6 +82,11 @@ class PagePackageProposal(Base):
             ],
             name="fk_page_package_proposals_blueprint_identity",
             ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_page_package_proposals_project_id_id",
         ),
         CheckConstraint(
             "("

@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime
 
 from sqlalchemy import (
@@ -5,16 +6,27 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
+    select,
+)
+from sqlalchemy import (
+    inspect as sa_inspect,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.domains.wordpress.draft_jobs import (
+    JOB_CONTRACT_VERSION,
+    hash_draft_job_payload,
+    normalize_site_url,
+)
 
 
 class WordPressConnection(Base):
@@ -79,9 +91,21 @@ class WordPressDraftJob(Base):
             name="ck_wordpress_draft_jobs_state",
         ),
         CheckConstraint(
-            "(claim_token IS NULL AND claim_expires_at IS NULL) OR "
-            "(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)",
+            "(state = 'claimed' AND claim_token IS NOT NULL AND "
+            "claim_expires_at IS NOT NULL AND claimed_at IS NOT NULL) OR "
+            "(state != 'claimed' AND claim_token IS NULL AND "
+            "claim_expires_at IS NULL AND claimed_at IS NULL)",
             name="ck_wordpress_draft_jobs_claim_fields",
+        ),
+        CheckConstraint(
+            f"contract_version = '{JOB_CONTRACT_VERSION}'",
+            name="ck_wordpress_draft_jobs_contract_version",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "proposal_version_id"],
+            ["page_package_proposals.project_id", "page_package_proposals.id"],
+            name="fk_wordpress_draft_jobs_project_proposal",
+            ondelete="CASCADE",
         ),
         Index("ix_wordpress_draft_jobs_project_state", "project_id", "state"),
     )
@@ -91,7 +115,6 @@ class WordPressDraftJob(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     proposal_version_id: Mapped[str] = mapped_column(
-        ForeignKey("page_package_proposals.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
@@ -131,6 +154,50 @@ class WordPressDraftJob(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+@event.listens_for(WordPressOutboundCredential, "before_insert")
+@event.listens_for(WordPressOutboundCredential, "before_update")
+def _normalize_outbound_credential_site_url(
+    _mapper: object,
+    _connection: object,
+    target: WordPressOutboundCredential,
+) -> None:
+    target.site_url = normalize_site_url(target.site_url)
+
+
+@event.listens_for(WordPressDraftJob, "before_insert")
+def _validate_draft_job_payload(
+    _mapper: object,
+    _connection: object,
+    target: WordPressDraftJob,
+) -> None:
+    proposals = Base.metadata.tables["page_package_proposals"]
+    proposal_project_id = _connection.execute(
+        select(proposals.c.project_id).where(
+            proposals.c.id == target.proposal_version_id
+        )
+    ).scalar_one_or_none()
+    if proposal_project_id is not None and proposal_project_id != target.project_id:
+        raise ValueError("WordPress draft job proposal belongs to another project")
+
+    expected = hash_draft_job_payload(target.payload)
+    if not secrets.compare_digest(expected, target.payload_hash):
+        raise ValueError("WordPress draft job payload hash does not match payload")
+
+
+@event.listens_for(WordPressDraftJob, "before_update")
+def _prevent_draft_job_payload_mutation(
+    _mapper: object,
+    _connection: object,
+    target: WordPressDraftJob,
+) -> None:
+    state = sa_inspect(target)
+    if (
+        state.attrs.payload.history.has_changes()
+        or state.attrs.payload_hash.history.has_changes()
+    ):
+        raise ValueError("WordPress draft job payload is immutable")
 
 
 class WordPressPage(Base):
