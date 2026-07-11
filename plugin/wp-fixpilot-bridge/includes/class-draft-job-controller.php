@@ -15,7 +15,13 @@ final class WPFixPilot_Draft_Job_Controller
     ) {
         $this->client = $client;
         $this->blueprintController = $blueprintController
-            ?? new WPFixPilot_Blueprint_Controller();
+            ?? new WPFixPilot_Blueprint_Controller([
+                new WPFixPilot_ACF_Blueprint_Adapter(),
+                new WPFixPilot_Elementor_Adapter(),
+                new WPFixPilot_WPBakery_Adapter(),
+                new WPFixPilot_Bricks_Adapter(),
+                new WPFixPilot_Gutenberg_Adapter(),
+            ]);
     }
 
     /** @return array<string, mixed>|null|WP_Error */

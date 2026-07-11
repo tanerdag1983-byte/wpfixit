@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP FixPilot Bridge
  * Description: Secure inventory and publishing bridge for WP FixPilot.
- * Version: 0.3.15
+ * Version: 0.3.16
  * Requires at least: 6.5
  * Requires PHP: 8.1
  */
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPFIXPILOT_BRIDGE_VERSION', '0.3.15');
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.16');
 
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';

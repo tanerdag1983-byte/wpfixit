@@ -55,8 +55,29 @@ final class Test_Blueprint_Controller
     }
 }
 
+final class WPFixPilot_ACF_Blueprint_Adapter {}
+final class WPFixPilot_Elementor_Adapter {}
+final class WPFixPilot_WPBakery_Adapter {}
+final class WPFixPilot_Bricks_Adapter {}
+final class WPFixPilot_Gutenberg_Adapter {}
+
+final class WPFixPilot_Blueprint_Controller
+{
+    public function __construct(array $adapters = [])
+    {
+        $GLOBALS['wpfixpilot_default_draft_adapters'] = $adapters;
+    }
+}
+
 require_once __DIR__ . '/../includes/class-outbound-client.php';
 require_once __DIR__ . '/../includes/class-draft-job-controller.php';
+
+new WPFixPilot_Draft_Job_Controller(new stdClass());
+assert(count($GLOBALS['wpfixpilot_default_draft_adapters']) === 5);
+assert(
+    $GLOBALS['wpfixpilot_default_draft_adapters'][0]
+    instanceof WPFixPilot_ACF_Blueprint_Adapter
+);
 
 function response(int $status, array $body = []): array
 {
