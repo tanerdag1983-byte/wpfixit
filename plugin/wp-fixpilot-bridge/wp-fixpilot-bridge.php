@@ -48,6 +48,17 @@ register_activation_hook(__FILE__, static function (): void {
             false
         );
     }
+    if (!wp_next_scheduled('wp_fixpilot_poll_draft_jobs')) {
+        wp_schedule_event(
+            time() + 300,
+            'wp_fixpilot_five_minutes',
+            'wp_fixpilot_poll_draft_jobs'
+        );
+    }
+});
+
+register_deactivation_hook(__FILE__, static function (): void {
+    wp_clear_scheduled_hook('wp_fixpilot_poll_draft_jobs');
 });
 
 add_action('rest_api_init', static function (): void {
@@ -57,6 +68,7 @@ add_action('rest_api_init', static function (): void {
 
 $wpFixPilotAdmin = new WPFixPilot_Admin();
 $wpFixPilotAdmin->register_action_handlers();
+$wpFixPilotAdmin->register_cron_handlers();
 add_action('admin_menu', [$wpFixPilotAdmin, 'register']);
 
 add_action('template_redirect', static function (): void {
