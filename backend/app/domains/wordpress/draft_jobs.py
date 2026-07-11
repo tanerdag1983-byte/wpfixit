@@ -1,9 +1,29 @@
 import hashlib
 import json
 import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+from uuid import uuid4
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from app.domains.page_packages.models import PagePackageProposal
+    from app.domains.wordpress.models import WordPressDraftJob
 
 JOB_CONTRACT_VERSION = "wordpress-draft-job-v1"
+CLAIM_TTL = timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class ClaimedDraftJob:
+    job: "WordPressDraftJob"
+    claim_token: str
 
 
 def new_project_key() -> tuple[str, str]:
@@ -43,3 +63,342 @@ def normalize_site_url(value: str) -> str:
         host = f"[{host}]"
     authority = host if parsed.port in {None, 443} else f"{host}:{parsed.port}"
     return f"https://{authority}"
+
+
+def create_or_get_draft_job(
+    session: "Session", proposal: "PagePackageProposal"
+) -> "WordPressDraftJob":
+    from app.domains.wordpress.models import WordPressDraftJob
+
+    existing = session.scalar(
+        select(WordPressDraftJob).where(
+            WordPressDraftJob.proposal_version_id == proposal.id
+        )
+    )
+    if existing is not None:
+        return existing
+    if (
+        proposal.state != "approved"
+        or not proposal.approved_by
+        or not proposal.is_current
+        or proposal.current_version_id != proposal.id
+    ):
+        raise ValueError("draft job requires the current approved proposal version")
+
+    payload = _draft_job_payload(session, proposal)
+    job = WordPressDraftJob(
+        id=f"wjob_{uuid4().hex}",
+        project_id=proposal.project_id,
+        proposal_version_id=proposal.id,
+        contract_version=JOB_CONTRACT_VERSION,
+        state="queued",
+        payload=payload,
+        payload_hash=hash_draft_job_payload(payload),
+    )
+    try:
+        with session.begin_nested():
+            session.add(job)
+            session.flush()
+        return job
+    except IntegrityError:
+        existing = session.scalar(
+            select(WordPressDraftJob).where(
+                WordPressDraftJob.proposal_version_id == proposal.id
+            )
+        )
+        if existing is None:
+            raise
+        return existing
+
+
+def claim_next_draft_job(
+    session: "Session",
+    project_id: str,
+    site_url: str,
+    *,
+    now: datetime | None = None,
+) -> ClaimedDraftJob | None:
+    from app.domains.wordpress.models import (
+        WordPressDraftJob,
+        WordPressOutboundCredential,
+    )
+
+    requested_at = now or datetime.now(UTC)
+    normalized_site_url = normalize_site_url(site_url)
+    credential = session.scalar(
+        select(WordPressOutboundCredential).where(
+            WordPressOutboundCredential.project_id == project_id,
+            WordPressOutboundCredential.revoked_at.is_(None),
+        )
+    )
+    if credential is None or credential.site_url != normalized_site_url:
+        raise ValueError("wordpress_outbound_credential_invalid")
+
+    session.execute(
+        update(WordPressDraftJob)
+        .where(
+            WordPressDraftJob.project_id == project_id,
+            WordPressDraftJob.state == "claimed",
+            WordPressDraftJob.claim_expires_at <= requested_at,
+        )
+        .values(
+            state="queued",
+            claim_token=None,
+            claim_expires_at=None,
+            claimed_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    session.expire_all()
+    job = session.scalar(
+        select(WordPressDraftJob)
+        .where(
+            WordPressDraftJob.project_id == project_id,
+            WordPressDraftJob.state == "queued",
+        )
+        .order_by(WordPressDraftJob.created_at, WordPressDraftJob.id)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    if job is None:
+        credential.last_seen_at = requested_at
+        return None
+
+    claim_token = secrets.token_urlsafe(32)
+    job.state = "claimed"
+    job.claim_token = claim_token
+    job.claimed_at = requested_at
+    job.claim_expires_at = requested_at + CLAIM_TTL
+    job.attempt_count += 1
+    credential.last_seen_at = requested_at
+    session.flush()
+    return ClaimedDraftJob(job=job, claim_token=claim_token)
+
+
+def complete_draft_job(
+    session: "Session",
+    job_id: str,
+    claim_token: str,
+    *,
+    wordpress_object_id: int,
+    wordpress_edit_url: str | None,
+    now: datetime | None = None,
+) -> "WordPressDraftJob":
+    from app.domains.wordpress.models import WordPressDraftJob
+
+    job = session.scalar(
+        select(WordPressDraftJob)
+        .where(WordPressDraftJob.id == job_id)
+        .with_for_update()
+    )
+    if job is None:
+        raise ValueError("draft_job_not_found")
+    if job.state == "completed":
+        if (
+            job.wordpress_object_id != wordpress_object_id
+            or job.wordpress_edit_url != wordpress_edit_url
+        ):
+            raise ValueError("draft_job_result_conflict")
+        return job
+    _require_active_claim(job, claim_token, now=now)
+    if wordpress_object_id <= 0:
+        raise ValueError("wordpress_object_id_invalid")
+
+    job.state = "completed"
+    job.wordpress_object_id = wordpress_object_id
+    job.wordpress_edit_url = wordpress_edit_url
+    job.completed_at = now or datetime.now(UTC)
+    _clear_claim(job)
+    session.flush()
+    return job
+
+
+def fail_draft_job(
+    session: "Session",
+    job_id: str,
+    claim_token: str,
+    *,
+    error_code: str,
+    error_message: str,
+    now: datetime | None = None,
+) -> "WordPressDraftJob":
+    from app.domains.wordpress.models import WordPressDraftJob
+
+    if not error_code or len(error_code) > 64:
+        raise ValueError("draft_job_error_code_invalid")
+    if len(error_message) > 500:
+        raise ValueError("draft_job_error_message_invalid")
+    job = session.scalar(
+        select(WordPressDraftJob)
+        .where(WordPressDraftJob.id == job_id)
+        .with_for_update()
+    )
+    if job is None:
+        raise ValueError("draft_job_not_found")
+    if job.state == "failed":
+        if job.error_code != error_code or job.error_message != error_message:
+            raise ValueError("draft_job_result_conflict")
+        return job
+    _require_active_claim(job, claim_token, now=now)
+    job.state = "failed"
+    job.error_code = error_code
+    job.error_message = error_message
+    job.failed_at = now or datetime.now(UTC)
+    _clear_claim(job)
+    session.flush()
+    return job
+
+
+def cancel_ineligible_draft_jobs(
+    session: "Session",
+    project_id: str,
+    proposal_group_id: str,
+    *,
+    eligible_proposal_version_id: str | None,
+    now: datetime | None = None,
+) -> int:
+    from app.domains.page_packages.models import PagePackageProposal
+    from app.domains.wordpress.models import WordPressDraftJob
+
+    jobs = session.scalars(
+        select(WordPressDraftJob)
+        .join(
+            PagePackageProposal,
+            PagePackageProposal.id == WordPressDraftJob.proposal_version_id,
+        )
+        .where(
+            WordPressDraftJob.project_id == project_id,
+            PagePackageProposal.project_id == project_id,
+            PagePackageProposal.proposal_group_id == proposal_group_id,
+            WordPressDraftJob.state.in_(("queued", "claimed")),
+            WordPressDraftJob.proposal_version_id
+            != (eligible_proposal_version_id or ""),
+        )
+        .with_for_update()
+    ).all()
+    cancelled_at = now or datetime.now(UTC)
+    for job in jobs:
+        job.state = "cancelled"
+        job.cancelled_at = cancelled_at
+        _clear_claim(job)
+    session.flush()
+    return len(jobs)
+
+
+def _draft_job_payload(
+    session: "Session", proposal: "PagePackageProposal"
+) -> dict:
+    from app.domains.page_blueprints.models import PageBlueprint
+    from app.domains.page_blueprints.schemas import BlueprintSchema
+    from app.domains.page_packages.generation import validate_blueprint_replacements
+    from app.domains.page_packages.schemas import (
+        GeneratedBlueprintPackage,
+        PagePackageContext,
+    )
+    from app.domains.wordpress.models import WordPressPage
+
+    if (
+        proposal.blueprint_id is None
+        or proposal.blueprint_version is None
+        or proposal.blueprint_structure_hash is None
+    ):
+        raise ValueError("draft job requires an immutable blueprint identity")
+    blueprint = session.scalar(
+        select(PageBlueprint).where(
+            PageBlueprint.project_id == proposal.project_id,
+            PageBlueprint.id == proposal.blueprint_id,
+            PageBlueprint.version == proposal.blueprint_version,
+            PageBlueprint.structure_hash == proposal.blueprint_structure_hash,
+        )
+    )
+    if (
+        blueprint is None
+        or blueprint.state != "ready"
+        or blueprint.content_schema
+        != proposal.config_snapshot.get("content_schema")
+    ):
+        raise ValueError("draft job blueprint snapshot is stale")
+
+    package = GeneratedBlueprintPackage.model_validate(proposal.package)
+    schema = BlueprintSchema.model_validate(blueprint.content_schema)
+    url_field_ids = {
+        field.id
+        for block in schema.blocks
+        for field in block.fields
+        if field.value_type == "url"
+    }
+    trusted_internal_urls = set(
+        session.scalars(
+            select(WordPressPage.url).where(
+                WordPressPage.project_id == proposal.project_id
+            )
+        ).all()
+    )
+    trusted_cta_urls = {
+        field.current_value
+        for block in schema.blocks
+        for field in block.fields
+        if field.value_type == "url" and field.current_value
+    }
+    context = PagePackageContext(
+        keyword=package.focus_keyword,
+        company_context="approved proposal",
+        project_domain="https://wordpress.invalid",
+        internal_link_candidates=[
+            link for link in package.internal_links if link.url in trusted_internal_urls
+        ],
+        template_slots={},
+        approved_cta_urls=sorted(trusted_cta_urls),
+        blueprint_schema=schema,
+    )
+    validate_blueprint_replacements(package, context)
+    approved_urls = sorted(
+        {link.url for link in package.internal_links}
+        | {
+            replacement.value
+            for replacement in package.replacements
+            if replacement.field_id in url_field_ids
+        }
+    )
+    return {
+        "proposal_version_id": proposal.id,
+        "wordpress_blueprint_id": blueprint.wordpress_blueprint_id,
+        "expected_version": proposal.blueprint_version,
+        "expected_structure_hash": proposal.blueprint_structure_hash,
+        "idempotency_key": proposal.id,
+        "replacements": {
+            replacement.field_id: replacement.value
+            for replacement in package.replacements
+        },
+        "approved_urls": approved_urls,
+        "seo": {
+            "title": package.seo_title,
+            "description": package.meta_description,
+            "keyword": package.focus_keyword,
+        },
+    }
+
+
+def _require_active_claim(
+    job: "WordPressDraftJob", claim_token: str, *, now: datetime | None
+) -> None:
+    current_time = now or datetime.now(UTC)
+    if (
+        job.state != "claimed"
+        or not secrets.compare_digest(job.claim_token or "", claim_token)
+        or job.claim_expires_at is None
+        or _as_utc(job.claim_expires_at) <= current_time
+    ):
+        raise ValueError("draft_job_claim_invalid")
+
+
+def _clear_claim(job: "WordPressDraftJob") -> None:
+    job.claim_token = None
+    job.claim_expires_at = None
+    job.claimed_at = None
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
