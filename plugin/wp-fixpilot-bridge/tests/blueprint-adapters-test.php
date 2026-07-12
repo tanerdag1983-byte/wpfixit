@@ -1049,6 +1049,13 @@ $acfPersistedFalseResult = $adapters['acf']->apply_replacements(
 assert($acfPersistedFalseResult === true, 'acf persisted false result succeeds');
 unset($GLOBALS['wpfixpilot_update_field_false_after_write'][101]['field_page_sections']);
 $GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections'] = true;
+$acfNameFallbackResult = $adapters['acf']->apply_replacements(
+    101,
+    $acfFailureSchema,
+    [$acfHeroHeadingField['id'] => 'Opgeslagen via veldnaam']
+);
+assert($acfNameFallbackResult === true, 'acf field name fallback succeeds');
+$GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections'] = true;
 $acfWriteFailure = $adapters['acf']->apply_replacements(
     101,
     $acfFailureSchema,
@@ -1056,6 +1063,7 @@ $acfWriteFailure = $adapters['acf']->apply_replacements(
 );
 assert(is_wp_error($acfWriteFailure), 'acf write failure error');
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections']);
+unset($GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections']);
 
 $elementorBroken = $adapters['elementor']->schema(202);
 assert(is_wp_error($elementorBroken), 'elementor malformed data should error');

@@ -252,18 +252,30 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         foreach ($updates as $topFieldKey => $update) {
-            $written = update_field((string) $topFieldKey, $update['value'], $postId);
-            if ($written === false) {
-                $persisted = get_field((string) $topFieldKey, $postId);
-                if ($persisted === null) {
-                    $persisted = get_field((string) $update['top_field_name'], $postId);
-                }
-                if (
-                    wp_json_encode($persisted)
-                    === wp_json_encode($update['value'])
-                ) {
-                    continue;
-                }
+            update_field((string) $topFieldKey, $update['value'], $postId);
+            $expected = wp_json_encode($update['value']);
+            $persistedByKey = get_field((string) $topFieldKey, $postId);
+            $persistedByName = get_field(
+                (string) $update['top_field_name'],
+                $postId
+            );
+            $persisted = wp_json_encode($persistedByKey) === $expected
+                || wp_json_encode($persistedByName) === $expected;
+            if (!$persisted) {
+                update_field(
+                    (string) $update['top_field_name'],
+                    $update['value'],
+                    $postId
+                );
+                $persistedByKey = get_field((string) $topFieldKey, $postId);
+                $persistedByName = get_field(
+                    (string) $update['top_field_name'],
+                    $postId
+                );
+                $persisted = wp_json_encode($persistedByKey) === $expected
+                    || wp_json_encode($persistedByName) === $expected;
+            }
+            if (!$persisted) {
                 return new WP_Error(
                     'wp_fixpilot_field_write_failed',
                     'ACF-veld kon niet worden bijgewerkt.',
