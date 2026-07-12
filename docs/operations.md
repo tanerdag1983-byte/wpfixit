@@ -35,12 +35,12 @@ The tested WordPress bridge artifact is:
 
 ```text
 /Users/tanerdag/Downloads/wp-fixpilot-bridge-update.zip
-Version: 0.3.18
-SHA-256: 5efb82781da2c4543a2940c7bce4112b216016171ce7a30ef9586d9b9376c428
+Version: 0.3.19
+SHA-256: 72697a43c3d470543e63f9e98da33b85713d9122cceca3eb47d777a2054f78cd
 ```
 
 Install this zip on staging before validating a managed blueprint release. The
-plugin health response and plugin header must both report `0.3.18`.
+plugin health response and plugin header must both report `0.3.19`.
 
 Run the staging acceptance flow without publishing the generated page:
 

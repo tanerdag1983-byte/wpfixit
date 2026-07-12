@@ -205,8 +205,9 @@ function get_field_objects(int $postId): array|false
     return $GLOBALS['wpfixpilot_acf_fields'][$postId] ?? false;
 }
 
-function get_field(string $selector, int $postId): mixed
+function get_field(string $selector, int $postId, bool $formatValue = true): mixed
 {
+    $GLOBALS['wpfixpilot_get_field_calls'][] = [$postId, $selector, $formatValue];
     return $GLOBALS['wpfixpilot_acf_runtime'][$postId][$selector] ?? null;
 }
 
@@ -908,6 +909,10 @@ $acfMultiResult = $adapters['acf']->apply_replacements(
     ]
 );
 assert($acfMultiResult === true, 'acf multiple same-tree replacements');
+assert(
+    in_array([101, 'field_page_sections', false], $GLOBALS['wpfixpilot_get_field_calls'], true),
+    'acf replacement reads raw field values'
+);
 assert(get_field('field_page_sections', 101)[0]['heading'] === 'Nieuwe hero heading', 'acf heading write');
 assert(get_field('field_page_sections', 101)[0]['copy'] === '<p>Nieuwe hero copy</p>', 'acf copy write');
 assert(get_field('field_page_sections', 101)[0]['cta']['url'] === 'https://example.test/cta', 'acf url write');

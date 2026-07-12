@@ -219,9 +219,13 @@ final class WPFixPilot_ACF_Adapter implements
 
             $topFieldKey = $target['top_field_key'];
             if (!isset($updates[$topFieldKey])) {
-                $current = get_field($topFieldKey, $postId);
+                $current = get_field($topFieldKey, $postId, false);
                 if ($current === null) {
-                    $current = get_field($target['top_field_name'], $postId);
+                    $current = get_field(
+                        $target['top_field_name'],
+                        $postId,
+                        false
+                    );
                 }
                 if ($current === null) {
                     $current = $this->top_level_field_value(
@@ -254,10 +258,11 @@ final class WPFixPilot_ACF_Adapter implements
         foreach ($updates as $topFieldKey => $update) {
             update_field((string) $topFieldKey, $update['value'], $postId);
             $expected = wp_json_encode($update['value']);
-            $persistedByKey = get_field((string) $topFieldKey, $postId);
+            $persistedByKey = get_field((string) $topFieldKey, $postId, false);
             $persistedByName = get_field(
                 (string) $update['top_field_name'],
-                $postId
+                $postId,
+                false
             );
             $persisted = wp_json_encode($persistedByKey) === $expected
                 || wp_json_encode($persistedByName) === $expected;
@@ -267,10 +272,15 @@ final class WPFixPilot_ACF_Adapter implements
                     $update['value'],
                     $postId
                 );
-                $persistedByKey = get_field((string) $topFieldKey, $postId);
+                $persistedByKey = get_field(
+                    (string) $topFieldKey,
+                    $postId,
+                    false
+                );
                 $persistedByName = get_field(
                     (string) $update['top_field_name'],
-                    $postId
+                    $postId,
+                    false
                 );
                 $persisted = wp_json_encode($persistedByKey) === $expected
                     || wp_json_encode($persistedByName) === $expected;
