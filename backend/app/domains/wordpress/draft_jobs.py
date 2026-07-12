@@ -463,6 +463,8 @@ def _draft_job_payload(
         "expected_version": proposal.blueprint_version,
         "expected_structure_hash": proposal.blueprint_structure_hash,
         "idempotency_key": proposal.id,
+        "title": package.title,
+        "slug": package.slug,
         "replacements": {
             replacement.field_id: replacement.value
             for replacement in package.replacements

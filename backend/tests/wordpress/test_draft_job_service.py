@@ -160,6 +160,8 @@ def test_create_or_get_job_is_idempotent(session, approved_blueprint_proposal) -
     assert first.payload_hash == second.payload_hash
     assert first.payload["wordpress_blueprint_id"] == 902
     assert first.payload["expected_version"] == 2
+    assert first.payload["title"] == "DSG revisie specialist Schiedam"
+    assert first.payload["slug"] == "dsg-revisie-schiedam"
     assert first.payload["replacements"]["acf-title"] == "DSG revisie Schiedam"
     assert first.payload["approved_urls"] == ["/contact/"]
 

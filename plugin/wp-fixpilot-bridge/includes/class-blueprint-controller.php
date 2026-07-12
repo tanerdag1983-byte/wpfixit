@@ -267,6 +267,8 @@ final class WPFixPilot_Blueprint_Controller
             return $replacements;
         }
         $requestHash = $this->request_hash(
+            $validatedPayload['title'],
+            $validatedPayload['slug'],
             $replacements,
             $validatedPayload['seo'],
             $validatedPayload['approved_urls']
@@ -397,7 +399,15 @@ final class WPFixPilot_Blueprint_Controller
             }
 
             $draftStatusResult = wp_update_post(
-                ['ID' => $draftId, 'post_status' => 'draft'],
+                array_filter(
+                    [
+                        'ID' => $draftId,
+                        'post_status' => 'draft',
+                        'post_title' => $validatedPayload['title'],
+                        'post_name' => $validatedPayload['slug'],
+                    ],
+                    static fn (mixed $value): bool => $value !== ''
+                ),
                 true
             );
             if (
@@ -572,7 +582,7 @@ final class WPFixPilot_Blueprint_Controller
         return $normalized;
     }
 
-    /** @return array{expected_version: int, expected_structure_hash: string, idempotency_key: string, replacements: array<string, string>, approved_urls: array<int, string>, seo: array{title: string, description: string, keyword: string}}|WP_Error */
+    /** @return array{expected_version: int, expected_structure_hash: string, idempotency_key: string, title: string, slug: string, replacements: array<string, string>, approved_urls: array<int, string>, seo: array{title: string, description: string, keyword: string}}|WP_Error */
     private function validate_create_draft_payload(array $payload): array|WP_Error
     {
         $required = [
@@ -582,7 +592,7 @@ final class WPFixPilot_Blueprint_Controller
             'replacements',
             'seo',
         ];
-        $allowed = array_merge($required, ['approved_urls']);
+        $allowed = array_merge($required, ['approved_urls', 'title', 'slug']);
         if (
             array_diff(array_keys($payload), $allowed) !== []
             || array_diff($required, array_keys($payload)) !== []
@@ -631,10 +641,34 @@ final class WPFixPilot_Blueprint_Controller
             return $seo;
         }
 
+        $title = '';
+        if (array_key_exists('title', $payload)) {
+            if (!is_string($payload['title'])) {
+                return $this->invalid_request_error();
+            }
+            $title = sanitize_text_field($payload['title']);
+            if ($title !== '' && strlen($title) > 180) {
+                return $this->invalid_request_error();
+            }
+        }
+
+        $slug = '';
+        if (array_key_exists('slug', $payload)) {
+            if (!is_string($payload['slug'])) {
+                return $this->invalid_request_error();
+            }
+            $slug = sanitize_title($payload['slug']);
+            if ($slug !== (string) $payload['slug'] || strlen($slug) > 160) {
+                return $this->invalid_request_error();
+            }
+        }
+
         return [
             'expected_version' => $expectedVersion,
             'expected_structure_hash' => $payload['expected_structure_hash'],
             'idempotency_key' => $idempotencyKey,
+            'title' => $title,
+            'slug' => $slug,
             'replacements' => $replacements,
             'approved_urls' => $approvedUrls,
             'seo' => $seo,
@@ -1054,12 +1088,16 @@ final class WPFixPilot_Blueprint_Controller
      * @param array<int, string> $approvedUrls
      */
     private function request_hash(
+        string $title,
+        string $slug,
         array $replacements,
         array $seo,
         array $approvedUrls
     ): string
     {
         $canonicalPayload = $this->canonicalize_value([
+            'title' => $title,
+            'slug' => $slug,
             'replacements' => $replacements,
             'approved_urls' => $approvedUrls,
             'seo' => $seo,
