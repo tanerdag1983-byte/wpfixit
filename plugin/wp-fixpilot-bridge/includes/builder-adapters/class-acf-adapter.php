@@ -261,7 +261,7 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         foreach ($updates as $topFieldKey => $update) {
-            update_field((string) $topFieldKey, $update['value'], $postId);
+            $writeByKey = update_field((string) $topFieldKey, $update['value'], $postId);
             $expected = wp_json_encode($update['value']);
             $persistedByKey = get_field((string) $topFieldKey, $postId, false);
             $persistedByName = get_field(
@@ -280,7 +280,7 @@ final class WPFixPilot_ACF_Adapter implements
                     $update['replacements']
                 );
             if (!$persisted) {
-                update_field(
+                $writeByName = update_field(
                     (string) $update['top_field_name'],
                     $update['value'],
                     $postId
@@ -307,12 +307,22 @@ final class WPFixPilot_ACF_Adapter implements
                     );
             }
             if (!$persisted) {
+                $mismatch = $this->first_replacement_mismatch(
+                    $persistedByKey,
+                    $persistedByName,
+                    $update['replacements']
+                );
                 return new WP_Error(
                     'wp_fixpilot_field_write_failed',
                     sprintf(
-                        'ACF-veld kon niet worden bijgewerkt: selector %s / %s.',
+                        'ACF-veld kon niet worden bijgewerkt: selector %s / %s; pad %s; key write %s; name write %s; key type %s; name type %s.',
                         (string) $topFieldKey,
-                        (string) $update['top_field_name']
+                        (string) $update['top_field_name'],
+                        $mismatch['path'],
+                        $writeByKey === false ? 'false' : 'ok',
+                        ($writeByName ?? null) === false ? 'false' : 'ok',
+                        gettype($persistedByKey),
+                        gettype($persistedByName)
                     ),
                     [
                         'status' => 500,
@@ -1142,6 +1152,37 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         return true;
+    }
+
+    /**
+     * @param array<int, array{segments: array<int, string>, value: string}> $replacements
+     * @return array{path: string}
+     */
+    private function first_replacement_mismatch(
+        mixed $persistedByKey,
+        mixed $persistedByName,
+        array $replacements
+    ): array {
+        foreach ($replacements as $replacement) {
+            $keyValue = $this->value_at_segments(
+                $persistedByKey,
+                $replacement['segments']
+            );
+            $nameValue = $this->value_at_segments(
+                $persistedByName,
+                $replacement['segments']
+            );
+            if (
+                (string) $keyValue !== $replacement['value']
+                && (string) $nameValue !== $replacement['value']
+            ) {
+                return [
+                    'path' => implode('/', $replacement['segments']),
+                ];
+            }
+        }
+
+        return ['path' => '(unknown)'];
     }
 
     /**
