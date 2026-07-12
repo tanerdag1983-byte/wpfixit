@@ -385,13 +385,16 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
             generated = PagePackageGenerationResult.model_validate(
                 generator.generate_page_package(context)
             )
-            package = GeneratedBlueprintPackage.model_validate(generated.package)
+            raw_package = (
+                generated.package.model_dump(mode="json")
+                if hasattr(generated.package, "model_dump")
+                else generated.package
+            )
+            package = normalize_blueprint_package(raw_package, context)
             package = validate_blueprint_replacements(package, context)
             allowed_links = {link.url for link in context.internal_link_candidates}
             if any(link.url not in allowed_links for link in package.internal_links):
                 raise ValueError("AI returned an unknown internal link")
-            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
-                raise ValueError("AI changed the focus keyword")
             proposal.package = package.model_dump()
             proposal.rendered_html = ""
             proposal.provider = generated.provider or proposal.provider
@@ -596,8 +599,6 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
             )
             package = normalize_blueprint_package(raw_package, context)
             package = validate_blueprint_replacements(package, context)
-            if package.focus_keyword.casefold() != opportunity.keyword.casefold():
-                raise ValueError("AI changed the focus keyword")
             candidate.candidate_package = package.model_dump()
             candidate.candidate_rendered_html = ""
             candidate.provider = generated.provider or candidate.provider

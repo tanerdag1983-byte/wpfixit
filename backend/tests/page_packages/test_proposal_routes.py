@@ -329,6 +329,45 @@ def test_creates_persistent_reviewable_page_proposal(
     assert loaded.json()["job"]["state"] == "completed"
 
 
+def test_page_proposal_preserves_opportunity_focus_keyword(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    generated_package = proposal_blueprint_package()
+    generated_package["focus_keyword"] = "andere zoekterm"
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": generated_package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda session, project: Generator(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+
+    assert response.status_code == 202
+    loaded = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{response.json()['id']}"
+    )
+    assert loaded.status_code == 200
+    assert loaded.json()["state"] == "proposed"
+    assert loaded.json()["package"]["focus_keyword"] == opportunity.keyword
+
+
 def test_rejects_existing_page_target_and_missing_default_blueprint(
     client: TestClient,
     session: Session,

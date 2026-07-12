@@ -256,6 +256,7 @@ def _normalize_blueprint_plain_text_values(
         return payload
 
     normalized = deepcopy(payload)
+    normalized["focus_keyword"] = context.keyword
     for key in ("title", "seo_title", "meta_description", "focus_keyword"):
         value = normalized.get(key)
         if isinstance(value, str):

@@ -276,7 +276,7 @@ def test_regenerate_normalizes_legacy_page_package_into_blueprint_candidate(
     assert approved.status_code == 200
 
     legacy_package = valid_package()
-    legacy_package["focus_keyword"] = opportunity.keyword
+    legacy_package["focus_keyword"] = "andere zoekterm"
     legacy_package["cta"]["button_url"] = "/contact/"
     legacy_package["internal_links"] = [
         {
@@ -324,6 +324,7 @@ def test_regenerate_normalizes_legacy_page_package_into_blueprint_candidate(
     assert completed.status == "ready", completed.candidate_package
     assert "replacements" in completed.candidate_package
     assert "hero_title" not in completed.candidate_package
+    assert completed.candidate_package["focus_keyword"] == opportunity.keyword
     replacement_ids = {
         item["field_id"] for item in completed.candidate_package["replacements"]
     }

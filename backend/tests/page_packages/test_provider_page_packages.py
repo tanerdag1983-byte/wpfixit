@@ -327,7 +327,7 @@ def test_normalize_blueprint_package_strips_html_from_plain_text_fields() -> Non
         "Laat uw DSG transmissie deskundig onderzoeken en reviseren "
         "door een ervaren specialist in Schiedam."
     )
-    assert package.focus_keyword == "revisie dsg versnellingsbak"
+    assert package.focus_keyword == blueprint_context().keyword
     replacements = {item.field_id: item.value for item in package.replacements}
     assert replacements["acf-title"] == "Revisie DSG versnellingsbak"
     assert replacements["acf-copy"] == "<p>Gerichte diagnose bij SHM Transmissie.</p>"
