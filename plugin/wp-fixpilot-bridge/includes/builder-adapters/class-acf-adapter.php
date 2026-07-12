@@ -257,8 +257,12 @@ final class WPFixPilot_ACF_Adapter implements
             $updates[$topFieldKey]['replacements'][] = [
                 'segments' => $target['segments'],
                 'value' => (string) $replacement,
-                'meta_key' => (string) ($field['acf_meta_key'] ?? ''),
-                'field_key' => (string) ($field['acf_field_key'] ?? ''),
+                'meta' => $this->leaf_meta_target(
+                    $postId,
+                    $topFieldKey,
+                    $target['top_field_name'],
+                    $target['segments']
+                ),
             ];
         }
 
@@ -351,7 +355,7 @@ final class WPFixPilot_ACF_Adapter implements
     }
 
     /**
-     * @param array<int, array{segments: array<int, string>, value: string, meta_key?: string, field_key?: string}> $replacements
+     * @param array<int, array{segments: array<int, string>, value: string, meta?: array{meta_key: string, field_key: string}|null}> $replacements
      */
     private function write_leaf_meta_replacements(
         int $postId,
@@ -362,8 +366,12 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         foreach ($replacements as $replacement) {
-            $metaKey = (string) ($replacement['meta_key'] ?? '');
-            $fieldKey = (string) ($replacement['field_key'] ?? '');
+            $meta = $replacement['meta'] ?? null;
+            if (!is_array($meta)) {
+                return false;
+            }
+            $metaKey = (string) ($meta['meta_key'] ?? '');
+            $fieldKey = (string) ($meta['field_key'] ?? '');
             if ($metaKey === '' || $fieldKey === '') {
                 return false;
             }
@@ -840,8 +848,6 @@ final class WPFixPilot_ACF_Adapter implements
                     : '',
                 'required' => !empty($field['required']),
                 'max_length' => 2000,
-                'acf_meta_key' => $metaKey,
-                'acf_field_key' => (string) ($field['key'] ?? ''),
             ]];
         }
 
@@ -857,11 +863,6 @@ final class WPFixPilot_ACF_Adapter implements
             'current_value' => is_string($value) ? $value : '',
             'required' => !empty($field['required']),
             'max_length' => $this->max_length_for_type($type),
-            'acf_meta_key' => $this->meta_key_from_segments(
-                $topFieldName,
-                $valueSegments
-            ),
-            'acf_field_key' => (string) ($field['key'] ?? ''),
         ]];
     }
 
@@ -873,6 +874,130 @@ final class WPFixPilot_ACF_Adapter implements
         array $segments
     ): string {
         return implode('_', array_merge([$topFieldName], $segments));
+    }
+
+    /**
+     * @param array<int, string> $segments
+     * @return array{meta_key: string, field_key: string}|null
+     */
+    private function leaf_meta_target(
+        int $postId,
+        string $topFieldKey,
+        string $topFieldName,
+        array $segments
+    ): ?array {
+        $topField = $this->field_by_key($this->field_objects($postId), $topFieldKey);
+        if (!is_array($topField)) {
+            foreach ($this->field_objects($postId) as $field) {
+                if ((string) ($field['name'] ?? '') === $topFieldName) {
+                    $topField = $field;
+                    break;
+                }
+            }
+        }
+        if (!is_array($topField)) {
+            return null;
+        }
+
+        $field = $this->leaf_field_definition($topField, $segments, $topField['value'] ?? null);
+        $fieldKey = is_array($field) ? (string) ($field['key'] ?? '') : '';
+        if ($fieldKey === '') {
+            return null;
+        }
+
+        return [
+            'meta_key' => $this->meta_key_from_segments($topFieldName, $segments),
+            'field_key' => $fieldKey,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $field
+     * @param array<int, string> $segments
+     */
+    private function leaf_field_definition(
+        array $field,
+        array $segments,
+        mixed $value
+    ): ?array {
+        if ($segments === []) {
+            return $field;
+        }
+
+        $type = (string) ($field['type'] ?? '');
+        if ($type === 'flexible_content') {
+            $rowIndex = array_shift($segments);
+            if ($rowIndex === null || !is_array($value) || !is_array($value[$rowIndex] ?? null)) {
+                return null;
+            }
+            $row = $value[$rowIndex];
+            $layoutName = (string) ($row['acf_fc_layout'] ?? '');
+            $layouts = $this->layouts_by_name($field);
+            if ($layoutName === '' || !isset($layouts[$layoutName])) {
+                return null;
+            }
+            $childName = array_shift($segments);
+            if ($childName === null) {
+                return null;
+            }
+            $child = $this->sub_field_by_name($this->sub_fields($layouts[$layoutName]), $childName);
+            return is_array($child)
+                ? $this->leaf_field_definition($child, $segments, $row[$childName] ?? null)
+                : null;
+        }
+
+        if ($type === 'repeater') {
+            $rowIndex = array_shift($segments);
+            $childName = array_shift($segments);
+            if (
+                $rowIndex === null
+                || $childName === null
+                || !is_array($value)
+                || !is_array($value[$rowIndex] ?? null)
+            ) {
+                return null;
+            }
+            $row = $value[$rowIndex];
+            $child = $this->sub_field_by_name($this->sub_fields($field), $childName);
+            return is_array($child)
+                ? $this->leaf_field_definition($child, $segments, $row[$childName] ?? null)
+                : null;
+        }
+
+        if ($type === 'group') {
+            $childName = array_shift($segments);
+            if ($childName === null) {
+                return null;
+            }
+            $child = $this->sub_field_by_name($this->sub_fields($field), $childName);
+            return is_array($child)
+                ? $this->leaf_field_definition(
+                    $child,
+                    $segments,
+                    is_array($value) ? ($value[$childName] ?? null) : null
+                )
+                : null;
+        }
+
+        if ($type === 'link' && $segments === ['url']) {
+            return $field;
+        }
+
+        return $segments === [] ? $field : null;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $fields
+     */
+    private function sub_field_by_name(array $fields, string $name): ?array
+    {
+        foreach ($fields as $field) {
+            if (is_array($field) && (string) ($field['name'] ?? '') === $name) {
+                return $field;
+            }
+        }
+
+        return null;
     }
 
     /**
