@@ -223,6 +223,10 @@ function update_field(string $selector, mixed $value, int $postId): bool
         $GLOBALS['wpfixpilot_acf_runtime'][$postId][$alias] = $value;
     }
 
+    if (($GLOBALS['wpfixpilot_update_field_false_after_write'][$postId][$selector] ?? false) === true) {
+        return false;
+    }
+
     return true;
 }
 
@@ -1036,6 +1040,14 @@ assert(
 
 $acfFailureSchema = $adapters['acf']->schema(101);
 assert(!is_wp_error($acfFailureSchema), 'acf failure schema');
+$GLOBALS['wpfixpilot_update_field_false_after_write'][101]['field_page_sections'] = true;
+$acfPersistedFalseResult = $adapters['acf']->apply_replacements(
+    101,
+    $acfFailureSchema,
+    [$acfHeroHeadingField['id'] => 'Wel opgeslagen ondanks false']
+);
+assert($acfPersistedFalseResult === true, 'acf persisted false result succeeds');
+unset($GLOBALS['wpfixpilot_update_field_false_after_write'][101]['field_page_sections']);
 $GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections'] = true;
 $acfWriteFailure = $adapters['acf']->apply_replacements(
     101,

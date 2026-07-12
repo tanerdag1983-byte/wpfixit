@@ -252,7 +252,18 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         foreach ($updates as $topFieldKey => $update) {
-            if (update_field((string) $topFieldKey, $update['value'], $postId) === false) {
+            $written = update_field((string) $topFieldKey, $update['value'], $postId);
+            if ($written === false) {
+                $persisted = get_field((string) $topFieldKey, $postId);
+                if ($persisted === null) {
+                    $persisted = get_field((string) $update['top_field_name'], $postId);
+                }
+                if (
+                    wp_json_encode($persisted)
+                    === wp_json_encode($update['value'])
+                ) {
+                    continue;
+                }
                 return new WP_Error(
                     'wp_fixpilot_field_write_failed',
                     'ACF-veld kon niet worden bijgewerkt.',
