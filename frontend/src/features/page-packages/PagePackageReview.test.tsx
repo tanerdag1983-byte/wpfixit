@@ -321,4 +321,37 @@ describe("PagePackageReview", () => {
       ),
     );
   });
+
+  it("retries a failed outbound draft job", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/draft-job") && init?.method === "POST") {
+        return Promise.resolve({
+          id: "draft-job-1",
+          state: "queued",
+          attempt_count: 1,
+        });
+      }
+      return Promise.resolve({
+        ...proposal,
+        state: "approved",
+        draft_job: {
+          id: "draft-job-1",
+          state: "failed",
+          error_message: "Adapter tijdelijk niet beschikbaar",
+          attempt_count: 1,
+        },
+      });
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Opnieuw proberen" }),
+    );
+
+    expect(await screen.findByText("Wachten op WordPress")).toBeVisible();
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/page-proposals/proposal-1/draft-job",
+      { method: "POST" },
+    );
+  });
 });

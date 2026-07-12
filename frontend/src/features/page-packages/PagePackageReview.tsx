@@ -426,14 +426,24 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
               )}
               {(proposal.draft_job?.state === "failed"
                 || proposal.draft_job?.state === "cancelled") && (
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={createManualImport}
-                  type="button"
-                >
-                  Handmatige import openen
-                </button>
+                <div className="settings-actions">
+                  <button
+                    className="primary-button"
+                    disabled={busy}
+                    onClick={createOutboundDraft}
+                    type="button"
+                  >
+                    Opnieuw proberen
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={createManualImport}
+                    type="button"
+                  >
+                    Handmatige import openen
+                  </button>
+                </div>
               )}
               {importUrl && (
                 <a

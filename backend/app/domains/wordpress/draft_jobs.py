@@ -84,7 +84,7 @@ def create_or_get_draft_job(
             WordPressDraftJob.proposal_version_id == proposal.id
         )
     )
-    if existing is not None:
+    if existing is not None and existing.state not in {"failed", "cancelled"}:
         return existing
     if (
         proposal.state != "approved"
@@ -111,6 +111,15 @@ def create_or_get_draft_job(
     for handoff in open_handoffs:
         handoff.state = "revoked"
         handoff.revoked_at = revoked_at
+
+    if existing is not None:
+        existing.state = "queued"
+        existing.terminal_claim_token_hash = None
+        existing.error_code = None
+        existing.error_message = None
+        existing.failed_at = None
+        existing.cancelled_at = None
+        return existing
 
     payload = _draft_job_payload(session, proposal)
     job = WordPressDraftJob(

@@ -164,6 +164,33 @@ def test_create_or_get_job_is_idempotent(session, approved_blueprint_proposal) -
     assert first.payload["approved_urls"] == ["/contact/"]
 
 
+def test_create_or_get_job_requeues_a_failed_job(
+    session, approved_blueprint_proposal
+) -> None:
+    job = create_or_get_draft_job(session, approved_blueprint_proposal)
+    session.commit()
+    claimed = claim_next_draft_job(session, job.project_id, "https://member.example")
+    assert claimed is not None
+    failed = fail_draft_job(
+        session,
+        job.id,
+        claimed.claim_token,
+        error_code="wordpress_error",
+        error_message="Adapter was tijdelijk niet beschikbaar",
+    )
+    assert failed.state == "failed"
+
+    retried = create_or_get_draft_job(session, approved_blueprint_proposal)
+    session.commit()
+
+    assert retried.id == job.id
+    assert retried.state == "queued"
+    assert retried.error_code is None
+    assert retried.error_message is None
+    assert retried.failed_at is None
+    assert retried.terminal_claim_token_hash is None
+
+
 def test_create_job_revokes_an_expired_redeemed_manual_handoff(
     session, approved_blueprint_proposal
 ) -> None:
