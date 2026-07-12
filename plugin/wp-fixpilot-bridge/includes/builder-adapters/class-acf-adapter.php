@@ -899,14 +899,18 @@ final class WPFixPilot_ACF_Adapter implements
             return null;
         }
 
+        $metaKey = $this->meta_key_from_segments($topFieldName, $segments);
         $field = $this->leaf_field_definition($topField, $segments, $topField['value'] ?? null);
         $fieldKey = is_array($field) ? (string) ($field['key'] ?? '') : '';
+        if ($fieldKey === '' && function_exists('get_post_meta')) {
+            $fieldKey = (string) get_post_meta($postId, '_' . $metaKey, true);
+        }
         if ($fieldKey === '') {
             return null;
         }
 
         return [
-            'meta_key' => $this->meta_key_from_segments($topFieldName, $segments),
+            'meta_key' => $metaKey,
             'field_key' => $fieldKey,
         ];
     }

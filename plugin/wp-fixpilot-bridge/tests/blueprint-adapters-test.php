@@ -519,6 +519,24 @@ $acfReorderedFields[0]['value'] = [
 seed_post(107, ['post_title' => 'ACF Reordered Fixture']);
 seed_acf_fixture(107, $acfReorderedFields);
 
+$acfValueOnlyFields = [[
+    'key' => 'field_page_sections',
+    'name' => 'page_sections',
+    'label' => 'Page sections',
+    'type' => 'flexible_content',
+    'value' => [[
+        'acf_fc_layout' => 'hero',
+        'label' => 'Origineel label',
+    ]],
+]];
+seed_post(109, ['post_title' => 'ACF Value Only Fixture']);
+seed_acf_fixture(109, $acfValueOnlyFields, [
+    'page_sections' => 1,
+    '_page_sections' => 'field_page_sections',
+    'page_sections_0_label' => 'Origineel label',
+    '_page_sections_0_label' => 'field_value_only_label',
+]);
+
 $acfInsertedFields = $acfFields;
 $acfInsertedFields[0]['value'][] = [
     'acf_fc_layout' => 'hero',
@@ -1112,6 +1130,36 @@ assert(
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections']);
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections']);
 unset($GLOBALS['wpfixpilot_update_post_meta_failures'][101]['page_sections_0_heading']);
+
+$acfValueOnlySchema = $adapters['acf']->schema(109);
+assert(!is_wp_error($acfValueOnlySchema), 'acf value-only schema');
+$acfValueOnlyLabelField = null;
+foreach ($acfValueOnlySchema['blocks'] as $block) {
+    foreach ($block['fields'] as $field) {
+        if ($field['path'] === 'acf:field_page_sections/page_sections/0/label') {
+            $acfValueOnlyLabelField = $field;
+        }
+    }
+}
+assert(is_array($acfValueOnlyLabelField), 'acf value-only label field exists');
+$GLOBALS['wpfixpilot_update_field_failures'][109]['field_page_sections'] = true;
+$GLOBALS['wpfixpilot_update_field_failures'][109]['page_sections'] = true;
+$acfValueOnlyFallback = $adapters['acf']->apply_replacements(
+    109,
+    $acfValueOnlySchema,
+    [$acfValueOnlyLabelField['id'] => 'Nieuw value-only label']
+);
+assert($acfValueOnlyFallback === true, 'acf value-only leaf meta fallback succeeds');
+assert(
+    get_post_meta(109, 'page_sections_0_label', true) === 'Nieuw value-only label',
+    'acf value-only fallback writes value meta'
+);
+assert(
+    get_post_meta(109, '_page_sections_0_label', true) === 'field_value_only_label',
+    'acf value-only fallback preserves reference meta'
+);
+unset($GLOBALS['wpfixpilot_update_field_failures'][109]['field_page_sections']);
+unset($GLOBALS['wpfixpilot_update_field_failures'][109]['page_sections']);
 
 $elementorBroken = $adapters['elementor']->schema(202);
 assert(is_wp_error($elementorBroken), 'elementor malformed data should error');
