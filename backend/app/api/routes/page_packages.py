@@ -589,7 +589,12 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
             generated = PagePackageGenerationResult.model_validate(
                 _page_package_generator(session, project).generate_page_package(context)
             )
-            package = GeneratedBlueprintPackage.model_validate(generated.package)
+            raw_package = (
+                generated.package.model_dump(mode="json")
+                if hasattr(generated.package, "model_dump")
+                else generated.package
+            )
+            package = normalize_blueprint_package(raw_package, context)
             package = validate_blueprint_replacements(package, context)
             if package.focus_keyword.casefold() != opportunity.keyword.casefold():
                 raise ValueError("AI changed the focus keyword")

@@ -91,8 +91,15 @@ def _legacy_blueprint_payload(payload: dict, context: PagePackageContext) -> dic
     """Convert older landing-page JSON into the current replacement contract."""
     landing = payload.get("landing_page")
     if not isinstance(landing, dict):
-        normalized = _extract_page_package_payload(payload, GeneratedBlueprintPackage)
-        return _repair_blueprint_replacement_ids(normalized, context)
+        legacy_keys = ("hero_title", "introduction_html", "sections", "faq", "cta")
+        if any(key in payload for key in legacy_keys):
+            landing = payload
+        else:
+            normalized = _extract_page_package_payload(
+                payload,
+                GeneratedBlueprintPackage,
+            )
+            return _repair_blueprint_replacement_ids(normalized, context)
     if isinstance(landing.get("replacements"), list):
         return _repair_blueprint_replacement_ids(landing, context)
 

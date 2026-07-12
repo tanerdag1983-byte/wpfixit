@@ -10,6 +10,7 @@ from app.domains.page_packages.models import (
 from app.domains.page_packages.service import accept_regeneration_candidate
 from app.domains.wordpress.draft_jobs import hash_draft_job_payload
 from app.domains.wordpress.models import WordPressDraftJob
+from tests.page_packages.test_generation import valid_package
 from tests.page_packages.test_proposal_routes import (
     BlueprintBridge,
     generated_blueprint_proposal,
@@ -252,3 +253,78 @@ def test_regenerate_block_creates_candidate_without_mutating_current(
     assert stored is not None
     assert stored.is_current is True
     assert stored.state == "approved"
+
+
+def test_regenerate_normalizes_legacy_page_package_into_blueprint_candidate(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = generated_blueprint_proposal(client, projects, opportunity, monkeypatch)
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda current_session, project_id: bridge,
+    )
+    approved = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/approve"
+    )
+    assert approved.status_code == 200
+
+    legacy_package = valid_package()
+    legacy_package["focus_keyword"] = opportunity.keyword
+    legacy_package["cta"]["button_url"] = "/contact/"
+    legacy_package["internal_links"] = [
+        {
+            "anchor": "Dienst template",
+            "url": "https://member.example/dienst-template/",
+        }
+    ]
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-2"
+
+        def generate_page_package(self, context):
+            return {
+                "package": legacy_package,
+                "input_tokens": 12,
+                "output_tokens": 8,
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal['id']}/regenerate",
+        json={
+            "mode": "full",
+            "instruction": "Maak een volledige nieuwe versie.",
+        },
+    )
+
+    assert response.status_code == 202
+    from app.api.routes.page_packages import _run_page_package_regeneration
+
+    _run_page_package_regeneration(
+        session.get_bind(),
+        response.json()["candidate"]["id"],
+    )
+    session.expire_all()
+    completed = session.get(
+        PagePackageRegenerationCandidate, response.json()["candidate"]["id"]
+    )
+    assert completed is not None
+    assert completed.status == "ready", completed.candidate_package
+    assert "replacements" in completed.candidate_package
+    assert "hero_title" not in completed.candidate_package
+    replacement_ids = {
+        item["field_id"] for item in completed.candidate_package["replacements"]
+    }
+    assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
