@@ -47,6 +47,7 @@ $GLOBALS['wpfixpilot_acf_runtime'] = [];
 $GLOBALS['wpfixpilot_acf_aliases'] = [];
 $GLOBALS['wpfixpilot_update_field_calls'] = [];
 $GLOBALS['wpfixpilot_update_field_failures'] = [];
+$GLOBALS['wpfixpilot_update_field_normalizers'] = [];
 
 function sanitize_text_field(string $value): string
 {
@@ -218,6 +219,9 @@ function update_field(string $selector, mixed $value, int $postId): bool
         return false;
     }
 
+    if (isset($GLOBALS['wpfixpilot_update_field_normalizers'][$postId][$selector])) {
+        $value = $GLOBALS['wpfixpilot_update_field_normalizers'][$postId][$selector]($value);
+    }
     $GLOBALS['wpfixpilot_acf_runtime'][$postId][$selector] = $value;
     if (isset($GLOBALS['wpfixpilot_acf_aliases'][$postId][$selector])) {
         $alias = $GLOBALS['wpfixpilot_acf_aliases'][$postId][$selector];
@@ -1053,6 +1057,25 @@ $acfPersistedFalseResult = $adapters['acf']->apply_replacements(
 );
 assert($acfPersistedFalseResult === true, 'acf persisted false result succeeds');
 unset($GLOBALS['wpfixpilot_update_field_false_after_write'][101]['field_page_sections']);
+$GLOBALS['wpfixpilot_update_field_normalizers'][101]['field_page_sections'] = static function (mixed $value): mixed {
+    assert(is_array($value));
+    $value[1]['acf_normalized_default'] = 'added by acf';
+    return $value;
+};
+$GLOBALS['wpfixpilot_update_field_normalizers'][101]['page_sections'] =
+    $GLOBALS['wpfixpilot_update_field_normalizers'][101]['field_page_sections'];
+$acfNormalizedPersistedResult = $adapters['acf']->apply_replacements(
+    101,
+    $acfFailureSchema,
+    [$acfHeroHeadingField['id'] => 'Opgeslagen met ACF-normalisatie']
+);
+assert($acfNormalizedPersistedResult === true, 'acf normalized full field write succeeds');
+assert(
+    get_field('field_page_sections', 101)[0]['heading'] === 'Opgeslagen met ACF-normalisatie',
+    'acf normalized write persisted target path'
+);
+unset($GLOBALS['wpfixpilot_update_field_normalizers'][101]['field_page_sections']);
+unset($GLOBALS['wpfixpilot_update_field_normalizers'][101]['page_sections']);
 $GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections'] = true;
 $acfNameFallbackResult = $adapters['acf']->apply_replacements(
     101,

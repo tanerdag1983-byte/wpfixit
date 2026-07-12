@@ -237,6 +237,7 @@ final class WPFixPilot_ACF_Adapter implements
                 $updates[$topFieldKey] = [
                     'value' => $current,
                     'top_field_name' => $target['top_field_name'],
+                    'replacements' => [],
                 ];
             }
 
@@ -253,6 +254,10 @@ final class WPFixPilot_ACF_Adapter implements
                     ['status' => 500]
                 );
             }
+            $updates[$topFieldKey]['replacements'][] = [
+                'segments' => $target['segments'],
+                'value' => (string) $replacement,
+            ];
         }
 
         foreach ($updates as $topFieldKey => $update) {
@@ -265,7 +270,15 @@ final class WPFixPilot_ACF_Adapter implements
                 false
             );
             $persisted = wp_json_encode($persistedByKey) === $expected
-                || wp_json_encode($persistedByName) === $expected;
+                || wp_json_encode($persistedByName) === $expected
+                || $this->persisted_replacements_match(
+                    $persistedByKey,
+                    $update['replacements']
+                )
+                || $this->persisted_replacements_match(
+                    $persistedByName,
+                    $update['replacements']
+                );
             if (!$persisted) {
                 update_field(
                     (string) $update['top_field_name'],
@@ -283,7 +296,15 @@ final class WPFixPilot_ACF_Adapter implements
                     false
                 );
                 $persisted = wp_json_encode($persistedByKey) === $expected
-                    || wp_json_encode($persistedByName) === $expected;
+                    || wp_json_encode($persistedByName) === $expected
+                    || $this->persisted_replacements_match(
+                        $persistedByKey,
+                        $update['replacements']
+                    )
+                    || $this->persisted_replacements_match(
+                        $persistedByName,
+                        $update['replacements']
+                    );
             }
             if (!$persisted) {
                 return new WP_Error(
@@ -1101,6 +1122,42 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         return false;
+    }
+
+    /**
+     * @param array<int, array{segments: array<int, string>, value: string}> $replacements
+     */
+    private function persisted_replacements_match(
+        mixed $persisted,
+        array $replacements
+    ): bool {
+        foreach ($replacements as $replacement) {
+            $value = $this->value_at_segments(
+                $persisted,
+                $replacement['segments']
+            );
+            if ((string) $value !== $replacement['value']) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<int, string> $segments
+     */
+    private function value_at_segments(mixed $value, array $segments): mixed
+    {
+        $cursor = $value;
+        foreach ($segments as $segment) {
+            if (!is_array($cursor) || !array_key_exists($segment, $cursor)) {
+                return null;
+            }
+            $cursor = $cursor[$segment];
+        }
+
+        return $cursor;
     }
 
     private function legacy_nested_slots(
