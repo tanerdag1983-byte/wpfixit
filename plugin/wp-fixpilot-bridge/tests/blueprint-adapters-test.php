@@ -536,6 +536,12 @@ seed_acf_fixture(109, $acfValueOnlyFields, [
     'page_sections_0_label' => 'Origineel label',
     '_page_sections_0_label' => 'field_value_only_label',
 ]);
+seed_post(110, ['post_title' => 'ACF Value Only No Reference Fixture']);
+seed_acf_fixture(110, $acfValueOnlyFields, [
+    'page_sections' => 1,
+    '_page_sections' => 'field_page_sections',
+    'page_sections_0_label' => 'Origineel label zonder referentie',
+]);
 
 $acfInsertedFields = $acfFields;
 $acfInsertedFields[0]['value'][] = [
@@ -1160,6 +1166,36 @@ assert(
 );
 unset($GLOBALS['wpfixpilot_update_field_failures'][109]['field_page_sections']);
 unset($GLOBALS['wpfixpilot_update_field_failures'][109]['page_sections']);
+
+$acfValueOnlyNoReferenceSchema = $adapters['acf']->schema(110);
+assert(!is_wp_error($acfValueOnlyNoReferenceSchema), 'acf value-only no-reference schema');
+$acfValueOnlyNoReferenceLabelField = null;
+foreach ($acfValueOnlyNoReferenceSchema['blocks'] as $block) {
+    foreach ($block['fields'] as $field) {
+        if ($field['path'] === 'acf:field_page_sections/page_sections/0/label') {
+            $acfValueOnlyNoReferenceLabelField = $field;
+        }
+    }
+}
+assert(is_array($acfValueOnlyNoReferenceLabelField), 'acf value-only no-reference label field exists');
+$GLOBALS['wpfixpilot_update_field_failures'][110]['field_page_sections'] = true;
+$GLOBALS['wpfixpilot_update_field_failures'][110]['page_sections'] = true;
+$acfValueOnlyNoReferenceFallback = $adapters['acf']->apply_replacements(
+    110,
+    $acfValueOnlyNoReferenceSchema,
+    [$acfValueOnlyNoReferenceLabelField['id'] => 'Nieuw label zonder referentie']
+);
+assert($acfValueOnlyNoReferenceFallback === true, 'acf value-only fallback without reference succeeds');
+assert(
+    get_post_meta(110, 'page_sections_0_label', true) === 'Nieuw label zonder referentie',
+    'acf value-only fallback without reference writes value meta'
+);
+assert(
+    get_post_meta(110, '_page_sections_0_label', true) === '',
+    'acf value-only fallback without reference leaves missing reference empty'
+);
+unset($GLOBALS['wpfixpilot_update_field_failures'][110]['field_page_sections']);
+unset($GLOBALS['wpfixpilot_update_field_failures'][110]['page_sections']);
 
 $elementorBroken = $adapters['elementor']->schema(202);
 assert(is_wp_error($elementorBroken), 'elementor malformed data should error');

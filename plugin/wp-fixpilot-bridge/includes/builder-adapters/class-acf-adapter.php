@@ -372,13 +372,16 @@ final class WPFixPilot_ACF_Adapter implements
             }
             $metaKey = (string) ($meta['meta_key'] ?? '');
             $fieldKey = (string) ($meta['field_key'] ?? '');
-            if ($metaKey === '' || $fieldKey === '') {
+            if ($metaKey === '') {
                 return false;
             }
             if (update_post_meta($postId, $metaKey, $replacement['value']) === false) {
                 return false;
             }
-            if (update_post_meta($postId, '_' . $metaKey, $fieldKey) === false) {
+            if (
+                $fieldKey !== ''
+                && update_post_meta($postId, '_' . $metaKey, $fieldKey) === false
+            ) {
                 return false;
             }
         }
@@ -905,10 +908,6 @@ final class WPFixPilot_ACF_Adapter implements
         if ($fieldKey === '' && function_exists('get_post_meta')) {
             $fieldKey = (string) get_post_meta($postId, '_' . $metaKey, true);
         }
-        if ($fieldKey === '') {
-            return null;
-        }
-
         return [
             'meta_key' => $metaKey,
             'field_key' => $fieldKey,
