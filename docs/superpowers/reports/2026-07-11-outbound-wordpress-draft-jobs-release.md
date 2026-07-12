@@ -2,9 +2,9 @@
 
 Date: 2026-07-12
 Branch: `feature/platform-build`
-Plugin version: `0.3.19`
+Plugin version: `0.3.20`
 Plugin artifact: `/Users/tanerdag/Downloads/wp-fixpilot-bridge-update.zip`
-Plugin SHA-256: `72697a43c3d470543e63f9e98da33b85713d9122cceca3eb47d777a2054f78cd`
+Plugin SHA-256: `cc89f8514e815842625fa7bb89d3fa252a6de134599274578d7a9880dd2848f7`
 Database revision: `0019_outbound_wp_draft_jobs`
 
 ## Local Verification

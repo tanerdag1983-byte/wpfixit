@@ -288,8 +288,19 @@ final class WPFixPilot_ACF_Adapter implements
             if (!$persisted) {
                 return new WP_Error(
                     'wp_fixpilot_field_write_failed',
-                    'ACF-veld kon niet worden bijgewerkt.',
-                    ['status' => 500]
+                    sprintf(
+                        'ACF-veld kon niet worden bijgewerkt: selector %s / %s.',
+                        (string) $topFieldKey,
+                        (string) $update['top_field_name']
+                    ),
+                    [
+                        'status' => 500,
+                        'top_field_key' => (string) $topFieldKey,
+                        'top_field_name' => (string) $update['top_field_name'],
+                        'expected_type' => gettype($update['value']),
+                        'persisted_key_type' => gettype($persistedByKey),
+                        'persisted_name_type' => gettype($persistedByName),
+                    ]
                 );
             }
         }

@@ -1067,6 +1067,10 @@ $acfWriteFailure = $adapters['acf']->apply_replacements(
     [$acfHeroHeadingField['id'] => 'Schrijffout']
 );
 assert(is_wp_error($acfWriteFailure), 'acf write failure error');
+assert(
+    str_contains($acfWriteFailure->message, 'field_page_sections'),
+    'acf write failure includes selector diagnostic'
+);
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections']);
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections']);
 
