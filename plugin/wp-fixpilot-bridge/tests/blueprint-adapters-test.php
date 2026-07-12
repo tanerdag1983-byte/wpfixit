@@ -1077,13 +1077,28 @@ assert(
 unset($GLOBALS['wpfixpilot_update_field_normalizers'][101]['field_page_sections']);
 unset($GLOBALS['wpfixpilot_update_field_normalizers'][101]['page_sections']);
 $GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections'] = true;
+$GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections'] = true;
 $acfNameFallbackResult = $adapters['acf']->apply_replacements(
     101,
     $acfFailureSchema,
-    [$acfHeroHeadingField['id'] => 'Opgeslagen via veldnaam']
+    [$acfHeroHeadingField['id'] => 'Opgeslagen via leaf meta']
 );
-assert($acfNameFallbackResult === true, 'acf field name fallback succeeds');
-$GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections'] = true;
+assert($acfNameFallbackResult === true, 'acf leaf meta fallback succeeds');
+assert(
+    get_post_meta(101, 'page_sections_0_heading', true) === 'Opgeslagen via leaf meta',
+    'acf leaf meta fallback writes value meta'
+);
+assert(
+    get_post_meta(101, '_page_sections_0_heading', true) === 'field_hero_heading',
+    'acf leaf meta fallback writes reference meta'
+);
+$acfWriteFailure = $adapters['acf']->apply_replacements(
+    101,
+    $acfFailureSchema,
+    [$acfHeroHeadingField['id'] => 'Schrijffout']
+);
+assert($acfWriteFailure === true, 'acf leaf meta fallback covers top-level write failure');
+$GLOBALS['wpfixpilot_update_post_meta_failures'][101]['page_sections_0_heading'] = true;
 $acfWriteFailure = $adapters['acf']->apply_replacements(
     101,
     $acfFailureSchema,
@@ -1096,6 +1111,7 @@ assert(
 );
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['field_page_sections']);
 unset($GLOBALS['wpfixpilot_update_field_failures'][101]['page_sections']);
+unset($GLOBALS['wpfixpilot_update_post_meta_failures'][101]['page_sections_0_heading']);
 
 $elementorBroken = $adapters['elementor']->schema(202);
 assert(is_wp_error($elementorBroken), 'elementor malformed data should error');

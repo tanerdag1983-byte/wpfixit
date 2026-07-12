@@ -257,6 +257,8 @@ final class WPFixPilot_ACF_Adapter implements
             $updates[$topFieldKey]['replacements'][] = [
                 'segments' => $target['segments'],
                 'value' => (string) $replacement,
+                'meta_key' => (string) ($field['acf_meta_key'] ?? ''),
+                'field_key' => (string) ($field['acf_field_key'] ?? ''),
             ];
         }
 
@@ -306,6 +308,15 @@ final class WPFixPilot_ACF_Adapter implements
                         $update['replacements']
                     );
             }
+            if (
+                !$persisted
+                && $this->write_leaf_meta_replacements(
+                    $postId,
+                    $update['replacements']
+                )
+            ) {
+                $persisted = true;
+            }
             if (!$persisted) {
                 $mismatch = $this->first_replacement_mismatch(
                     $persistedByKey,
@@ -333,6 +344,34 @@ final class WPFixPilot_ACF_Adapter implements
                         'persisted_name_type' => gettype($persistedByName),
                     ]
                 );
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<int, array{segments: array<int, string>, value: string, meta_key?: string, field_key?: string}> $replacements
+     */
+    private function write_leaf_meta_replacements(
+        int $postId,
+        array $replacements
+    ): bool {
+        if (!function_exists('update_post_meta')) {
+            return false;
+        }
+
+        foreach ($replacements as $replacement) {
+            $metaKey = (string) ($replacement['meta_key'] ?? '');
+            $fieldKey = (string) ($replacement['field_key'] ?? '');
+            if ($metaKey === '' || $fieldKey === '') {
+                return false;
+            }
+            if (update_post_meta($postId, $metaKey, $replacement['value']) === false) {
+                return false;
+            }
+            if (update_post_meta($postId, '_' . $metaKey, $fieldKey) === false) {
+                return false;
             }
         }
 
@@ -779,6 +818,10 @@ final class WPFixPilot_ACF_Adapter implements
 
         if ($type === 'link') {
             $linkValue = is_array($value) ? $value : [];
+            $metaKey = $this->meta_key_from_segments(
+                $topFieldName,
+                [...$valueSegments, 'url']
+            );
 
             return [[
                 'id' => wpfixpilot_field_id(
@@ -797,6 +840,8 @@ final class WPFixPilot_ACF_Adapter implements
                     : '',
                 'required' => !empty($field['required']),
                 'max_length' => 2000,
+                'acf_meta_key' => $metaKey,
+                'acf_field_key' => (string) ($field['key'] ?? ''),
             ]];
         }
 
@@ -812,7 +857,22 @@ final class WPFixPilot_ACF_Adapter implements
             'current_value' => is_string($value) ? $value : '',
             'required' => !empty($field['required']),
             'max_length' => $this->max_length_for_type($type),
+            'acf_meta_key' => $this->meta_key_from_segments(
+                $topFieldName,
+                $valueSegments
+            ),
+            'acf_field_key' => (string) ($field['key'] ?? ''),
         ]];
+    }
+
+    /**
+     * @param array<int, string> $segments
+     */
+    private function meta_key_from_segments(
+        string $topFieldName,
+        array $segments
+    ): string {
+        return implode('_', array_merge([$topFieldName], $segments));
     }
 
     /**
