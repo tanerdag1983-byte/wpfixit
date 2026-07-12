@@ -333,6 +333,34 @@ def test_normalize_blueprint_package_strips_html_from_plain_text_fields() -> Non
     assert replacements["acf-copy"] == "<p>Gerichte diagnose bij SHM Transmissie.</p>"
 
 
+def test_normalize_blueprint_package_strips_html_from_internal_link_anchors() -> None:
+    package = normalize_blueprint_package(
+        {
+            "title": "Revisie DSG versnellingsbak",
+            "slug": "revisie-dsg-versnellingsbak",
+            "seo_title": "Revisie DSG versnellingsbak in Schiedam",
+            "meta_description": (
+                "Laat uw DSG transmissie deskundig onderzoeken en reviseren "
+                "door een ervaren specialist in Schiedam."
+            ),
+            "focus_keyword": "revisie dsg versnellingsbak",
+            "replacements": [
+                {"field_id": "acf-title", "value": "Revisie DSG versnellingsbak"},
+                {"field_id": "acf-cta-url", "value": "/offerte-aanvragen/"},
+            ],
+            "internal_links": [
+                {
+                    "anchor": "<strong>Transmissie diagnose</strong>",
+                    "url": "/transmissie-diagnose/",
+                }
+            ],
+        },
+        blueprint_context(),
+    )
+
+    assert package.internal_links[0].anchor == "Transmissie diagnose"
+
+
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
 def test_openai_compatible_accepts_blueprint_package_with_extra_metadata(
     monkeypatch, provider

@@ -279,6 +279,13 @@ def _normalize_blueprint_plain_text_values(
         if isinstance(value, str):
             replacement["value"] = _strip_html_to_plain_text(value)
 
+    for link in normalized.get("internal_links", []):
+        if not isinstance(link, dict):
+            continue
+        anchor = link.get("anchor")
+        if isinstance(anchor, str):
+            link["anchor"] = _strip_html_to_plain_text(anchor)
+
     return normalized
 
 
