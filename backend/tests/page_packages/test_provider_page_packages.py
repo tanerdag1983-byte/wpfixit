@@ -294,6 +294,45 @@ def test_normalize_stored_legacy_blueprint_package() -> None:
     }
 
 
+def test_normalize_blueprint_package_strips_html_from_plain_text_fields() -> None:
+    package = normalize_blueprint_package(
+        {
+            "title": "<strong>Revisie DSG versnellingsbak</strong>",
+            "slug": "revisie-dsg-versnellingsbak",
+            "seo_title": "<strong>Revisie DSG</strong> in Schiedam | SHM",
+            "meta_description": (
+                "<p>Laat uw DSG transmissie deskundig onderzoeken en reviseren "
+                "door een ervaren specialist in Schiedam.</p>"
+            ),
+            "focus_keyword": "<em>revisie dsg versnellingsbak</em>",
+            "replacements": [
+                {
+                    "field_id": "acf-title",
+                    "value": "<h2>Revisie DSG versnellingsbak</h2>",
+                },
+                {"field_id": "acf-cta-url", "value": "/offerte-aanvragen/"},
+                {
+                    "field_id": "acf-copy",
+                    "value": "<p>Gerichte diagnose bij SHM Transmissie.</p>",
+                },
+            ],
+            "internal_links": [],
+        },
+        blueprint_context(),
+    )
+
+    assert package.title == "Revisie DSG versnellingsbak"
+    assert package.seo_title == "Revisie DSG in Schiedam | SHM"
+    assert package.meta_description == (
+        "Laat uw DSG transmissie deskundig onderzoeken en reviseren "
+        "door een ervaren specialist in Schiedam."
+    )
+    assert package.focus_keyword == "revisie dsg versnellingsbak"
+    replacements = {item.field_id: item.value for item in package.replacements}
+    assert replacements["acf-title"] == "Revisie DSG versnellingsbak"
+    assert replacements["acf-copy"] == "<p>Gerichte diagnose bij SHM Transmissie.</p>"
+
+
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
 def test_openai_compatible_accepts_blueprint_package_with_extra_metadata(
     monkeypatch, provider

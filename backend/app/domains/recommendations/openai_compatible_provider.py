@@ -1,3 +1,4 @@
+import html
 import json
 import re
 from copy import deepcopy
@@ -76,14 +77,13 @@ def _extract_page_package_payload(payload, contract):
 
 def _parse_page_package_content(content: str, context: PagePackageContext):
     contract = page_package_contract(context)
+    if context.blueprint_schema is not None:
+        return normalize_blueprint_package(json.loads(content), context)
     try:
         return contract.model_validate_json(content)
     except ValidationError:
         payload = json.loads(content)
-        if context.blueprint_schema is not None:
-            normalized = _legacy_blueprint_payload(payload, context)
-        else:
-            normalized = _extract_page_package_payload(payload, contract)
+        normalized = _extract_page_package_payload(payload, contract)
         return contract.model_validate(normalized)
 
 
@@ -236,16 +236,53 @@ def _repair_blueprint_replacement_ids(
     return repaired
 
 
+def _strip_html_to_plain_text(value: str) -> str:
+    stripped = re.sub(r"<[^>]*>", " ", value)
+    return re.sub(r"\s+", " ", html.unescape(stripped)).strip()
+
+
+def _normalize_blueprint_plain_text_values(
+    payload: dict,
+    context: PagePackageContext,
+) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized = deepcopy(payload)
+    for key in ("title", "seo_title", "meta_description", "focus_keyword"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = _strip_html_to_plain_text(value)
+
+    schema = context.blueprint_schema
+    assert schema is not None
+    value_types = {
+        field.id: field.value_type for block in schema.blocks for field in block.fields
+    }
+    for replacement in normalized.get("replacements", []):
+        if not isinstance(replacement, dict):
+            continue
+        if value_types.get(replacement.get("field_id")) not in {
+            "plain_text",
+            "heading",
+            "button_text",
+        }:
+            continue
+        value = replacement.get("value")
+        if isinstance(value, str):
+            replacement["value"] = _strip_html_to_plain_text(value)
+
+    return normalized
+
+
 def normalize_blueprint_package(
     payload: dict,
     context: PagePackageContext,
 ) -> GeneratedBlueprintPackage:
     """Normalize stored legacy output before it is sent to the WordPress bridge."""
-    try:
-        return GeneratedBlueprintPackage.model_validate(payload)
-    except ValidationError:
-        normalized = _legacy_blueprint_payload(payload, context)
-        return GeneratedBlueprintPackage.model_validate(normalized)
+    normalized = _legacy_blueprint_payload(payload, context)
+    normalized = _normalize_blueprint_plain_text_values(normalized, context)
+    return GeneratedBlueprintPackage.model_validate(normalized)
 
 
 class OpenAICompatibleRecommendationGenerator:
