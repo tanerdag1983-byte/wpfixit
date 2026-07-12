@@ -375,12 +375,22 @@ final class WPFixPilot_ACF_Adapter implements
             if ($metaKey === '') {
                 return false;
             }
-            if (update_post_meta($postId, $metaKey, $replacement['value']) === false) {
+            if (
+                update_post_meta($postId, $metaKey, $replacement['value']) === false
+                && (
+                    !function_exists('get_post_meta')
+                    || get_post_meta($postId, $metaKey, true) !== $replacement['value']
+                )
+            ) {
                 return false;
             }
             if (
                 $fieldKey !== ''
                 && update_post_meta($postId, '_' . $metaKey, $fieldKey) === false
+                && (
+                    !function_exists('get_post_meta')
+                    || get_post_meta($postId, '_' . $metaKey, true) !== $fieldKey
+                )
             ) {
                 return false;
             }

@@ -142,6 +142,9 @@ function update_post_meta(int $postId, string $key, mixed $value): mixed
     if (($GLOBALS['wpfixpilot_update_post_meta_failures'][$postId][$key] ?? false) === true) {
         return false;
     }
+    if (($GLOBALS['wpfixpilot_meta'][$postId][$key][0] ?? null) === $value) {
+        return false;
+    }
 
     $GLOBALS['wpfixpilot_meta'][$postId][$key] = [$value];
 
@@ -1116,10 +1119,23 @@ assert(
     get_post_meta(101, '_page_sections_0_heading', true) === 'field_hero_heading',
     'acf leaf meta fallback writes reference meta'
 );
+$acfNoChangeResult = $adapters['acf']->apply_replacements(
+    101,
+    $acfFailureSchema,
+    [
+        $acfHeroHeadingField['id'] => 'Opgeslagen via leaf meta',
+        $acfHeroCopyField['id'] => '<p>Opgeslagen naast ongewijzigd veld</p>',
+    ]
+);
+assert($acfNoChangeResult === true, 'acf leaf meta fallback accepts unchanged meta writes');
+assert(
+    get_post_meta(101, 'page_sections_0_copy', true) === '<p>Opgeslagen naast ongewijzigd veld</p>',
+    'acf leaf meta fallback continues after unchanged meta write'
+);
 $acfWriteFailure = $adapters['acf']->apply_replacements(
     101,
     $acfFailureSchema,
-    [$acfHeroHeadingField['id'] => 'Schrijffout']
+    [$acfHeroHeadingField['id'] => 'Echte schrijffout']
 );
 assert($acfWriteFailure === true, 'acf leaf meta fallback covers top-level write failure');
 $GLOBALS['wpfixpilot_update_post_meta_failures'][101]['page_sections_0_heading'] = true;
