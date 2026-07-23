@@ -573,3 +573,102 @@ therefore recorded as cross-task `Cannot verify`, not as a Task 3 change.
   collected and skipped as designed.
 - Independent re-review is still required before Task 3 is marked complete in
   the progress ledger.
+
+## Fourth Review Fix
+
+### Status
+
+The fourth, strictly scoped Task 3 review finding is fixed and committed.
+Migration can no longer bypass a durable cleanup checkpoint committed while
+another request waits for the legacy blueprint row lock.
+
+### Files
+
+- `backend/app/api/routes/page_blueprints.py`
+- `backend/app/domains/page_blueprints/service.py`
+- `backend/tests/page_blueprints/test_migration.py`
+- `.superpowers/sdd/task-3-report.md`
+
+### Commits
+
+- `0423fd2ec4327a1f86c42cd1edbfc2129ecc55fc` - `fix: reload
+  snapshot cleanup after migration lock`
+
+### RED Evidence
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py \
+  -k cleanup_committed_while_waiting
+```
+
+Result before production changes: `1 failed, 12 deselected`. The deterministic
+race wrote `cleanup_snapshot_id=812` directly to the database after the legacy
+row lock was acquired while retaining the stale ORM job instance. The route
+captured immediately, producing event order `["capture"]` instead of the
+required `["delete:812", "capture"]`.
+
+### GREEN Evidence
+
+- Race regression: `1 passed, 12 deselected`.
+- Race plus existing durable cleanup/retry regression:
+  `2 passed, 11 deselected`.
+- Task 3 routes, service, migration, and WordPress client:
+  `67 passed in 1.76s`.
+- Optional PostgreSQL concurrency suite: `2 skipped` because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is absent.
+- Ruff: `.venv/bin/ruff check app tests alembic` returned
+  `All checks passed!`.
+- Full backend: `333 passed, 4 skipped in 9.63s`; all four skips are optional
+  PostgreSQL concurrency tests requiring `WP_FIXPILOT_POSTGRES_TEST_URL`.
+- Alembic: `.venv/bin/alembic upgrade head` exited `0` at migration head.
+- `git diff --check` passed.
+
+### Invariant
+
+The migration transaction now acquires the legacy `PageBlueprint` row lock
+first, then locks and reloads the migration `Job` with
+`populate_existing=True`, and only then checks for a successor or captures.
+This explicitly defeats the `expire_on_commit=False` identity-map cache.
+
+If the refreshed checkpoint contains `cleanup_snapshot_id`, the same recovery
+function used at request entry runs before successor/capture logic. A delete
+failure commits the existing durable `failed/cleanup` state. A successful
+delete clears the checkpoint before capture in the same transaction. A crash
+before commit leaves the cleanup ID durable, so retry repeats the idempotent
+delete; remote `404` remains treated as already deleted.
+
+### PostgreSQL Coverage
+
+No additional optional PostgreSQL test was added. The existing optional suite
+already covers waiting for and acquiring the legacy row lock with real
+PostgreSQL transactions. The new deterministic route regression specifically
+covers the previously missing stale SQLAlchemy identity-map reload after that
+wait. The optional suite was still run and skipped only because the configured
+test URL is absent.
+
+### Task 6 Boundary
+
+Task 6 draft-job behavior remains untouched. No
+`wordpress-snapshot-draft-job-v1`, `_draft_job_payload`, plugin dispatch, or
+legacy v1 job behavior changed in this review fix.
+
+### Self-Review
+
+- Lock order is legacy blueprint, migration job, successor, then proposals.
+- The job query uses both `FOR UPDATE` and `populate_existing=True`.
+- The durable cleanup path is shared rather than reimplemented.
+- No capture occurs after a concurrent cleanup failure.
+- Existing cleanup retry and remote-delete idempotence tests remain green.
+- No authorization, source-page, plugin, proposal, or draft-job behavior was
+  changed.
+- The unrelated Task 1 report and untracked manual-handoff plan were neither
+  edited nor staged.
+
+### Concerns
+
+- Real PostgreSQL concurrency execution remains unverified locally because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured.
+- Independent re-review is still required before Task 3 is marked complete in
+  the progress ledger.
