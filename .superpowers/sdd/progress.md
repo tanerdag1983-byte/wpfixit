@@ -49,4 +49,5 @@ Preflight: fixed the stale AI settings API-module mock that omitted `apiBaseUrl`
 Task 1: complete (commits 59176b9..9047785, independent review approved after legacy v1 compatibility and document-field validation fixes; all 10 plugin suites and PHP lint passed under PHP 8.2).
 Task 2: complete (commits f4f0f05..cec676d, independent review approved after nullable-safe identity constraints and committed migration round-trip coverage; 41 focused tests passed, Ruff clean, PostgreSQL and SQLite migration checks passed).
 Task 3: complete (commits 3330697..5d86f81, independent review approved after four hardening rounds covering migration locking, durable cleanup, stale-default selection, native trust validation, and failed-proposal recovery; 333 backend tests passed with 4 optional PostgreSQL concurrency skips, Ruff clean, Alembic at head).
-Task 4: in progress.
+Task 4: complete (commits 7ee2e25..ca84d9b, independent review approved after snapshot-prompt isolation, legacy prompt-version preservation, and self-closing rich-text hardening; 60 focused tests and 351 backend tests passed with 4 optional PostgreSQL concurrency skips, Ruff clean, Alembic at head).
+Task 5: in progress.
