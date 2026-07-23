@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -12,6 +13,7 @@ from app.domains.audits import models as audit_models  # noqa: F401
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.schemas import SnapshotTextSchema
 from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.models import (
     Organization,
@@ -116,6 +118,39 @@ def valid_schema() -> dict:
     }
 
 
+def sample_snapshot_schema() -> dict:
+    def text_field(field_id: str, value_type: str) -> dict:
+        return {
+            "id": field_id,
+            "path": field_id,
+            "label": field_id,
+            "value_type": value_type,
+            "current_value": "",
+            "required": True,
+            "max_length": 180,
+        }
+
+    return {
+        "schema_version": "snapshot-text-v1",
+        "document_fields": [
+            text_field("document:title", "heading"),
+            text_field("document:slug", "plain_text"),
+            text_field("seo:title", "seo_title"),
+            text_field("seo:meta_description", "meta_description"),
+            text_field("seo:focus_keyword", "focus_keyword"),
+        ],
+        "blocks": [
+            {
+                "id": "hero",
+                "layout": "hero",
+                "label": "Hero",
+                "semantic_role": "hero",
+                "fields": [text_field("acf:hero:title", "heading")],
+            }
+        ],
+    }
+
+
 def blueprint(
     project_id: str,
     page_type: str,
@@ -138,6 +173,117 @@ def blueprint(
         is_default_for_page_type=False,
         supersedes_id=supersedes_id,
     )
+
+
+def set_native_snapshot_identity(blueprint: PageBlueprint, snapshot_id: int) -> None:
+    blueprint.wordpress_snapshot_id = snapshot_id
+    blueprint.snapshot_version = 1
+    blueprint.schema_version = "snapshot-text-v1"
+    blueprint.adapter_version = "acf-v1"
+    blueprint.capture_state = "ready"
+    blueprint.migration_state = "native"
+    blueprint.verified_at = datetime.now(UTC)
+
+
+def test_snapshot_schema_contains_document_and_block_fields() -> None:
+    schema = SnapshotTextSchema.model_validate(sample_snapshot_schema())
+
+    assert set(schema.fields_by_id()) == {
+        "document:title",
+        "document:slug",
+        "seo:title",
+        "seo:meta_description",
+        "seo:focus_keyword",
+        "acf:hero:title",
+    }
+
+
+def test_snapshot_schema_rejects_duplicate_stable_field_ids() -> None:
+    captured = sample_snapshot_schema()
+    captured["blocks"][0]["fields"][0]["id"] = "document:title"
+    schema = SnapshotTextSchema.model_validate(captured)
+
+    with pytest.raises(ValueError, match="snapshot field IDs must be unique"):
+        schema.fields_by_id()
+
+
+def test_legacy_blueprint_allows_absent_snapshot_identity(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    legacy = blueprint(projects.member_project.id, "service", version=1)
+    session.add(legacy)
+    session.commit()
+
+    session.refresh(legacy)
+    assert legacy.wordpress_snapshot_id is None
+    assert legacy.snapshot_version is None
+    assert legacy.schema_version is None
+    assert legacy.adapter_version is None
+    assert legacy.capture_state is None
+    assert legacy.migration_state is None
+    assert legacy.verified_at is None
+
+
+def test_snapshot_identity_is_complete_or_absent(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    incomplete = blueprint(projects.member_project.id, "service", version=1)
+    incomplete.wordpress_snapshot_id = 88
+    incomplete.schema_version = "snapshot-text-v1"
+    session.add(incomplete)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+@pytest.mark.parametrize(
+    ("capture_state", "migration_state", "schema_version"),
+    [
+        ("capturing", "native", "snapshot-text-v1"),
+        ("ready", "legacy", "snapshot-text-v1"),
+        ("ready", "native", "blueprint-v1"),
+    ],
+)
+def test_native_snapshot_identity_requires_ready_native_capture_contract(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+    capture_state: str,
+    migration_state: str,
+    schema_version: str,
+) -> None:
+    del source_page
+    snapshot = blueprint(projects.member_project.id, "service", version=1)
+    set_native_snapshot_identity(snapshot, 88)
+    snapshot.capture_state = capture_state
+    snapshot.migration_state = migration_state
+    snapshot.schema_version = schema_version
+    session.add(snapshot)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_snapshot_identity_is_unique_per_project(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    first = blueprint(projects.member_project.id, "service", version=1)
+    second = blueprint(projects.member_project.id, "landing", version=2)
+    set_native_snapshot_identity(first, 88)
+    set_native_snapshot_identity(second, 88)
+    session.add_all([first, second])
+
+    with pytest.raises(IntegrityError):
+        session.commit()
 
 
 @pytest.mark.parametrize(

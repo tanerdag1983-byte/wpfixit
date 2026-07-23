@@ -49,6 +49,24 @@ class PageBlueprint(Base):
             name="uq_page_blueprint_wordpress_identity",
         ),
         UniqueConstraint(
+            "project_id",
+            "wordpress_snapshot_id",
+            name="uq_page_blueprint_wordpress_snapshot_identity",
+        ),
+        CheckConstraint(
+            "("
+            "(wordpress_snapshot_id IS NULL AND snapshot_version IS NULL AND "
+            "schema_version IS NULL AND adapter_version IS NULL AND "
+            "capture_state IS NULL AND migration_state IS NULL AND "
+            "verified_at IS NULL) OR "
+            "(wordpress_snapshot_id IS NOT NULL AND snapshot_version IS NOT NULL AND "
+            "schema_version = 'snapshot-text-v1' AND adapter_version IS NOT NULL AND "
+            "capture_state = 'ready' AND migration_state = 'native' AND "
+            "verified_at IS NOT NULL)"
+            ")",
+            name="ck_page_blueprints_snapshot_identity",
+        ),
+        UniqueConstraint(
             "supersedes_id",
             name="uq_page_blueprints_supersedes_id",
         ),
@@ -84,6 +102,13 @@ class PageBlueprint(Base):
     page_type: Mapped[str] = mapped_column(String(32), nullable=False)
     source_wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
     wordpress_blueprint_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    wordpress_snapshot_id: Mapped[int | None] = mapped_column(Integer)
+    snapshot_version: Mapped[int | None] = mapped_column(Integer)
+    schema_version: Mapped[str | None] = mapped_column(String(32))
+    adapter_version: Mapped[str | None] = mapped_column(String(64))
+    capture_state: Mapped[str | None] = mapped_column(String(24))
+    migration_state: Mapped[str | None] = mapped_column(String(24))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     builder: Mapped[str] = mapped_column(String(32), nullable=False)
     seo_plugin: Mapped[str] = mapped_column(String(32), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)

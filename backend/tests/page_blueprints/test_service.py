@@ -14,6 +14,7 @@ from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.service import (
     create_blueprint_version,
     set_default_blueprint,
+    snapshot_schema_from_capture,
 )
 from app.domains.projects.models import (
     Organization,
@@ -116,6 +117,52 @@ def valid_schema() -> dict:
             }
         ],
     }
+
+
+def snapshot_capture() -> dict:
+    def text_field(field_id: str, value_type: str) -> dict:
+        return {
+            "id": field_id,
+            "path": field_id,
+            "label": field_id,
+            "value_type": value_type,
+            "current_value": "",
+            "required": True,
+            "max_length": 180,
+        }
+
+    return {
+        "content_schema": {
+            "schema_version": "snapshot-text-v1",
+            "document_fields": [
+                text_field("document:title", "heading"),
+                text_field("document:slug", "plain_text"),
+                text_field("seo:title", "seo_title"),
+                text_field("seo:meta_description", "meta_description"),
+                text_field("seo:focus_keyword", "focus_keyword"),
+            ],
+            "blocks": [
+                {
+                    "id": "hero",
+                    "layout": "hero",
+                    "label": "Hero",
+                    "semantic_role": "hero",
+                    "fields": [text_field("acf:hero:title", "heading")],
+                }
+            ],
+        }
+    }
+
+
+def test_snapshot_schema_from_capture_validates_plugin_contract() -> None:
+    schema = snapshot_schema_from_capture(snapshot_capture())
+
+    assert schema.fields_by_id()["document:title"].value_type == "heading"
+
+
+def test_snapshot_schema_from_capture_rejects_legacy_blueprint_package() -> None:
+    with pytest.raises(ValidationError):
+        snapshot_schema_from_capture({"content_schema": valid_schema()})
 
 
 def blueprint(

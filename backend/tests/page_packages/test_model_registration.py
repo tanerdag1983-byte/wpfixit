@@ -10,7 +10,10 @@ def test_page_package_models_register_blueprint_table() -> None:
             (
                 "from app.core.database import Base; "
                 "import app.domains.page_packages.models; "
-                "assert 'page_blueprints' in Base.metadata.tables"
+                "blueprints = Base.metadata.tables['page_blueprints']; "
+                "assert 'wordpress_snapshot_id' in blueprints.c; "
+                "assert 'snapshot_version' in blueprints.c; "
+                "assert 'schema_version' in blueprints.c"
             ),
         ],
         capture_output=True,

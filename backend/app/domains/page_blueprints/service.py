@@ -9,7 +9,7 @@ from app.domains.page_blueprints.lifecycle import (
     BlueprintLifecycleState,
 )
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_blueprints.schemas import BlueprintSchema
+from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 
 _ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
 
@@ -55,6 +55,12 @@ def legacy_blueprint_candidates(
 
 def _validated_schema(content_schema: dict) -> dict:
     return BlueprintSchema.model_validate(content_schema).model_dump(mode="python")
+
+
+def snapshot_schema_from_capture(captured: dict) -> SnapshotTextSchema:
+    schema = SnapshotTextSchema.model_validate(captured["content_schema"])
+    schema.fields_by_id()
+    return schema
 
 
 def _validated_state(state: str) -> str:
