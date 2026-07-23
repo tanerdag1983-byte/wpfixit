@@ -1,7 +1,9 @@
 from dataclasses import dataclass
-from uuid import NAMESPACE_URL, uuid5
+from datetime import datetime
+from typing import Literal
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.domains.page_blueprints.lifecycle import (
@@ -21,6 +23,13 @@ class LegacyBlueprintCandidate:
     builder: str
     seo_plugin: str
     state: BlueprintLifecycleState = "capture_required"
+
+
+@dataclass(frozen=True)
+class SnapshotMigrationResult:
+    blueprint_id: str
+    state: Literal["migrated", "incompatible", "failed"]
+    action: Literal["none", "new_proposal", "recapture"]
 
 
 def legacy_blueprint_candidates(
@@ -54,6 +63,10 @@ def legacy_blueprint_candidates(
 
 
 def _validated_schema(content_schema: dict) -> dict:
+    if content_schema.get("schema_version") == "snapshot-text-v1":
+        schema = SnapshotTextSchema.model_validate(content_schema)
+        schema.fields_by_id()
+        return schema.model_dump(mode="python")
     return BlueprintSchema.model_validate(content_schema).model_dump(mode="python")
 
 
@@ -103,6 +116,13 @@ def create_blueprint_version(
     structure_hash: str,
     content_schema: dict,
     state: BlueprintLifecycleState,
+    wordpress_snapshot_id: int | None = None,
+    snapshot_version: int | None = None,
+    schema_version: str | None = None,
+    adapter_version: str | None = None,
+    capture_state: str | None = None,
+    migration_state: str | None = None,
+    verified_at: datetime | None = None,
     commit: bool = True,
 ) -> PageBlueprint:
     validated_schema = _validated_schema(content_schema)
@@ -115,6 +135,13 @@ def create_blueprint_version(
         page_type=original.page_type,
         source_wordpress_page_id=original.source_wordpress_page_id,
         wordpress_blueprint_id=wordpress_blueprint_id,
+        wordpress_snapshot_id=wordpress_snapshot_id,
+        snapshot_version=snapshot_version,
+        schema_version=schema_version,
+        adapter_version=adapter_version,
+        capture_state=capture_state,
+        migration_state=migration_state,
+        verified_at=verified_at,
         builder=original.builder,
         seo_plugin=original.seo_plugin,
         version=next_version,
@@ -132,3 +159,109 @@ def create_blueprint_version(
         session.flush()
 
     return replacement
+
+
+def snapshot_block_fields_are_compatible(
+    legacy_schema: dict,
+    snapshot_schema: dict,
+) -> bool:
+    legacy = BlueprintSchema.model_validate(legacy_schema)
+    snapshot = SnapshotTextSchema.model_validate(snapshot_schema)
+    legacy_fields = {
+        field.id: field.value_type for block in legacy.blocks for field in block.fields
+    }
+    snapshot_fields = {
+        field.id: field.value_type
+        for block in snapshot.blocks
+        for field in block.fields
+    }
+    return legacy_fields == snapshot_fields
+
+
+def migrate_unapproved_proposals(
+    session: Session,
+    legacy: PageBlueprint,
+    successor: PageBlueprint,
+) -> bool:
+    from app.domains.jobs.models import Job
+    from app.domains.page_packages.models import PagePackageProposal
+
+    proposals = session.scalars(
+        select(PagePackageProposal).where(
+            PagePackageProposal.project_id == legacy.project_id,
+            PagePackageProposal.blueprint_id == legacy.id,
+            PagePackageProposal.is_current.is_(True),
+        )
+    ).all()
+    compatible = snapshot_block_fields_are_compatible(
+        legacy.content_schema,
+        successor.content_schema,
+    )
+    incompatible = False
+
+    for proposal in proposals:
+        if (
+            proposal.state in {"approved", "draft_in_progress", "draft_created"}
+            or proposal.approved_by is not None
+            or proposal.approved_at is not None
+        ):
+            continue
+        if not compatible:
+            proposal.state = "failed"
+            job = session.get(Job, proposal.job_id)
+            if job is not None:
+                job.error_code = "snapshot_migration_requires_generation"
+            incompatible = True
+            continue
+
+        next_id = str(uuid4())
+        job = Job(
+            id=str(uuid4()),
+            project_id=proposal.project_id,
+            job_type="page_package_snapshot_migration",
+            state="completed",
+            progress=100,
+            checkpoint={
+                "legacy_proposal_version_id": proposal.id,
+                "snapshot_blueprint_id": successor.id,
+            },
+        )
+        next_version = PagePackageProposal(
+            id=next_id,
+            project_id=proposal.project_id,
+            opportunity_id=proposal.opportunity_id,
+            job_id=job.id,
+            state="proposed",
+            proposal_group_id=proposal.proposal_group_id,
+            version_number=proposal.version_number + 1,
+            parent_version_id=proposal.id,
+            current_version_id=next_id,
+            is_current=True,
+            generation_mode=proposal.generation_mode,
+            target_block_id=proposal.target_block_id,
+            user_instruction=proposal.user_instruction,
+            blueprint_id=successor.id,
+            blueprint_version=successor.version,
+            blueprint_structure_hash=successor.structure_hash,
+            package=proposal.package,
+            rendered_html=proposal.rendered_html,
+            config_snapshot=proposal.config_snapshot,
+            provider=proposal.provider,
+            model=proposal.model,
+            prompt_version=proposal.prompt_version,
+            input_tokens=proposal.input_tokens,
+            output_tokens=proposal.output_tokens,
+            proposed_by=proposal.proposed_by,
+        )
+        proposal.is_current = False
+        proposal.current_version_id = next_id
+        session.query(PagePackageProposal).filter(
+            PagePackageProposal.proposal_group_id == proposal.proposal_group_id
+        ).update(
+            {PagePackageProposal.current_version_id: next_id},
+            synchronize_session="fetch",
+        )
+        session.add_all([job, next_version])
+
+    session.flush()
+    return incompatible

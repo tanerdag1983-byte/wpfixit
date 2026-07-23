@@ -8,11 +8,34 @@ from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import PagePackageProposal
+from app.domains.wordpress.models import WordPressPage
 
 
 def valid_schema(*, role: str = "hero") -> dict:
+    def field(field_id: str, path: str, value_type: str) -> dict:
+        return {
+            "id": field_id,
+            "path": path,
+            "label": field_id,
+            "value_type": value_type,
+            "current_value": "",
+            "required": True,
+            "max_length": 180,
+        }
+
     return {
-        "schema_version": "blueprint-v1",
+        "schema_version": "snapshot-text-v1",
+        "document_fields": [
+            field("document:title", "post_title", "heading"),
+            field("document:slug", "post_name", "plain_text"),
+            field("seo:title", "seo.title", "seo_title"),
+            field(
+                "seo:meta_description",
+                "seo.meta_description",
+                "meta_description",
+            ),
+            field("seo:focus_keyword", "seo.focus_keyword", "focus_keyword"),
+        ],
         "blocks": [
             {
                 "id": "block-hero",
@@ -39,6 +62,9 @@ def captured_blueprint(*, wordpress_id: int = 901, version: int = 1) -> dict:
     return {
         "created": True,
         "wordpress_blueprint_id": wordpress_id,
+        "wordpress_snapshot_id": wordpress_id,
+        "snapshot_version": version,
+        "schema_version": "snapshot-text-v1",
         "source_page_id": 19,
         "builder": "acf",
         "page_type": "service",
@@ -65,6 +91,7 @@ class FakeBlueprintBridge:
         captured = self.captures.pop(0)
         captured["page_type"] = payload["page_type"]
         captured["version"] = payload["version"]
+        captured["snapshot_version"] = payload["version"]
         return captured
 
     def blueprint(self, wordpress_blueprint_id: int) -> dict:
@@ -119,6 +146,37 @@ def test_capture_timeout_returns_actionable_gateway_error(
     assert response.json()["detail"] == (
         "WordPress had meer tijd nodig om deze pagina vast te leggen. Probeer opnieuw."
     )
+
+
+def test_publishing_source_after_capture_does_not_stale_snapshot(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    bridge.captures = [snapshot_capture()]
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+
+    source = session.get(WordPressPage, "source-page")
+    source.status = "draft"
+    session.commit()
+    created = create_blueprint(client, projects.member_project.id)
+    source.status = "publish"
+    session.commit()
+    bridge.inspections[901] = snapshot_capture(created=False)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{created['id']}/verify"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["capture_state"] == "ready"
+    assert response.json()["wordpress_snapshot_id"] == 901
 
 
 def test_manager_captures_lists_defaults_and_versions_blueprint(
@@ -279,12 +337,12 @@ def test_validation_marks_hash_drift_stale(client, auth_as, projects, monkeypatc
     ("override", "expected_state"),
     [
         ({"status": "invalid"}, "invalid"),
-        ({"version": 2}, "stale"),
+        ({"snapshot_version": 2}, "stale"),
         ({"builder": "elementor"}, "stale"),
         ({"seo_plugin": "rank_math"}, "stale"),
         ({"page_type": "brand"}, "stale"),
         ({"source_page_id": 77}, "stale"),
-        ({"wordpress_blueprint_id": 999}, "stale"),
+        ({"wordpress_snapshot_id": 999}, "stale"),
     ],
 )
 def test_validation_rejects_incompatible_wordpress_identity(
@@ -359,8 +417,13 @@ def test_invalid_capture_is_removed_and_not_persisted(
 @pytest.mark.parametrize(
     "capture_override",
     [
-        {"wordpress_blueprint_id": 0},
-        {"wordpress_blueprint_id": "not-an-id"},
+        {"wordpress_snapshot_id": 0, "wordpress_blueprint_id": 0},
+        {
+            "wordpress_snapshot_id": "not-an-id",
+            "wordpress_blueprint_id": "not-an-id",
+        },
+        {"wordpress_blueprint_id": 999},
+        {"post_type": "page"},
         {"created": False},
     ],
 )
@@ -392,6 +455,7 @@ def test_duplicate_capture_identity_does_not_delete_existing_clone(
     bridge = FakeBlueprintBridge()
     monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
     create_blueprint(client, projects.member_project.id)
+    bridge.captures[0]["wordpress_snapshot_id"] = 901
     bridge.captures[0]["wordpress_blueprint_id"] = 901
 
     response = client.post(

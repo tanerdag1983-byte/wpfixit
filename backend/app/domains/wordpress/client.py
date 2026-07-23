@@ -117,10 +117,16 @@ class WordPressClient:
         return self._post("draft-pages", payload)
 
     def capture_blueprint(self, payload: dict) -> dict:
+        return self.capture_snapshot(payload)
+
+    def capture_snapshot(self, payload: dict) -> dict:
         return self._post("blueprints", payload, timeout=120)
 
     def blueprint(self, wordpress_blueprint_id: int) -> dict:
-        return self._get(f"blueprints/{wordpress_blueprint_id}")
+        return self.snapshot(wordpress_blueprint_id)
+
+    def snapshot(self, wordpress_snapshot_id: int) -> dict:
+        return self._get(f"blueprints/{wordpress_snapshot_id}")
 
     def create_blueprint_draft(
         self, wordpress_blueprint_id: int, payload: dict
@@ -128,4 +134,7 @@ class WordPressClient:
         return self._post(f"blueprints/{wordpress_blueprint_id}/drafts", payload)
 
     def delete_blueprint(self, wordpress_blueprint_id: int) -> dict:
-        return self._delete(f"blueprints/{wordpress_blueprint_id}")
+        return self.delete_snapshot(wordpress_blueprint_id)
+
+    def delete_snapshot(self, wordpress_snapshot_id: int) -> dict:
+        return self._delete(f"blueprints/{wordpress_snapshot_id}")
