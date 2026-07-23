@@ -62,6 +62,112 @@ cd backend && .venv/bin/alembic upgrade head
 PostgreSQL migration command exited 0 at head.
 ```
 
+# Versioned Template Snapshots Release 1 - Task 4
+
+## Outcome
+
+Implemented the strict `snapshot-text-v1` field-ID-only generation contract from
+base commit `7ee2e256e8be3350791351bf7d893b86e2367aeb`.
+
+Commits:
+
+- `18ff8d2` - `feat: generate snapshot text by field id`
+- `192a8a6` - `fix: reject encoded snapshot markup`
+
+## RED And GREEN
+
+The existing generation/provider baseline was `34 passed`. After adding the
+snapshot contract and provider regressions first, the focused command failed
+during collection because `normalize_snapshot_text_package` and
+`GeneratedSnapshotTextPackage` did not exist.
+
+Additional focused RED cases proved that:
+
+- URLs in rich-text tags removed by sanitization were initially not validated;
+- encoded markup could initially reappear after entity decoding;
+- nested entity encoding initially survived as encoded markup.
+
+Each regression was observed failing before its production fix. Final focused
+verification:
+
+```text
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_packages/test_generation.py \
+  tests/page_packages/test_provider_page_packages.py \
+  tests/recommendations/test_openai_provider.py \
+  tests/recommendations/test_openai_compatible_provider.py \
+  tests/recommendations/test_anthropic_provider.py \
+  tests/recommendations/test_gemini_provider.py
+
+57 passed in 0.06s
+```
+
+## Invariants
+
+- `snapshot-text-v1` accepts only top-level `text_replacements`.
+- Snapshot providers never call legacy page-shape unwrap or field-ID repair.
+- Plain text, headings, buttons, metadata, slugs, rich text, and URLs normalize
+  according to their schema field type.
+- Optional invalid fields produce local field errors without blocking otherwise
+  complete required fields.
+- Missing or invalid required fields block readiness.
+- Unknown field IDs are ignored and reported with a 100-ID bound.
+- `seo:focus_keyword` always uses the opportunity keyword.
+- Slugs are validated after markup and entity normalization.
+- Rich text uses a bounded allowlist, and URL attributes are checked before
+  sanitization against approved URLs.
+- Entity decoding reaches a bounded stable value before safety checks; values
+  exceeding that bound fail locally as `unsafe_html`.
+- Existing page-package, `blueprint-v1`, and all provider flows remain green.
+
+## Changed Files
+
+- `backend/app/domains/page_packages/schemas.py`
+- `backend/app/domains/page_packages/generation.py`
+- `backend/app/domains/recommendations/openai_compatible_provider.py`
+- `backend/tests/page_packages/test_generation.py`
+- `backend/tests/page_packages/test_provider_page_packages.py`
+- `backend/tests/recommendations/test_openai_provider.py`
+- `backend/tests/recommendations/test_openai_compatible_provider.py`
+- `backend/tests/recommendations/test_anthropic_provider.py`
+- `backend/tests/recommendations/test_gemini_provider.py`
+
+OpenAI, Anthropic, and Gemini use the shared strict contract selection and parser
+path. Only the OpenAI-compatible provider required a provider-specific production
+branch to bypass its legacy unwrap/repair logic.
+
+## Verification
+
+```text
+cd backend
+.venv/bin/ruff check app tests alembic
+All checks passed!
+
+.venv/bin/python -m pytest --import-mode=importlib -q
+348 passed, 4 skipped in 10.71s
+
+.venv/bin/alembic upgrade head
+PostgreSQL migration command exited 0 at head.
+```
+
+The four skips are the optional PostgreSQL concurrency suites requiring
+`WP_FIXPILOT_POSTGRES_TEST_URL`; no Task 4 test was skipped.
+
+## Independent Review
+
+The first review found encoded markup could be reintroduced after plain-text tag
+stripping. A rereview then found nested entity encoding was not yet canonical.
+Both Important findings were fixed with RED regressions. Final independent
+rereview of `18ff8d2..192a8a6` reported no findings and approved Task 4; its
+focused generation run passed `21/21`.
+
+## Remaining Concerns
+
+No open Critical or Important findings. The only unexecuted checks are the four
+environment-dependent PostgreSQL concurrency tests noted above; they are unrelated
+to the pure generation/provider changes in this task.
+
 ## Third Review Adjudication
 
 The third review found that WordPress may parse classic/WPBakery content as a nameless
