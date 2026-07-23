@@ -38,3 +38,12 @@ Task 4: complete (commit 64952fa, local review because subagent usage was exhaus
 Task 5: complete (commit 0accc1a, local review because subagent usage was exhausted; all plugin suites and PHP lint passed).
 Task 6: complete (local review because subagent usage was exhausted; frontend 26 files/87 tests passed, lint/build clean; focused backend proposal and draft-job routes 18 passed, Ruff clean).
 Task 7: in progress.
+
+# Versioned Template Snapshots Release 1 SDD Progress
+
+Plan: docs/superpowers/plans/2026-07-23-versioned-template-snapshots-release-1.md
+Start: 980b8c5
+
+Baseline: backend 281 passed, 3 optional PostgreSQL skips, Ruff clean; frontend 26 files/88 tests passed, lint/build clean; all plugin suites and PHP lint passed under PHP 8.2.
+Preflight: fixed the stale AI settings API-module mock that omitted `apiBaseUrl`.
+Task 1: in progress.

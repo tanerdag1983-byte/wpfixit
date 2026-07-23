@@ -6,6 +6,7 @@ import { AiSettingsPanel } from "./AiSettingsPanel";
 const apiRequest = vi.fn();
 
 vi.mock("../../lib/api", () => ({
+  apiBaseUrl: "https://api.example.test",
   apiRequest: (...args: unknown[]) => apiRequest(...args),
 }));
 
