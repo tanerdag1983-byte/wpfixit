@@ -287,3 +287,129 @@ rewriting the legacy blueprint identity.
   `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured.
 - Independent re-review is still required before Task 3 is marked complete in
   the progress ledger.
+
+## Second Review Fix
+
+### Status
+
+All Important and Minor findings from the second Task 3 re-review are fixed and
+committed. The progress ledger remains unchanged pending another independent
+review.
+
+### Files
+
+- `backend/app/api/routes/page_blueprints.py`
+- `backend/app/domains/page_blueprints/service.py`
+- `backend/app/domains/page_packages/schemas.py`
+- `backend/tests/page_blueprints/test_migration.py`
+- `.superpowers/sdd/task-3-report.md`
+
+### Commits
+
+- `ed819a5adfbb615d3b586b32bee8d51a9e2af560` - `fix: close snapshot
+  migration rereview findings`
+
+### RED Evidence
+
+Real migrated-proposal approval:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py \
+  -k versions_compatible_proposal
+```
+
+Result before the schema compatibility change: `1 failed, 7 deselected`.
+The unmocked `_generation_context` raised a `PagePackageContext` validation
+error because `snapshot-text-v1` and `document_fields` were rejected by the
+legacy-only `BlueprintSchema` field.
+
+Durable remote cleanup:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py \
+  -k durable_remote_cleanup
+```
+
+Result before the recovery checkpoint change: `1 failed, 8 deselected`.
+The first failed migration returned `action=recapture` instead of retaining the
+trusted snapshot ID as `action=cleanup`.
+
+Active-proposal and concurrent-successor handling:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py \
+  -k 'generating_proposal or concurrent_successor'
+```
+
+Result before the locking/recheck change: `2 failed, 9 deselected`. Migration
+captured and cloned a current `generating` proposal, while a successor created
+after candidate discovery left the route in failed/recapture instead of
+terminalizing the durable migration job.
+
+### GREEN Evidence
+
+- Real migrated-proposal approval: `1 passed, 7 deselected`.
+- Durable cleanup retry: `1 passed, 8 deselected`.
+- Active proposal and concurrent successor: `2 passed, 9 deselected`.
+- Task 3 routes, migration, and WordPress client: `51 passed in 1.12s`.
+- Real proposal approval/generation: `25 passed in 0.62s`.
+- Ruff: `.venv/bin/ruff check app tests alembic` returned
+  `All checks passed!`.
+- Full backend: `318 passed, 3 skipped in 8.65s`.
+- Alembic: `.venv/bin/alembic upgrade head` exited `0` at migration head.
+- `git diff --check` and the staged diff check passed.
+- Plugin suites were not rerun because no plugin file changed in this review
+  fix.
+
+### Invariants
+
+- `PagePackageContext.blueprint_schema` accepts the typed union
+  `BlueprintSchema | SnapshotTextSchema`; legacy parsing and validation remain
+  unchanged, while both schemas use the same block-field replacement checks.
+- A trusted snapshot ID is committed to
+  `Job.checkpoint.cleanup_snapshot_id` before remote cleanup is attempted.
+  Cleanup failure leaves `state=failed`, `action=cleanup`, and the exact ID
+  durable. Retry cannot capture until deleting that ID succeeds. A crash after
+  remote deletion is safe because retry treats remote `404` as success.
+- Migration locks the legacy row and selects all current proposal rows with
+  `FOR UPDATE` before remote capture. Current `generating` or
+  `draft_in_progress` proposals produce durable `state=pending`,
+  `action=wait`, and `blocked_proposal_ids`; they are not cloned or changed.
+- Migration rechecks for a successor after entering `migrating`. If another
+  migration created one after candidate discovery, the job commits terminal
+  `migrated` with that successor ID and performs no capture.
+
+### Self-Review
+
+- The migrated proposal route test now uses real `_generation_context`, real
+  replacement validation, and real WordPress identity validation. Only the
+  transport client factory is replaced by the test bridge.
+- Snapshot document fields do not weaken or bypass the existing block
+  replacement contract; Task 4 can extend the generation output separately.
+- Cleanup state survives request retries and is not reset by
+  `prepare_snapshot_migration`.
+- Cleanup success clears and commits the recovery ID before recapture.
+- The pre-capture proposal locks are held in the same transaction as successor
+  creation and immutable proposal versioning.
+- The generation worker's current legacy proposal remains current and
+  `generating` while migration waits.
+- Concurrent successor discovery records a terminal migration state instead of
+  leaving the job stuck at `migrating`.
+- No source page writes/deletes, authorization changes, plugin changes, or
+  legacy blueprint identity rewrites were introduced.
+- The unrelated Task 1 report and untracked manual-handoff plan were neither
+  edited nor staged.
+
+### Concerns
+
+- The full backend run skipped three PostgreSQL concurrency tests because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured. The proposal selection
+  explicitly uses SQLAlchemy `with_for_update()` for PostgreSQL row locking.
+- Independent re-review is still required before Task 3 is marked complete in
+  the progress ledger.
