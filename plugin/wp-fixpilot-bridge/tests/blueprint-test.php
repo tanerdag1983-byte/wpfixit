@@ -616,6 +616,7 @@ require_once __DIR__ . '/../includes/class-template-snapshot-store.php';
 require_once __DIR__ . '/../includes/class-post-cloner.php';
 require_once __DIR__ . '/../includes/class-page-package-controller.php';
 require_once __DIR__ . '/../includes/class-blueprint-controller.php';
+require_once __DIR__ . '/../includes/class-draft-job-controller.php';
 require_once __DIR__ . '/../includes/class-rest-controller.php';
 
 $cloner = new WPFixPilot_Post_Cloner();
@@ -891,6 +892,75 @@ assert($captured['created'] === true);
 $read = $controller->read(200);
 assert($read['content_schema']['schema_version'] === 'snapshot-text-v1');
 assert($read['structure_hash'] === $captured['structure_hash']);
+
+$documentFieldDraft = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => 'proposal-document-fields',
+    'replacements' => array_merge(valid_replacements(), [
+        'document:title' => 'Documentgestuurde titel',
+        'document:slug' => 'documentgestuurde-titel',
+        'seo:title' => 'Document SEO titel',
+        'seo:meta_description' => 'Document SEO omschrijving',
+        'seo:focus_keyword' => 'document zoekwoord',
+    ]),
+    'seo' => [
+        'title' => 'Overschreven SEO titel',
+        'description' => 'Overschreven SEO omschrijving',
+        'keyword' => 'overschreven zoekwoord',
+    ],
+]);
+assert(!is_wp_error($documentFieldDraft));
+$documentFieldDraftId = (int) $documentFieldDraft['wordpress_object_id'];
+assert(get_post($documentFieldDraftId)->post_title === 'Documentgestuurde titel');
+assert(get_post($documentFieldDraftId)->post_name === 'documentgestuurde-titel');
+assert(get_post_meta($documentFieldDraftId, '_yoast_wpseo_title', true) === 'Document SEO titel');
+assert(get_post_meta($documentFieldDraftId, '_yoast_wpseo_metadesc', true) === 'Document SEO omschrijving');
+assert(get_post_meta($documentFieldDraftId, '_yoast_wpseo_focuskw', true) === 'document zoekwoord');
+assert(
+    get_post_meta($documentFieldDraftId, 'fake_blueprint_tree', true)[0]['field-title']
+    === 'Nieuwe titel'
+);
+
+seed_source_page(42, 'Legacy blueprint bron');
+get_post(42)->post_status = 'draft';
+$legacyStructureHash = (new Test_Blueprint_Adapter())->structure_hash(42);
+update_post_meta(42, '_wp_fixpilot_blueprint', '1');
+update_post_meta(42, '_wp_fixpilot_blueprint_version', 3);
+update_post_meta(42, '_wp_fixpilot_source_page_id', 19);
+update_post_meta(42, '_wp_fixpilot_blueprint_builder', 'acf');
+update_post_meta(42, '_wp_fixpilot_blueprint_page_type', 'service');
+update_post_meta(42, '_wp_fixpilot_structure_hash', $legacyStructureHash);
+update_post_meta(42, '_wp_fixpilot_content_schema', valid_test_blueprint_schema(42));
+update_post_meta(42, '_wp_fixpilot_seo_plugin', 'yoast');
+$legacyJobController = new WPFixPilot_Draft_Job_Controller(new stdClass(), $controller);
+$legacyJob = [
+    'contract_version' => 'wordpress-draft-job-v1',
+    'payload' => [
+        'proposal_version_id' => 'legacy-proposal-42',
+        'wordpress_blueprint_id' => 42,
+        'expected_version' => 3,
+        'expected_structure_hash' => $legacyStructureHash,
+        'idempotency_key' => 'legacy-proposal-42',
+        'replacements' => valid_replacements(),
+        'approved_urls' => [],
+        'seo' => [
+            'title' => 'Legacy SEO titel',
+            'description' => 'Legacy SEO omschrijving',
+            'keyword' => 'legacy zoekwoord',
+        ],
+    ],
+];
+$legacyJobDraft = $legacyJobController->process_payload($legacyJob);
+assert(!is_wp_error($legacyJobDraft));
+assert(get_post($legacyJobDraft['wordpress_object_id'])->post_status === 'draft');
+assert(get_post($legacyJobDraft['wordpress_object_id'])->post_type === 'page');
+$legacyJobReplay = $legacyJobController->process_payload($legacyJob);
+assert(!is_wp_error($legacyJobReplay));
+assert($legacyJobReplay['wordpress_object_id'] === $legacyJobDraft['wordpress_object_id']);
+wp_delete_post($documentFieldDraftId, true);
+wp_delete_post((int) $legacyJobDraft['wordpress_object_id'], true);
+wp_delete_post(42, true);
 
 $invalidDraftPayloadCases = [
     [

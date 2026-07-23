@@ -238,11 +238,7 @@ final class WPFixPilot_Blueprint_Controller
             return $blueprint;
         }
 
-        $storedVersion = (int) get_post_meta(
-            $blueprintId,
-            '_wp_fixpilot_snapshot_version',
-            true
-        );
+        $storedVersion = $this->blueprint_version($blueprintId);
         if ($storedVersion !== $validatedPayload['expected_version']) {
             return new WP_Error(
                 'wp_fixpilot_blueprint_conflict',
@@ -277,11 +273,26 @@ final class WPFixPilot_Blueprint_Controller
         if (is_wp_error($replacements)) {
             return $replacements;
         }
+        [$documentReplacements, $builderReplacements] = $this->split_replacements(
+            $replacements
+        );
+        $title = $documentReplacements['document:title']
+            ?? $validatedPayload['title'];
+        $slug = $documentReplacements['document:slug']
+            ?? $validatedPayload['slug'];
+        $seo = [
+            'title' => $documentReplacements['seo:title']
+                ?? $validatedPayload['seo']['title'],
+            'description' => $documentReplacements['seo:meta_description']
+                ?? $validatedPayload['seo']['description'],
+            'keyword' => $documentReplacements['seo:focus_keyword']
+                ?? $validatedPayload['seo']['keyword'],
+        ];
         $requestHash = $this->request_hash(
-            $validatedPayload['title'],
-            $validatedPayload['slug'],
+            $title,
+            $slug,
             $replacements,
-            $validatedPayload['seo'],
+            $seo,
             $validatedPayload['approved_urls']
         );
         $capturedSeoPlugin = $this->captured_seo_plugin($blueprintId);
@@ -362,7 +373,7 @@ final class WPFixPilot_Blueprint_Controller
             (string) $blueprint->post_title,
             false,
             $adapter->clone_meta_keys($blueprintId),
-            'page'
+            $this->is_snapshot($blueprintId) ? 'page' : null
         );
         if (is_wp_error($draftId)) {
             return $draftId;
@@ -388,7 +399,11 @@ final class WPFixPilot_Blueprint_Controller
                 }
             }
 
-            $write = $adapter->apply_replacements($draftId, $schema, $replacements);
+            $write = $adapter->apply_replacements(
+                $draftId,
+                $schema,
+                $builderReplacements
+            );
             if (is_wp_error($write)) {
                 $cleanup = $this->cleanup_draft($draftId);
                 if (is_wp_error($cleanup)) {
@@ -399,7 +414,7 @@ final class WPFixPilot_Blueprint_Controller
 
             $seoWrite = $this->write_seo(
                 $draftId,
-                $validatedPayload['seo'],
+                $seo,
                 $capturedSeoPlugin
             );
             if (is_wp_error($seoWrite)) {
@@ -415,8 +430,8 @@ final class WPFixPilot_Blueprint_Controller
                     [
                         'ID' => $draftId,
                         'post_status' => 'draft',
-                        'post_title' => $validatedPayload['title'],
-                        'post_name' => $validatedPayload['slug'],
+                        'post_title' => $title,
+                        'post_name' => $slug,
                     ],
                     static fn (mixed $value): bool => $value !== ''
                 ),
@@ -707,7 +722,32 @@ final class WPFixPilot_Blueprint_Controller
 
     private function blueprint(int $blueprintId): WP_Post|WP_Error
     {
-        return (new WPFixPilot_Template_Snapshot_Store())->assert_snapshot($blueprintId);
+        $store = new WPFixPilot_Template_Snapshot_Store();
+        if ($store->is_snapshot($blueprintId)) {
+            return $store->assert_snapshot($blueprintId);
+        }
+
+        $post = get_post($blueprintId);
+        if (
+            !$post instanceof WP_Post
+            || !in_array($post->post_type, ['page', 'post'], true)
+            || get_post_meta($blueprintId, '_wp_fixpilot_blueprint', true) !== '1'
+        ) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_not_found',
+                'Blueprintpagina niet gevonden.',
+                ['status' => 404]
+            );
+        }
+        if ($post->post_status !== 'draft') {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_not_draft',
+                'Blueprintpagina is geen concept meer.',
+                ['status' => 409]
+            );
+        }
+
+        return $post;
     }
 
     /** @return array{adapter: WPFixPilot_Blueprint_Adapter, schema: array<string, mixed>, structure_hash: string}|WP_Error */
@@ -771,6 +811,11 @@ final class WPFixPilot_Blueprint_Controller
                 }
             }
         }
+        foreach ((array) ($schema['document_fields'] ?? []) as $field) {
+            if (isset($field['id']) && $field['id'] !== '') {
+                $fieldIds[] = (string) $field['id'];
+            }
+        }
         return $fieldIds;
     }
 
@@ -806,7 +851,12 @@ final class WPFixPilot_Blueprint_Controller
     ): array|WP_Error {
         $fields = $this->schema_fields($schema);
         foreach ($fields as $fieldId => $field) {
-            if (!empty($field['required']) && !array_key_exists($fieldId, $replacements)) {
+            if (
+                !empty($field['required'])
+                && !array_key_exists($fieldId, $replacements)
+                && !str_starts_with($fieldId, 'document:')
+                && !str_starts_with($fieldId, 'seo:')
+            ) {
                 return $this->invalid_request_error();
             }
         }
@@ -836,6 +886,24 @@ final class WPFixPilot_Blueprint_Controller
             if (
                 in_array($valueType, ['plain_text', 'heading', 'button_text'], true)
                 && $this->contains_html_markup($value)
+            ) {
+                return $this->invalid_request_error();
+            }
+
+            if (
+                in_array(
+                    $valueType,
+                    ['seo_title', 'meta_description', 'focus_keyword'],
+                    true
+                )
+                && $this->contains_html_markup($value)
+            ) {
+                return $this->invalid_request_error();
+            }
+
+            if (
+                $fieldId === 'document:slug'
+                && sanitize_title($value) !== $value
             ) {
                 return $this->invalid_request_error();
             }
@@ -873,6 +941,16 @@ final class WPFixPilot_Blueprint_Controller
                 ) {
                     $fields[$field['id']] = $field;
                 }
+            }
+        }
+
+        foreach ((array) ($schema['document_fields'] ?? []) as $field) {
+            if (
+                is_array($field)
+                && isset($field['id'])
+                && is_string($field['id'])
+            ) {
+                $fields[$field['id']] = $field;
             }
         }
 
@@ -945,18 +1023,7 @@ final class WPFixPilot_Blueprint_Controller
                 '_wp_fixpilot_blueprint_page_type',
                 true
             ),
-            'version' => (int) get_post_meta(
-                $blueprintId,
-                '_wp_fixpilot_snapshot_version',
-                true
-            ),
-            'wordpress_snapshot_id' => $blueprintId,
-            'snapshot_version' => (int) get_post_meta(
-                $blueprintId,
-                '_wp_fixpilot_snapshot_version',
-                true
-            ),
-            'schema_version' => (string) ($schema['schema_version'] ?? ''),
+            'version' => $this->blueprint_version($blueprintId),
             'structure_hash' => $structureHash,
             'content_schema' => $schema,
             'seo_plugin' => (string) get_post_meta(
@@ -964,7 +1031,11 @@ final class WPFixPilot_Blueprint_Controller
                 '_wp_fixpilot_seo_plugin',
                 true
             ),
-        ];
+        ] + ($this->is_snapshot($blueprintId) ? [
+            'wordpress_snapshot_id' => $blueprintId,
+            'snapshot_version' => $this->blueprint_version($blueprintId),
+            'schema_version' => (string) ($schema['schema_version'] ?? ''),
+        ] : []);
     }
 
     /** @return array<string, mixed> */
@@ -1270,6 +1341,23 @@ final class WPFixPilot_Blueprint_Controller
         return (new WPFixPilot_Template_Snapshot_Store())->is_snapshot($postId);
     }
 
+    private function blueprint_version(int $blueprintId): int
+    {
+        $snapshotVersion = get_post_meta(
+            $blueprintId,
+            '_wp_fixpilot_snapshot_version',
+            true
+        );
+
+        return $snapshotVersion !== ''
+            ? (int) $snapshotVersion
+            : (int) get_post_meta(
+                $blueprintId,
+                '_wp_fixpilot_blueprint_version',
+                true
+            );
+    }
+
     /** @param array<string, mixed> $schema */
     private function has_snapshot_schema_shape(array $schema): bool
     {
@@ -1287,10 +1375,18 @@ final class WPFixPilot_Blueprint_Controller
 
     private function has_valid_document_fields(mixed $documentFields): bool
     {
-        if (!is_array($documentFields) || count($documentFields) !== 5) {
+        $expectedFields = [
+            'document:title' => ['post_title', 'Paginatitel', 'heading', 180],
+            'document:slug' => ['post_name', 'Slug', 'plain_text', 160],
+            'seo:title' => ['seo.title', 'SEO-titel', 'seo_title', 70],
+            'seo:meta_description' => ['seo.meta_description', 'Meta description', 'meta_description', 170],
+            'seo:focus_keyword' => ['seo.focus_keyword', 'Focuszoekwoord', 'focus_keyword', 160],
+        ];
+        if (!is_array($documentFields) || count($documentFields) !== count($expectedFields)) {
             return false;
         }
 
+        $seen = [];
         foreach ($documentFields as $field) {
             if (
                 !is_array($field)
@@ -1307,22 +1403,39 @@ final class WPFixPilot_Blueprint_Controller
                     ]
                 )
                 || !is_string($field['id'])
-                || !is_string($field['path'])
-                || !is_string($field['label'])
-                || !in_array(
-                    $field['value_type'],
-                    ['plain_text', 'heading', 'seo_title', 'meta_description', 'focus_keyword'],
-                    true
-                )
+                || !isset($expectedFields[$field['id']])
+                || isset($seen[$field['id']])
+                || $field['path'] !== $expectedFields[$field['id']][0]
+                || $field['label'] !== $expectedFields[$field['id']][1]
+                || $field['value_type'] !== $expectedFields[$field['id']][2]
                 || !is_string($field['current_value'])
-                || !is_bool($field['required'])
-                || !is_int($field['max_length'])
+                || $field['required'] !== true
+                || $field['max_length'] !== $expectedFields[$field['id']][3]
             ) {
                 return false;
             }
+            $seen[$field['id']] = true;
         }
 
-        return true;
+        return count($seen) === count($expectedFields);
+    }
+
+    /** @param array<string, string> $replacements
+     *  @return array{0: array<string, string>, 1: array<string, string>}
+     */
+    private function split_replacements(array $replacements): array
+    {
+        $document = [];
+        $builder = [];
+        foreach ($replacements as $fieldId => $value) {
+            if (str_starts_with($fieldId, 'document:') || str_starts_with($fieldId, 'seo:')) {
+                $document[$fieldId] = $value;
+                continue;
+            }
+            $builder[$fieldId] = $value;
+        }
+
+        return [$document, $builder];
     }
 
     private function is_valid_block(mixed $block): bool
