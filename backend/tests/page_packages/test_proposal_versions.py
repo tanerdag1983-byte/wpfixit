@@ -14,7 +14,9 @@ from tests.page_packages.test_generation import valid_package
 from tests.page_packages.test_proposal_routes import (
     BlueprintBridge,
     generated_blueprint_proposal,
+    make_native_snapshot,
     prepare_project,
+    proposal_snapshot_text_package,
 )
 from tests.recommendations.conftest import ProjectFixtures
 
@@ -329,3 +331,71 @@ def test_regenerate_normalizes_legacy_page_package_into_blueprint_candidate(
         item["field_id"] for item in completed.candidate_package["replacements"]
     }
     assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
+
+
+def test_text_retry_creates_new_immutable_version_and_explicitly_calls_provider(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    invalid = proposal_snapshot_text_package()
+    del invalid["text_replacements"]["document:title"]
+    valid = proposal_snapshot_text_package()
+    generated = [invalid, valid]
+    provider_calls = 0
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            nonlocal provider_calls
+            package = generated[provider_calls]
+            provider_calls += 1
+            return {"package": package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    original_id = queued.json()["id"]
+    original_before = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}"
+    ).json()
+    assert original_before["state"] == "needs_attention"
+    assert provider_calls == 1
+
+    retried = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}/"
+        "stages/text/retry"
+    )
+    assert retried.status_code == 202
+    new_id = retried.json()["id"]
+    current = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{new_id}"
+    ).json()
+    original_after = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}"
+    ).json()
+
+    assert new_id != original_id
+    assert provider_calls == 2
+    assert current["state"] == "proposed"
+    assert current["version_number"] == original_before["version_number"] + 1
+    assert current["parent_version_id"] == original_id
+    assert current["is_current"] is True
+    assert original_after["is_current"] is False
+    assert original_after["current_version_id"] == new_id
+    assert original_after["package"] == original_before["package"]
+    assert original_after["stages"] == original_before["stages"]
+    assert current["package"]["text_replacements"]["document:title"] == "Nieuwe titel"

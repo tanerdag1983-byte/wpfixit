@@ -219,7 +219,7 @@ class PagePackageGenerationResult(BaseModel):
 
 
 class PagePackageProposalWrite(BaseModel):
-    package: GeneratedBlueprintPackage
+    package: GeneratedBlueprintPackage | GeneratedSnapshotTextPackage
 
 
 class PageProposalRegenerationRequest(BaseModel):

@@ -9,7 +9,9 @@ from app.api.routes.page_packages import _import_package_payload
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import (
+    PagePackageProposal,
     PagePackageRegenerationCandidate,
+    PageProposalStage,
     ProjectPagePackageSettings,
 )
 from app.domains.page_packages.schemas import GeneratedBlueprintPackage
@@ -78,6 +80,22 @@ def proposal_blueprint_package() -> dict:
         }
     ]
     return package
+
+
+def proposal_snapshot_text_package() -> dict:
+    return {
+        "text_replacements": {
+            "document:title": {"value": "<strong>Nieuwe titel</strong>"},
+            "document:slug": {"value": "nieuwe-titel"},
+            "seo:title": {"value": "Nieuwe SEO-titel"},
+            "seo:meta_description": {
+                "value": "Nieuwe metabeschrijving voor deze pagina."
+            },
+            "seo:focus_keyword": {"value": "wordt door opportunity vervangen"},
+            "acf-title": {"value": "Nieuwe hero"},
+            "acf-cta-url": {"value": "/contact/"},
+        }
+    }
 
 
 def test_import_payload_returns_normalized_legacy_package(monkeypatch) -> None:
@@ -259,6 +277,21 @@ def prepare_project(session: Session, projects: ProjectFixtures) -> KeywordOppor
     return opportunity
 
 
+def make_native_snapshot(session: Session) -> PageBlueprint:
+    blueprint = session.get(PageBlueprint, "blueprint-service-v2")
+    assert blueprint is not None
+    blueprint.wordpress_snapshot_id = 902
+    blueprint.snapshot_version = 2
+    blueprint.schema_version = "snapshot-text-v1"
+    blueprint.adapter_version = "acf-v1"
+    blueprint.capture_state = "ready"
+    blueprint.migration_state = "native"
+    blueprint.verified_at = datetime.now(UTC)
+    blueprint.content_schema = valid_snapshot_schema()
+    session.commit()
+    return blueprint
+
+
 def generated_blueprint_proposal(
     client: TestClient,
     projects: ProjectFixtures,
@@ -270,6 +303,8 @@ def generated_blueprint_proposal(
         model = "model-1"
 
         def generate_page_package(self, context):
+            if context.blueprint_schema.schema_version == "snapshot-text-v1":
+                return {"package": proposal_snapshot_text_package()}
             return {"package": proposal_blueprint_package()}
 
     monkeypatch.setattr(
@@ -450,6 +485,272 @@ def test_creates_persistent_reviewable_page_proposal(
     assert loaded.json()["state"] == "proposed"
     assert loaded.json()["package"]["focus_keyword"] == opportunity.keyword
     assert loaded.json()["job"]["state"] == "completed"
+    assert loaded.json()["stages"] == []
+    assert loaded.json()["field_errors"] == {}
+
+
+def test_snapshot_proposal_persists_ordered_template_text_validation_stages(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {
+                "package": proposal_snapshot_text_package(),
+                "input_tokens": 13,
+                "output_tokens": 21,
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    loaded = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{queued.json()['id']}"
+    )
+
+    assert queued.status_code == 202
+    assert loaded.status_code == 200
+    body = loaded.json()
+    assert body["state"] == "proposed"
+    assert [stage["name"] for stage in body["stages"]] == [
+        "template",
+        "text",
+        "validation",
+    ]
+    assert [stage["state"] for stage in body["stages"]] == [
+        "ready",
+        "ready",
+        "ready",
+    ]
+    assert body["stages"][0]["result"] == {
+        "wordpress_snapshot_id": 902,
+        "snapshot_version": 2,
+        "schema_version": "snapshot-text-v1",
+        "structure_hash": "hash-v2",
+    }
+    assert body["stages"][1]["result"] == proposal_snapshot_text_package()
+    assert body["package"]["text_replacements"]["document:title"] == "Nieuwe titel"
+    assert body["package"]["text_replacements"]["seo:focus_keyword"] == (
+        opportunity.keyword
+    )
+    assert body["field_errors"] == {}
+
+
+def test_validation_attention_keeps_text_and_retry_does_not_call_provider(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    package = proposal_snapshot_text_package()
+    del package["text_replacements"]["document:title"]
+    provider_calls = 0
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            nonlocal provider_calls
+            provider_calls += 1
+            return {"package": package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    before = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    ).json()
+
+    retried = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}/"
+        "stages/validation/retry"
+    )
+    after = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    ).json()
+
+    assert before["state"] == "needs_attention"
+    assert before["field_errors"] == {"document:title": "required"}
+    assert retried.status_code == 202
+    assert after["state"] == "needs_attention"
+    assert provider_calls == 1
+    before_text = next(stage for stage in before["stages"] if stage["name"] == "text")
+    after_text = next(stage for stage in after["stages"] if stage["name"] == "text")
+    validation = next(
+        stage for stage in after["stages"] if stage["name"] == "validation"
+    )
+    assert before_text["state"] == "ready"
+    assert before_text["result"] == package
+    assert after_text == before_text
+    assert validation["state"] == "attention"
+    assert validation["retry_count"] == 1
+    assert validation["errors"] == {"document:title": "required"}
+
+
+def test_attention_snapshot_accepts_manual_correction_without_rerunning_provider(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    package = proposal_snapshot_text_package()
+    del package["text_replacements"]["document:title"]
+    provider_calls = 0
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            nonlocal provider_calls
+            provider_calls += 1
+            return {"package": package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    before = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    ).json()
+    corrected_text = next(
+        stage for stage in before["stages"] if stage["name"] == "text"
+    )["result"]
+    corrected_text["text_replacements"]["document:title"] = {
+        "value": "Handmatig aangevulde titel"
+    }
+
+    updated = client.put(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}",
+        json={"package": corrected_text},
+    )
+
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["state"] == "proposed"
+    assert body["field_errors"] == {}
+    assert provider_calls == 1
+    text = next(stage for stage in body["stages"] if stage["name"] == "text")
+    validation = next(
+        stage for stage in body["stages"] if stage["name"] == "validation"
+    )
+    assert "document:title" not in text["result"]["text_replacements"]
+    assert validation["state"] == "ready"
+    assert validation["retry_count"] == 1
+    assert body["package"]["text_replacements"]["document:title"] == (
+        "Handmatig aangevulde titel"
+    )
+
+
+def test_stage_response_field_errors_are_ordered(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = PagePackageProposal(
+        id="proposal-ordered-errors",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id="job-ordered-errors",
+        state="needs_attention",
+        proposal_group_id="proposal-ordered-errors",
+        current_version_id="proposal-ordered-errors",
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    from app.domains.jobs.models import Job
+
+    session.add(
+        Job(
+            id="job-ordered-errors",
+            project_id=projects.member_project.id,
+            job_type="page_package_generation",
+        )
+    )
+    session.add(proposal)
+    session.flush()
+    session.add_all(
+        [
+            PageProposalStage(
+                proposal_version_id=proposal.id,
+                name="validation",
+                state="attention",
+                result={},
+                errors={"z:last": "required", "a:first": "unsafe_html"},
+            ),
+            PageProposalStage(
+                proposal_version_id=proposal.id,
+                name="template",
+                state="ready",
+                result={},
+                errors={},
+            ),
+            PageProposalStage(
+                proposal_version_id=proposal.id,
+                name="text",
+                state="ready",
+                result={},
+                errors={},
+            ),
+        ]
+    )
+    session.commit()
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal.id}"
+    )
+
+    assert response.status_code == 200
+    assert [stage["name"] for stage in response.json()["stages"]] == [
+        "template",
+        "text",
+        "validation",
+    ]
+    assert list(response.json()["field_errors"]) == ["a:first", "z:last"]
 
 
 def test_page_proposal_preserves_opportunity_focus_keyword(

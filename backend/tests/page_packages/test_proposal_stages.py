@@ -1,0 +1,389 @@
+import json
+import os
+from concurrent.futures import ThreadPoolExecutor
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from threading import Barrier
+from uuid import uuid4
+
+import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import (
+    Column,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    inspect,
+    select,
+    text,
+)
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.domains.page_packages.models import PageProposalStage
+from app.domains.page_packages.stages import (
+    MAX_STAGE_ERRORS_BYTES,
+    MAX_STAGE_RESULT_BYTES,
+    attention_stage,
+    begin_stage,
+    complete_stage,
+    fail_stage,
+    retry_stage,
+)
+from tests.page_packages.test_proposal_versions import page_proposal_factory
+from tests.recommendations.conftest import ProjectFixtures
+
+POSTGRES_TEST_URL = os.getenv("WP_FIXPILOT_POSTGRES_TEST_URL")
+
+
+def _stage(
+    session: Session,
+    proposal_id: str,
+    name: str,
+    *,
+    state: str = "pending",
+) -> PageProposalStage:
+    item = PageProposalStage(
+        proposal_version_id=proposal_id,
+        name=name,
+        state=state,
+        result={},
+        errors={},
+    )
+    session.add(item)
+    session.commit()
+    return item
+
+
+@pytest.fixture
+def proposal(session: Session, projects: ProjectFixtures):
+    return page_proposal_factory(
+        session,
+        projects,
+        proposal_id="proposal-stages",
+        state="generating",
+        proposal_group_id="proposal-stages",
+    )
+
+
+def test_stage_identity_is_unique_and_cascades_with_proposal(
+    session: Session,
+    proposal,
+) -> None:
+    _stage(session, proposal.id, "template")
+    session.add(
+        PageProposalStage(
+            proposal_version_id=proposal.id,
+            name="template",
+            state="pending",
+            result={},
+            errors={},
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+    session.delete(proposal)
+    session.commit()
+    assert session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == proposal.id
+        )
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"name": "draft", "state": "pending"}, "name"),
+        ({"name": "text", "state": "cancelled"}, "state"),
+        ({"name": "text", "state": "pending", "retry_count": -1}, "retry"),
+    ],
+)
+def test_stage_database_constraints_reject_invalid_values(
+    session: Session,
+    proposal,
+    values: dict,
+    message: str,
+) -> None:
+    session.add(
+        PageProposalStage(
+            proposal_version_id=proposal.id,
+            result={},
+            errors={},
+            **values,
+        )
+    )
+
+    with pytest.raises(IntegrityError, match=message):
+        session.commit()
+    session.rollback()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "limit"),
+    [
+        ("result", MAX_STAGE_RESULT_BYTES),
+        ("errors", MAX_STAGE_ERRORS_BYTES),
+    ],
+)
+def test_stage_json_bounds_are_enforced_by_the_database(
+    session: Session,
+    proposal,
+    field_name: str,
+    limit: int,
+) -> None:
+    values = {"result": {}, "errors": {}}
+    values[field_name] = {"value": "x" * limit}
+    session.add(
+        PageProposalStage(
+            proposal_version_id=proposal.id,
+            name="text",
+            state="pending",
+            **values,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+
+def test_stage_transitions_record_timestamps_and_retry_metadata(
+    session: Session,
+    proposal,
+) -> None:
+    _stage(session, proposal.id, "validation")
+
+    running = begin_stage(session, proposal.id, "validation")
+    assert running.state == "running"
+    assert running.started_at is not None
+    assert running.completed_at is None
+
+    attention = attention_stage(
+        session,
+        proposal.id,
+        "validation",
+        errors={"document:title": "required"},
+    )
+    assert attention.state == "attention"
+    assert attention.completed_at is not None
+    assert attention.errors == {"document:title": "required"}
+
+    retried = retry_stage(session, proposal.id, "validation")
+    assert retried.state == "running"
+    assert retried.retry_count == 1
+    assert retried.last_retried_at is not None
+    assert retried.completed_at is None
+    assert retried.errors == {}
+
+    completed = complete_stage(
+        session,
+        proposal.id,
+        "validation",
+        result={"replacements": {"document:title": "Nieuwe titel"}},
+    )
+    assert completed.state == "ready"
+    assert completed.completed_at is not None
+
+
+def test_text_success_survives_validation_attention(
+    session: Session,
+    proposal,
+) -> None:
+    _stage(session, proposal.id, "text", state="running")
+    _stage(session, proposal.id, "validation", state="running")
+
+    complete_stage(
+        session,
+        proposal.id,
+        "text",
+        result={"text_replacements": {"a": {"value": "b"}}},
+    )
+    attention_stage(
+        session,
+        proposal.id,
+        "validation",
+        errors={"acf:hero:label": "unsafe_html"},
+    )
+    session.commit()
+    session.expire_all()
+
+    text = session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == proposal.id,
+            PageProposalStage.name == "text",
+        )
+    )
+    assert text is not None
+    assert text.state == "ready"
+    assert text.result["text_replacements"] == {"a": {"value": "b"}}
+
+
+def test_terminal_transition_race_has_one_winner_and_locks_the_row(
+    session: Session,
+    proposal,
+    monkeypatch,
+) -> None:
+    _stage(session, proposal.id, "text", state="running")
+    statements = []
+    original_scalar = session.scalar
+
+    def capture_scalar(statement, *args, **kwargs):
+        statements.append(statement)
+        return original_scalar(statement, *args, **kwargs)
+
+    monkeypatch.setattr(session, "scalar", capture_scalar)
+    complete_stage(session, proposal.id, "text", result={"ok": True})
+
+    with pytest.raises(ValueError, match="invalid_stage_transition"):
+        fail_stage(
+            session,
+            proposal.id,
+            "text",
+            errors={"provider": "late failure"},
+        )
+
+    assert any(statement._for_update_arg is not None for statement in statements)
+
+
+def test_helpers_reject_oversized_json_before_flush(
+    session: Session,
+    proposal,
+) -> None:
+    _stage(session, proposal.id, "text", state="running")
+    oversized = {"value": "x" * MAX_STAGE_RESULT_BYTES}
+    assert len(json.dumps(oversized).encode()) > MAX_STAGE_RESULT_BYTES
+
+    with pytest.raises(ValueError, match="stage_result_too_large"):
+        complete_stage(session, proposal.id, "text", result=oversized)
+
+
+def test_stage_migration_round_trip_on_sqlite(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'stages.db'}")
+    metadata = MetaData()
+    Table(
+        "page_package_proposals",
+        metadata,
+        Column("id", String(64), primary_key=True),
+    )
+    metadata.create_all(engine)
+    migration_path = (
+        Path(__file__).parents[2]
+        / "alembic"
+        / "versions"
+        / "0021_resumable_proposal_stages.py"
+    )
+    spec = spec_from_file_location("task5_stage_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    with engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        assert "page_proposal_stages" in inspect(connection).get_table_names()
+        migration.downgrade()
+        assert "page_proposal_stages" not in inspect(connection).get_table_names()
+
+    engine.dispose()
+
+
+@pytest.mark.skipif(
+    not POSTGRES_TEST_URL,
+    reason="WP_FIXPILOT_POSTGRES_TEST_URL is required",
+)
+def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> None:
+    schema = f"task5_stage_{uuid4().hex}"
+    admin_engine = create_engine(POSTGRES_TEST_URL)
+    with admin_engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        connection.execute(
+            text(
+                f'CREATE TABLE "{schema}".page_package_proposals '
+                "(id VARCHAR(64) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text(
+                f'CREATE TABLE "{schema}".page_proposal_stages ('
+                "id VARCHAR(64) PRIMARY KEY, "
+                "proposal_version_id VARCHAR(64) NOT NULL REFERENCES "
+                f'"{schema}".page_package_proposals(id) ON DELETE CASCADE, '
+                "name VARCHAR(24) NOT NULL, state VARCHAR(24) NOT NULL, "
+                "result JSON NOT NULL, errors JSON NOT NULL, "
+                "retry_count INTEGER NOT NULL DEFAULT 0, "
+                "started_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, "
+                "last_retried_at TIMESTAMPTZ NULL, "
+                "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "UNIQUE (proposal_version_id, name))"
+            )
+        )
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".page_package_proposals (id) '
+                "VALUES ('proposal-race')"
+            )
+        )
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".page_proposal_stages '
+                "(id, proposal_version_id, name, state, result, errors) "
+                "VALUES ('stage-race', 'proposal-race', 'text', 'running', "
+                "'{}', '{}')"
+            )
+        )
+
+    engine = create_engine(
+        POSTGRES_TEST_URL,
+        connect_args={"options": f"-csearch_path={schema}"},
+        pool_size=2,
+        max_overflow=0,
+    )
+    barrier = Barrier(2)
+
+    def finish(target: str) -> str:
+        with Session(engine) as current_session:
+            barrier.wait(timeout=10)
+            try:
+                if target == "ready":
+                    complete_stage(
+                        current_session,
+                        "proposal-race",
+                        "text",
+                        result={"winner": target},
+                    )
+                else:
+                    fail_stage(
+                        current_session,
+                        "proposal-race",
+                        "text",
+                        errors={"winner": target},
+                    )
+                current_session.commit()
+                return target
+            except ValueError:
+                current_session.rollback()
+                return "rejected"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [
+                future.result(timeout=10)
+                for future in [
+                    executor.submit(finish, "ready"),
+                    executor.submit(finish, "failed"),
+                ]
+            ]
+        assert results.count("rejected") == 1
+        assert set(results) & {"ready", "failed"}
+    finally:
+        engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin_engine.dispose()

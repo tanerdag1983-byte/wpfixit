@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
@@ -167,6 +168,77 @@ class PagePackageProposal(Base):
 
 
 PagePackageProposalVersion = PagePackageProposal
+
+
+class PageProposalStage(Base):
+    __tablename__ = "page_proposal_stages"
+    __table_args__ = (
+        CheckConstraint(
+            "name IN ('template', 'text', 'validation')",
+            name="ck_page_proposal_stages_name",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'running', 'ready', 'attention', 'failed')",
+            name="ck_page_proposal_stages_state",
+        ),
+        CheckConstraint(
+            "retry_count >= 0",
+            name="ck_page_proposal_stages_retry_count",
+        ),
+        CheckConstraint(
+            "length(CAST(result AS TEXT)) <= 100000",
+            name="ck_page_proposal_stages_result_size",
+        ),
+        CheckConstraint(
+            "length(CAST(errors AS TEXT)) <= 20000",
+            name="ck_page_proposal_stages_errors_size",
+        ),
+        UniqueConstraint(
+            "proposal_version_id",
+            "name",
+            name="uq_page_proposal_stages_proposal_name",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    proposal_version_id: Mapped[str] = mapped_column(
+        ForeignKey("page_package_proposals.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(24), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(24),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+    )
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    errors: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_retried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 class PagePackageRegenerationCandidate(Base):
