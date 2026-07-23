@@ -1,4 +1,7 @@
+from datetime import UTC, datetime
+
 import pytest
+import requests
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -7,13 +10,11 @@ from app.api.routes import page_blueprints, page_packages
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_blueprints.schemas import BlueprintSchema
 from app.domains.page_blueprints.service import legacy_blueprint_candidates
 from app.domains.page_packages.models import (
     PagePackageProposal,
     ProjectPagePackageSettings,
 )
-from app.domains.page_packages.schemas import PagePackageContext
 
 
 def legacy_blueprint(
@@ -66,13 +67,17 @@ class MigrationBridge:
         captures: list[dict | Exception],
         *,
         on_capture=None,
+        delete_results: list[None | Exception] | None = None,
     ) -> None:
         self.captures = captures
+        self.capture_payloads: list[dict] = []
         self.deleted: list[int] = []
         self.inspections: dict[int, dict] = {}
         self.on_capture = on_capture
+        self.delete_results = delete_results or []
 
     def capture_blueprint(self, payload: dict) -> dict:
+        self.capture_payloads.append(payload)
         if self.on_capture is not None:
             self.on_capture(payload)
         result = self.captures.pop(0)
@@ -85,6 +90,10 @@ class MigrationBridge:
 
     def delete_blueprint(self, wordpress_blueprint_id: int) -> dict:
         self.deleted.append(wordpress_blueprint_id)
+        if self.delete_results:
+            result = self.delete_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
         return {"deleted": True}
 
 
@@ -326,6 +335,11 @@ def test_migration_versions_compatible_proposal_for_approval_and_preserves_appro
     session.commit()
     bridge = MigrationBridge([snapshot_capture(wordpress_id=803, version=2)])
     monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    monkeypatch.setattr(
+        page_packages,
+        "_page_package_client",
+        lambda session, project_id: bridge,
+    )
     auth_as(projects.owner)
 
     response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
@@ -373,25 +387,10 @@ def test_migration_versions_compatible_proposal_for_approval_and_preserves_appro
     assert stored_approved.current_version_id == approved.id
     assert stored_approved.is_current is True
 
-    compatibility_schema = {
-        "schema_version": "blueprint-v1",
-        "blocks": successor.content_schema["blocks"],
-    }
-    opportunity = session.get(KeywordOpportunity, migrated_proposal.opportunity_id)
-    context = PagePackageContext(
-        keyword=opportunity.keyword,
-        company_context="Migration validation",
-        project_domain=projects.member_project.domain,
-        internal_link_candidates=[],
-        template_slots={},
-        approved_cta_urls=[],
-        blueprint_schema=BlueprintSchema.model_validate(compatibility_schema),
-    )
-    monkeypatch.setattr(page_packages, "_generation_context", lambda *args: context)
-    monkeypatch.setattr(
-        page_packages,
-        "_require_current_wordpress_blueprint",
-        lambda *args: None,
+    bridge.inspections[successor.wordpress_snapshot_id] = snapshot_capture(
+        wordpress_id=successor.wordpress_snapshot_id,
+        version=successor.snapshot_version,
+        created=False,
     )
 
     approval = client.post(
@@ -535,6 +534,243 @@ def test_migration_cleans_only_trusted_new_snapshot_after_validation_failure(
     assert migration_job is not None
     assert migration_job.state == "failed"
     assert migration_job.checkpoint["transitions"][-1] == "failed"
+
+
+def test_migration_retries_durable_remote_cleanup_before_recapture(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    legacy = legacy_blueprint(
+        blueprint_id="legacy-cleanup-retry",
+        project_id=project_id,
+        wordpress_id=708,
+    )
+    session.add(legacy)
+    session.commit()
+    response = requests.Response()
+    response.status_code = 500
+    bridge = MigrationBridge(
+        [
+            snapshot_capture(wordpress_id=808, version=2),
+            snapshot_capture(wordpress_id=809, version=2),
+        ],
+        delete_results=[
+            requests.HTTPError(response=response),
+            requests.HTTPError(response=response),
+            None,
+        ],
+    )
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    original_migrate = page_blueprints.migrate_unapproved_proposals
+    migration_calls = 0
+
+    def fail_first_backend_transaction(session, legacy, successor, proposals):
+        nonlocal migration_calls
+        migration_calls += 1
+        if migration_calls == 1:
+            raise RuntimeError("backend migration failed")
+        return original_migrate(session, legacy, successor, proposals)
+
+    monkeypatch.setattr(
+        page_blueprints,
+        "migrate_unapproved_proposals",
+        fail_first_backend_transaction,
+    )
+    auth_as(projects.owner)
+
+    first = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert first.status_code == 200, first.text
+    assert first.json()["items"] == [
+        {
+            "blueprint_id": legacy.id,
+            "state": "failed",
+            "action": "cleanup",
+        }
+    ]
+    session.expire_all()
+    migration_job = session.scalar(
+        select(Job).where(
+            Job.job_type == "page_blueprint_snapshot_migration",
+            Job.checkpoint["blueprint_id"].as_string() == legacy.id,
+        )
+    )
+    assert migration_job is not None
+    assert migration_job.checkpoint["cleanup_snapshot_id"] == 808
+    assert len(bridge.capture_payloads) == 1
+
+    second = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert second.status_code == 200, second.text
+    assert second.json()["items"] == [
+        {
+            "blueprint_id": legacy.id,
+            "state": "failed",
+            "action": "cleanup",
+        }
+    ]
+    assert len(bridge.capture_payloads) == 1
+    session.expire_all()
+    assert migration_job.checkpoint["cleanup_snapshot_id"] == 808
+
+    third = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert third.status_code == 200, third.text
+    assert third.json()["items"] == [
+        {"blueprint_id": legacy.id, "state": "migrated"}
+    ]
+    assert len(bridge.capture_payloads) == 2
+    assert bridge.deleted == [808, 808, 808]
+    session.expire_all()
+    assert "cleanup_snapshot_id" not in migration_job.checkpoint
+
+
+def test_migration_waits_for_current_generating_proposal_before_capture(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    legacy = legacy_blueprint(
+        blueprint_id="legacy-generating",
+        project_id=project_id,
+        wordpress_id=709,
+    )
+    session.add(legacy)
+    generating = proposal_for_blueprint(
+        session,
+        proposal_id="proposal-generating",
+        blueprint=legacy,
+        proposed_by=projects.owner.id,
+        state="generating",
+    )
+    session.commit()
+    bridge = MigrationBridge([snapshot_capture(wordpress_id=810, version=2)])
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    auth_as(projects.owner)
+
+    response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {
+            "blueprint_id": legacy.id,
+            "state": "pending",
+            "action": "wait",
+        }
+    ]
+    assert bridge.capture_payloads == []
+    session.expire_all()
+    assert (
+        session.scalar(
+            select(PageBlueprint).where(PageBlueprint.supersedes_id == legacy.id)
+        )
+        is None
+    )
+    stored = session.get(PagePackageProposal, generating.id)
+    assert stored is not None
+    assert stored.state == "generating"
+    assert stored.is_current is True
+    assert stored.current_version_id == generating.id
+    assert stored.blueprint_id == legacy.id
+    migration_job = session.scalar(
+        select(Job).where(
+            Job.job_type == "page_blueprint_snapshot_migration",
+            Job.checkpoint["blueprint_id"].as_string() == legacy.id,
+        )
+    )
+    assert migration_job is not None
+    assert migration_job.state == "pending"
+    assert migration_job.checkpoint["action"] == "wait"
+    assert migration_job.checkpoint["blocked_proposal_ids"] == [generating.id]
+
+
+def test_concurrent_successor_terminalizes_migrating_job_without_capture(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    legacy = legacy_blueprint(
+        blueprint_id="legacy-concurrent-successor",
+        project_id=project_id,
+        wordpress_id=710,
+    )
+    session.add(legacy)
+    session.commit()
+    captured = snapshot_capture(wordpress_id=811, version=2)
+    concurrent_successor = PageBlueprint(
+        id="concurrent-successor",
+        project_id=project_id,
+        name=legacy.name,
+        page_type=legacy.page_type,
+        source_wordpress_page_id=legacy.source_wordpress_page_id,
+        wordpress_blueprint_id=811,
+        wordpress_snapshot_id=811,
+        snapshot_version=2,
+        schema_version="snapshot-text-v1",
+        adapter_version="acf-v1",
+        capture_state="ready",
+        migration_state="native",
+        verified_at=datetime.now(UTC),
+        builder="acf",
+        seo_plugin="yoast",
+        version=2,
+        structure_hash=captured["structure_hash"],
+        content_schema=captured["content_schema"],
+        state="ready",
+        is_default_for_page_type=False,
+        supersedes_id=legacy.id,
+    )
+    bridge = MigrationBridge([])
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    original_transition = page_blueprints.transition_snapshot_migration
+    successor_added = False
+
+    def add_successor_after_migrating(job, state, **kwargs):
+        nonlocal successor_added
+        original_transition(job, state, **kwargs)
+        if state == "migrating" and not successor_added:
+            session.add(concurrent_successor)
+            successor_added = True
+
+    monkeypatch.setattr(
+        page_blueprints,
+        "transition_snapshot_migration",
+        add_successor_after_migrating,
+    )
+    auth_as(projects.owner)
+
+    response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {"blueprint_id": legacy.id, "state": "migrated"}
+    ]
+    assert bridge.capture_payloads == []
+    session.expire_all()
+    migration_job = session.scalar(
+        select(Job).where(
+            Job.job_type == "page_blueprint_snapshot_migration",
+            Job.checkpoint["blueprint_id"].as_string() == legacy.id,
+        )
+    )
+    assert migration_job is not None
+    assert migration_job.state == "migrated"
+    assert migration_job.checkpoint["successor_blueprint_id"] == (
+        concurrent_successor.id
+    )
 
 
 def test_migration_persists_captured_seo_identity_and_verifies_successor(

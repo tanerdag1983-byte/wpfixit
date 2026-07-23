@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select, update
@@ -13,6 +13,9 @@ from app.domains.page_blueprints.lifecycle import (
 )
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
+
+if TYPE_CHECKING:
+    from app.domains.page_packages.models import PagePackageProposal
 
 _ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
 SNAPSHOT_MIGRATION_JOB_TYPE = "page_blueprint_snapshot_migration"
@@ -30,8 +33,8 @@ class LegacyBlueprintCandidate:
 @dataclass(frozen=True)
 class SnapshotMigrationResult:
     blueprint_id: str
-    state: Literal["migrated", "incompatible", "failed"]
-    action: Literal["none", "new_proposal", "recapture"]
+    state: Literal["pending", "migrated", "incompatible", "failed"]
+    action: Literal["none", "new_proposal", "recapture", "cleanup", "wait"]
 
 
 def legacy_blueprint_candidates(
@@ -185,16 +188,12 @@ def migrate_unapproved_proposals(
     session: Session,
     legacy: PageBlueprint,
     successor: PageBlueprint,
+    proposals: list["PagePackageProposal"] | None = None,
 ) -> bool:
     from app.domains.page_packages.models import PagePackageProposal
 
-    proposals = session.scalars(
-        select(PagePackageProposal).where(
-            PagePackageProposal.project_id == legacy.project_id,
-            PagePackageProposal.blueprint_id == legacy.id,
-            PagePackageProposal.is_current.is_(True),
-        )
-    ).all()
+    if proposals is None:
+        proposals = lock_current_blueprint_proposals(session, legacy)
     compatible = snapshot_block_fields_are_compatible(
         legacy.content_schema,
         successor.content_schema,
@@ -284,6 +283,25 @@ def migrate_unapproved_proposals(
     return incompatible
 
 
+def lock_current_blueprint_proposals(
+    session: Session,
+    legacy: PageBlueprint,
+) -> list["PagePackageProposal"]:
+    from app.domains.page_packages.models import PagePackageProposal
+
+    return list(
+        session.scalars(
+            select(PagePackageProposal)
+            .where(
+                PagePackageProposal.project_id == legacy.project_id,
+                PagePackageProposal.blueprint_id == legacy.id,
+                PagePackageProposal.is_current.is_(True),
+            )
+            .with_for_update()
+        )
+    )
+
+
 def snapshot_migration_job_id(blueprint_id: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"snapshot-migration:{blueprint_id}"))
 
@@ -308,6 +326,9 @@ def prepare_snapshot_migration(
         session.add(job)
     else:
         checkpoint = dict(job.checkpoint)
+        if checkpoint.get("cleanup_snapshot_id") is not None:
+            session.flush()
+            return job
         transitions = list(checkpoint.get("transitions", []))
         transitions.append("pending")
         job.state = "pending"
@@ -325,8 +346,14 @@ def transition_snapshot_migration(
     job: Job,
     state: Literal["pending", "migrating", "migrated", "incompatible", "failed"],
     *,
-    action: Literal["none", "new_proposal", "recapture"] = "none",
+    action: Literal[
+        "none", "new_proposal", "recapture", "cleanup", "wait"
+    ] = "none",
     successor_id: str | None = None,
+    cleanup_snapshot_id: int | None = None,
+    clear_cleanup: bool = False,
+    error_message: str | None = None,
+    blocked_proposal_ids: list[str] | None = None,
 ) -> None:
     checkpoint = dict(job.checkpoint)
     transitions = list(checkpoint.get("transitions", []))
@@ -336,13 +363,30 @@ def transition_snapshot_migration(
     checkpoint["action"] = action
     if successor_id is not None:
         checkpoint["successor_blueprint_id"] = successor_id
+    if blocked_proposal_ids is not None:
+        checkpoint["blocked_proposal_ids"] = blocked_proposal_ids
+    elif state != "pending":
+        checkpoint.pop("blocked_proposal_ids", None)
+    if clear_cleanup:
+        checkpoint.pop("cleanup_snapshot_id", None)
+    elif cleanup_snapshot_id is not None:
+        checkpoint["cleanup_snapshot_id"] = cleanup_snapshot_id
     job.state = state
     job.checkpoint = checkpoint
-    if state == "migrating":
+    if state == "pending":
+        job.progress = 0
+        job.started_at = None
+        job.completed_at = None
+    elif state == "migrating":
         job.progress = 25
         job.started_at = datetime.now(UTC)
     elif state in {"migrated", "incompatible", "failed"}:
         job.progress = 100
         job.completed_at = datetime.now(UTC)
     if state == "failed":
-        job.error_code = "snapshot_migration_recapture_required"
+        job.error_code = (
+            "snapshot_migration_cleanup_required"
+            if action == "cleanup"
+            else "snapshot_migration_recapture_required"
+        )
+        job.error_message = error_message

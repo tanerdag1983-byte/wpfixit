@@ -18,6 +18,7 @@ from app.domains.page_blueprints.service import (
     SnapshotMigrationResult,
     create_blueprint_version,
     legacy_blueprint_candidates,
+    lock_current_blueprint_proposals,
     migrate_unapproved_proposals,
     prepare_snapshot_migration,
     set_default_blueprint,
@@ -39,6 +40,7 @@ SemanticRole = Literal[
 PageType = Literal["service", "brand", "location", "blog", "generic"]
 SUPPORTED_BUILDERS = {"acf", "elementor", "wpbakery", "bricks", "gutenberg"}
 SUPPORTED_SEO_PLUGINS = {"none", "yoast", "rank_math", "aioseo"}
+MUTATING_PROPOSAL_STATES = {"generating", "draft_in_progress"}
 
 
 class BlueprintCreate(BaseModel):
@@ -458,6 +460,37 @@ def migrate_blueprints(
     for legacy_id in legacy_ids:
         trusted_snapshot_id: int | None = None
         migration_committed = False
+        job = session.get(Job, snapshot_migration_job_id(legacy_id))
+        if job is None:
+            raise RuntimeError("Snapshot migration state is unavailable")
+        cleanup_snapshot_id = job.checkpoint.get("cleanup_snapshot_id")
+        if cleanup_snapshot_id is not None:
+            try:
+                _delete_remote_snapshot(bridge, int(cleanup_snapshot_id))
+            except requests.RequestException as cleanup_error:
+                transition_snapshot_migration(
+                    job,
+                    "failed",
+                    action="cleanup",
+                    cleanup_snapshot_id=int(cleanup_snapshot_id),
+                    error_message=str(cleanup_error)[:1000],
+                )
+                session.commit()
+                results.append(
+                    SnapshotMigrationResult(
+                        blueprint_id=legacy_id,
+                        state="failed",
+                        action="cleanup",
+                    )
+                )
+                continue
+            checkpoint = dict(job.checkpoint)
+            checkpoint.pop("cleanup_snapshot_id", None)
+            job.checkpoint = checkpoint
+            legacy = session.get(PageBlueprint, legacy_id)
+            if legacy is not None:
+                prepare_snapshot_migration(session, legacy)
+            session.commit()
         try:
             job = session.get(Job, snapshot_migration_job_id(legacy_id))
             if job is None:
@@ -468,72 +501,123 @@ def migrate_blueprints(
                 job = session.get(Job, snapshot_migration_job_id(legacy_id))
                 if job is None:
                     raise RuntimeError("Snapshot migration state is unavailable")
-                legacy = session.scalar(
+                existing_successor = session.scalar(
                     select(PageBlueprint)
                     .where(
-                        PageBlueprint.id == legacy_id,
                         PageBlueprint.project_id == project_id,
-                        PageBlueprint.wordpress_snapshot_id.is_(None),
+                        PageBlueprint.supersedes_id == legacy_id,
                     )
                     .with_for_update()
                 )
-                if legacy is None:
-                    continue
-                source = session.get(WordPressPage, legacy.source_wordpress_page_id)
-                if source is None:
-                    raise ValueError("Reference page not found")
-                next_version = legacy.version + 1
-                captured = _capture_snapshot(
-                    bridge,
-                    {
-                        "source_page_id": source.wordpress_object_id,
-                        "name": legacy.name,
-                        "page_type": legacy.page_type,
-                        "version": next_version,
-                    },
-                )
-                snapshot_id = _new_capture_snapshot_id(session, project_id, captured)
-                trusted_snapshot_id = snapshot_id
-                schema, state = _validated_capture(
-                    captured,
-                    wordpress_snapshot_id=snapshot_id,
-                    source_page_id=source.wordpress_object_id,
-                    page_type=legacy.page_type,
-                    version=next_version,
-                    expected_builder=legacy.builder,
-                )
-                successor = create_blueprint_version(
-                    session,
-                    legacy,
-                    wordpress_blueprint_id=snapshot_id,
-                    wordpress_snapshot_id=snapshot_id,
-                    snapshot_version=next_version,
-                    schema_version="snapshot-text-v1",
-                    adapter_version=_adapter_version(captured),
-                    capture_state=state,
-                    migration_state="native",
-                    verified_at=datetime.now(UTC),
-                    structure_hash=str(captured["structure_hash"]),
-                    content_schema=schema.model_dump(mode="python"),
-                    state=state,
-                    seo_plugin=str(captured["seo_plugin"]),
-                    commit=False,
-                )
-                incompatible = migrate_unapproved_proposals(
-                    session,
-                    legacy,
-                    successor,
-                )
-                if legacy.is_default_for_page_type:
-                    set_default_blueprint(session, successor, commit=False)
-                result_state = "incompatible" if incompatible else "migrated"
-                result_action = "new_proposal" if incompatible else "none"
-                transition_snapshot_migration(
-                    job,
-                    result_state,
-                    action=result_action,
-                    successor_id=successor.id,
-                )
+                if existing_successor is not None:
+                    result_state = "migrated"
+                    result_action = "none"
+                    transition_snapshot_migration(
+                        job,
+                        result_state,
+                        successor_id=existing_successor.id,
+                    )
+                else:
+                    legacy = session.scalar(
+                        select(PageBlueprint)
+                        .where(
+                            PageBlueprint.id == legacy_id,
+                            PageBlueprint.project_id == project_id,
+                            PageBlueprint.wordpress_snapshot_id.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                    if legacy is None:
+                        raise RuntimeError("Legacy blueprint is unavailable")
+                    proposals = lock_current_blueprint_proposals(session, legacy)
+                    mutating = [
+                        proposal
+                        for proposal in proposals
+                        if proposal.state in MUTATING_PROPOSAL_STATES
+                    ]
+                    if mutating:
+                        result_state = "pending"
+                        result_action = "wait"
+                        transition_snapshot_migration(
+                            job,
+                            "pending",
+                            action="wait",
+                            blocked_proposal_ids=sorted(
+                                proposal.id for proposal in mutating
+                            ),
+                        )
+                    else:
+                        source = session.get(
+                            WordPressPage,
+                            legacy.source_wordpress_page_id,
+                        )
+                        if source is None:
+                            raise ValueError("Reference page not found")
+                        next_version = legacy.version + 1
+                        captured = _capture_snapshot(
+                            bridge,
+                            {
+                                "source_page_id": source.wordpress_object_id,
+                                "name": legacy.name,
+                                "page_type": legacy.page_type,
+                                "version": next_version,
+                            },
+                        )
+                        snapshot_id = _new_capture_snapshot_id(
+                            session,
+                            project_id,
+                            captured,
+                        )
+                        trusted_snapshot_id = snapshot_id
+                        schema, state = _validated_capture(
+                            captured,
+                            wordpress_snapshot_id=snapshot_id,
+                            source_page_id=source.wordpress_object_id,
+                            page_type=legacy.page_type,
+                            version=next_version,
+                            expected_builder=legacy.builder,
+                        )
+                        successor = create_blueprint_version(
+                            session,
+                            legacy,
+                            wordpress_blueprint_id=snapshot_id,
+                            wordpress_snapshot_id=snapshot_id,
+                            snapshot_version=next_version,
+                            schema_version="snapshot-text-v1",
+                            adapter_version=_adapter_version(captured),
+                            capture_state=state,
+                            migration_state="native",
+                            verified_at=datetime.now(UTC),
+                            structure_hash=str(captured["structure_hash"]),
+                            content_schema=schema.model_dump(mode="python"),
+                            state=state,
+                            seo_plugin=str(captured["seo_plugin"]),
+                            commit=False,
+                        )
+                        incompatible = migrate_unapproved_proposals(
+                            session,
+                            legacy,
+                            successor,
+                            proposals,
+                        )
+                        if legacy.is_default_for_page_type:
+                            set_default_blueprint(
+                                session,
+                                successor,
+                                commit=False,
+                            )
+                        result_state = (
+                            "incompatible" if incompatible else "migrated"
+                        )
+                        result_action = (
+                            "new_proposal" if incompatible else "none"
+                        )
+                        transition_snapshot_migration(
+                            job,
+                            result_state,
+                            action=result_action,
+                            successor_id=successor.id,
+                        )
             migration_committed = True
             results.append(
                 SnapshotMigrationResult(
@@ -542,31 +626,82 @@ def migrate_blueprints(
                     action=result_action,
                 )
             )
-        except Exception:
+        except Exception as migration_error:
             session.rollback()
+            failure_action = "recapture"
             if trusted_snapshot_id is not None and not migration_committed:
+                with session.begin():
+                    job = session.get(Job, snapshot_migration_job_id(legacy_id))
+                    if job is None:
+                        legacy = session.get(PageBlueprint, legacy_id)
+                        if legacy is None:
+                            continue
+                        job = prepare_snapshot_migration(session, legacy)
+                        transition_snapshot_migration(job, "migrating")
+                    transition_snapshot_migration(
+                        job,
+                        "failed",
+                        action="cleanup",
+                        cleanup_snapshot_id=trusted_snapshot_id,
+                        error_message=str(migration_error)[:1000],
+                    )
                 try:
                     _delete_remote_snapshot(bridge, trusted_snapshot_id)
-                except requests.RequestException:
-                    pass
-            with session.begin():
-                job = session.get(Job, snapshot_migration_job_id(legacy_id))
-                if job is None:
-                    legacy = session.get(PageBlueprint, legacy_id)
-                    if legacy is None:
-                        continue
-                    job = prepare_snapshot_migration(session, legacy)
-                    transition_snapshot_migration(job, "migrating")
-                transition_snapshot_migration(
-                    job,
-                    "failed",
-                    action="recapture",
-                )
+                except requests.RequestException as cleanup_error:
+                    failure_action = "cleanup"
+                    with session.begin():
+                        job = session.get(
+                            Job,
+                            snapshot_migration_job_id(legacy_id),
+                        )
+                        if job is None:
+                            raise RuntimeError(
+                                "Snapshot migration state is unavailable"
+                            ) from cleanup_error
+                        transition_snapshot_migration(
+                            job,
+                            "failed",
+                            action="cleanup",
+                            cleanup_snapshot_id=trusted_snapshot_id,
+                            error_message=str(cleanup_error)[:1000],
+                        )
+                else:
+                    with session.begin():
+                        job = session.get(
+                            Job,
+                            snapshot_migration_job_id(legacy_id),
+                        )
+                        if job is None:
+                            raise RuntimeError(
+                                "Snapshot migration state is unavailable"
+                            )
+                        transition_snapshot_migration(
+                            job,
+                            "failed",
+                            action="recapture",
+                            clear_cleanup=True,
+                            error_message=str(migration_error)[:1000],
+                        )
+            else:
+                with session.begin():
+                    job = session.get(Job, snapshot_migration_job_id(legacy_id))
+                    if job is None:
+                        legacy = session.get(PageBlueprint, legacy_id)
+                        if legacy is None:
+                            continue
+                        job = prepare_snapshot_migration(session, legacy)
+                        transition_snapshot_migration(job, "migrating")
+                    transition_snapshot_migration(
+                        job,
+                        "failed",
+                        action="recapture",
+                        error_message=str(migration_error)[:1000],
+                    )
             results.append(
                 SnapshotMigrationResult(
                     blueprint_id=legacy_id,
                     state="failed",
-                    action="recapture",
+                    action=failure_action,
                 )
             )
 

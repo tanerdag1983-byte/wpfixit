@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.domains.page_blueprints.schemas import BlueprintSchema
+from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 
 BuilderType = Literal["gutenberg", "elementor", "bricks", "wpbakery", "acf"]
 SeoPluginType = Literal["yoast", "rank_math", "aioseo"]
@@ -167,7 +167,7 @@ class PagePackageContext(BaseModel):
     internal_link_candidates: list[InternalLink]
     template_slots: dict[str, str]
     approved_cta_urls: list[str] = Field(default_factory=list)
-    blueprint_schema: BlueprintSchema | None = None
+    blueprint_schema: BlueprintSchema | SnapshotTextSchema | None = None
 
     @field_validator("approved_cta_urls")
     @classmethod
