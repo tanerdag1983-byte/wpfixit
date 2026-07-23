@@ -242,6 +242,21 @@ def test_snapshot_identity_is_complete_or_absent(
         session.commit()
 
 
+def test_snapshot_identity_rejects_null_schema_version_with_later_fields(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    del source_page
+    incomplete = blueprint(projects.member_project.id, "service", version=1)
+    set_native_snapshot_identity(incomplete, 88)
+    incomplete.schema_version = None
+    session.add(incomplete)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 @pytest.mark.parametrize(
     ("capture_state", "migration_state", "schema_version"),
     [
@@ -284,6 +299,36 @@ def test_snapshot_identity_is_unique_per_project(
 
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_snapshot_identity_can_be_reused_in_a_different_project(
+    session: Session,
+    projects: ProjectFixtures,
+    source_page: WordPressPage,
+) -> None:
+    session.add(
+        WordPressPage(
+            id="other-source-page",
+            project_id=projects.other_project.id,
+            wordpress_object_id=502,
+            post_type="page",
+            status="publish",
+            title="Andere bronpagina",
+            slug="andere-bronpagina",
+            url="https://other.example/andere-bronpagina/",
+        )
+    )
+    session.commit()
+
+    first = blueprint(projects.member_project.id, "service", version=1)
+    second = blueprint(projects.other_project.id, "landing", version=2)
+    second.source_wordpress_page_id = "other-source-page"
+    set_native_snapshot_identity(first, 88)
+    set_native_snapshot_identity(second, 88)
+    session.add_all([first, second])
+    session.commit()
+
+    assert first.wordpress_snapshot_id == second.wordpress_snapshot_id == 88
 
 
 @pytest.mark.parametrize(

@@ -22,8 +22,10 @@ SNAPSHOT_IDENTITY_CHECK = (
     "schema_version IS NULL AND adapter_version IS NULL AND "
     "capture_state IS NULL AND migration_state IS NULL AND verified_at IS NULL) OR "
     "(wordpress_snapshot_id IS NOT NULL AND snapshot_version IS NOT NULL AND "
-    "schema_version = 'snapshot-text-v1' AND adapter_version IS NOT NULL AND "
-    "capture_state = 'ready' AND migration_state = 'native' AND "
+    "schema_version IS NOT NULL AND schema_version = 'snapshot-text-v1' AND "
+    "adapter_version IS NOT NULL AND capture_state IS NOT NULL AND "
+    "capture_state = 'ready' AND migration_state IS NOT NULL AND "
+    "migration_state = 'native' AND "
     "verified_at IS NOT NULL)"
     ")"
 )
