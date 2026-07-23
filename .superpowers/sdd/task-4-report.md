@@ -168,6 +168,43 @@ No open Critical or Important findings. The only unexecuted checks are the four
 environment-dependent PostgreSQL concurrency tests noted above; they are unrelated
 to the pure generation/provider changes in this task.
 
+## External Review Fix
+
+Commit `f362967` resolves the three independent-review findings:
+
+- `snapshot-text-v1` now uses a dedicated shared system and user prompt that asks
+  only for top-level
+  `{"text_replacements":{"known-field-id":{"value":"candidate text"}}}` output.
+  OpenAI, OpenAI-compatible, Anthropic, and Gemini all use that shared restricted
+  user prompt; legacy generation keeps its existing context payload.
+- Legacy `blueprint-v1` prompt hashing again uses the exact
+  `blueprint-replacements-v1` contract name.
+- Allowed self-closing rich-text tags are canonicalized to balanced HTML. An
+  approved self-closing anchor becomes `<a href="..."></a>`, while unapproved URLs
+  still fail locally with `unapproved_url`.
+
+Strict TDD evidence:
+
+```text
+RED: 6 failed, 54 passed in 0.14s
+GREEN focused: 60 passed in 0.07s
+```
+
+Final verification:
+
+```text
+cd backend
+.venv/bin/ruff check app tests alembic
+All checks passed!
+
+.venv/bin/python -m pytest --import-mode=importlib -q
+351 passed, 4 skipped in 9.88s
+```
+
+The four skips still require `WP_FIXPILOT_POSTGRES_TEST_URL` and are unrelated
+PostgreSQL concurrency suites. No Task 4 test was skipped, and no review concern
+remains open within this change's scope.
+
 ## Third Review Adjudication
 
 The third review found that WordPress may parse classic/WPBakery content as a nameless
