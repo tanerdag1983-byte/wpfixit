@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 import requests
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -837,6 +837,91 @@ def test_concurrent_successor_terminalizes_migrating_job_without_capture(
     assert migration_job.checkpoint["successor_blueprint_id"] == (
         concurrent_successor.id
     )
+
+
+def test_migration_reloads_cleanup_committed_while_waiting_for_legacy_lock(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    legacy = legacy_blueprint(
+        blueprint_id="legacy-concurrent-cleanup",
+        project_id=project_id,
+        wordpress_id=712,
+    )
+    session.add(legacy)
+    session.commit()
+    events: list[str] = []
+
+    class OrderedMigrationBridge(MigrationBridge):
+        def capture_blueprint(self, payload):
+            events.append("capture")
+            return super().capture_blueprint(payload)
+
+        def delete_blueprint(self, wordpress_blueprint_id):
+            events.append(f"delete:{wordpress_blueprint_id}")
+            return super().delete_blueprint(wordpress_blueprint_id)
+
+    bridge = OrderedMigrationBridge(
+        [snapshot_capture(wordpress_id=813, version=2)]
+    )
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    original_scalar = session.scalar
+    cleanup_committed = False
+
+    def commit_cleanup_after_legacy_lock(statement, *args, **kwargs):
+        nonlocal cleanup_committed
+        result = original_scalar(statement, *args, **kwargs)
+        sql = str(statement)
+        if (
+            not cleanup_committed
+            and "page_blueprints.id =" in sql
+            and "page_blueprints.wordpress_snapshot_id IS NULL" in sql
+        ):
+            job_id = page_blueprints.snapshot_migration_job_id(legacy.id)
+            stale_job = session.get(Job, job_id)
+            checkpoint = {
+                **stale_job.checkpoint,
+                "action": "cleanup",
+                "cleanup_snapshot_id": 812,
+            }
+            session.execute(
+                update(Job)
+                .where(Job.id == job_id)
+                .values(
+                    state="failed",
+                    checkpoint=checkpoint,
+                    error_code="snapshot_migration_cleanup_required",
+                ),
+                execution_options={"synchronize_session": False},
+            )
+            cleanup_committed = True
+        return result
+
+    monkeypatch.setattr(session, "scalar", commit_cleanup_after_legacy_lock)
+    auth_as(projects.owner)
+
+    response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {"blueprint_id": legacy.id, "state": "migrated"}
+    ]
+    assert events == ["delete:812", "capture"]
+    assert bridge.deleted == [812]
+    assert len(bridge.capture_payloads) == 1
+    session.expire_all()
+    migration_job = session.get(
+        Job,
+        page_blueprints.snapshot_migration_job_id(legacy.id),
+    )
+    assert migration_job is not None
+    assert migration_job.state == "migrated"
+    assert "cleanup_snapshot_id" not in migration_job.checkpoint
 
 
 def test_migration_persists_captured_seo_identity_and_verifies_successor(

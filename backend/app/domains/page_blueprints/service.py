@@ -317,12 +317,12 @@ def lock_current_blueprint_proposals(
     )
 
 
-def lock_legacy_blueprint_and_successor(
+def lock_legacy_blueprint(
     session: Session,
     project_id: str,
     legacy_id: str,
-) -> tuple[PageBlueprint | None, PageBlueprint | None]:
-    legacy = session.scalar(
+) -> PageBlueprint | None:
+    return session.scalar(
         select(PageBlueprint)
         .where(
             PageBlueprint.id == legacy_id,
@@ -331,9 +331,14 @@ def lock_legacy_blueprint_and_successor(
         )
         .with_for_update()
     )
-    if legacy is None:
-        return None, None
-    successor = session.scalar(
+
+
+def lock_blueprint_successor(
+    session: Session,
+    project_id: str,
+    legacy_id: str,
+) -> PageBlueprint | None:
+    return session.scalar(
         select(PageBlueprint)
         .where(
             PageBlueprint.project_id == project_id,
@@ -341,7 +346,17 @@ def lock_legacy_blueprint_and_successor(
         )
         .with_for_update()
     )
-    return legacy, successor
+
+
+def lock_legacy_blueprint_and_successor(
+    session: Session,
+    project_id: str,
+    legacy_id: str,
+) -> tuple[PageBlueprint | None, PageBlueprint | None]:
+    legacy = lock_legacy_blueprint(session, project_id, legacy_id)
+    if legacy is None:
+        return None, None
+    return legacy, lock_blueprint_successor(session, project_id, legacy_id)
 
 
 def snapshot_migration_job_id(blueprint_id: str) -> str:

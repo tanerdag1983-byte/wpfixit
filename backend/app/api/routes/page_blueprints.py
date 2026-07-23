@@ -18,8 +18,9 @@ from app.domains.page_blueprints.service import (
     SnapshotMigrationResult,
     create_blueprint_version,
     legacy_blueprint_candidates,
+    lock_blueprint_successor,
     lock_current_blueprint_proposals,
-    lock_legacy_blueprint_and_successor,
+    lock_legacy_blueprint,
     migrate_unapproved_proposals,
     prepare_snapshot_migration,
     set_default_blueprint,
@@ -430,6 +431,45 @@ def create_blueprint(
     return _payload(blueprint)
 
 
+def _recover_snapshot_migration_cleanup(
+    session: Session,
+    bridge: WordPressClient,
+    legacy_id: str,
+    job: Job,
+    *,
+    commit: bool = True,
+) -> SnapshotMigrationResult | None:
+    cleanup_snapshot_id = job.checkpoint.get("cleanup_snapshot_id")
+    if cleanup_snapshot_id is None:
+        return None
+    try:
+        _delete_remote_snapshot(bridge, int(cleanup_snapshot_id))
+    except requests.RequestException as cleanup_error:
+        transition_snapshot_migration(
+            job,
+            "failed",
+            action="cleanup",
+            cleanup_snapshot_id=int(cleanup_snapshot_id),
+            error_message=str(cleanup_error)[:1000],
+        )
+        if commit:
+            session.commit()
+        return SnapshotMigrationResult(
+            blueprint_id=legacy_id,
+            state="failed",
+            action="cleanup",
+        )
+    checkpoint = dict(job.checkpoint)
+    checkpoint.pop("cleanup_snapshot_id", None)
+    job.checkpoint = checkpoint
+    legacy = session.get(PageBlueprint, legacy_id)
+    if legacy is not None:
+        prepare_snapshot_migration(session, legacy)
+    if commit:
+        session.commit()
+    return None
+
+
 @router.post("/page-blueprints/migrate")
 def migrate_blueprints(
     project_id: str,
@@ -464,34 +504,15 @@ def migrate_blueprints(
         job = session.get(Job, snapshot_migration_job_id(legacy_id))
         if job is None:
             raise RuntimeError("Snapshot migration state is unavailable")
-        cleanup_snapshot_id = job.checkpoint.get("cleanup_snapshot_id")
-        if cleanup_snapshot_id is not None:
-            try:
-                _delete_remote_snapshot(bridge, int(cleanup_snapshot_id))
-            except requests.RequestException as cleanup_error:
-                transition_snapshot_migration(
-                    job,
-                    "failed",
-                    action="cleanup",
-                    cleanup_snapshot_id=int(cleanup_snapshot_id),
-                    error_message=str(cleanup_error)[:1000],
-                )
-                session.commit()
-                results.append(
-                    SnapshotMigrationResult(
-                        blueprint_id=legacy_id,
-                        state="failed",
-                        action="cleanup",
-                    )
-                )
-                continue
-            checkpoint = dict(job.checkpoint)
-            checkpoint.pop("cleanup_snapshot_id", None)
-            job.checkpoint = checkpoint
-            legacy = session.get(PageBlueprint, legacy_id)
-            if legacy is not None:
-                prepare_snapshot_migration(session, legacy)
-            session.commit()
+        cleanup_result = _recover_snapshot_migration_cleanup(
+            session,
+            bridge,
+            legacy_id,
+            job,
+        )
+        if cleanup_result is not None:
+            results.append(cleanup_result)
+            continue
         try:
             job = session.get(Job, snapshot_migration_job_id(legacy_id))
             if job is None:
@@ -499,17 +520,37 @@ def migrate_blueprints(
             transition_snapshot_migration(job, "migrating")
             session.commit()
             with session.begin():
-                job = session.get(Job, snapshot_migration_job_id(legacy_id))
-                if job is None:
-                    raise RuntimeError("Snapshot migration state is unavailable")
-                legacy, existing_successor = lock_legacy_blueprint_and_successor(
+                legacy = lock_legacy_blueprint(
                     session,
                     project_id,
                     legacy_id,
                 )
                 if legacy is None:
                     raise RuntimeError("Legacy blueprint is unavailable")
-                if existing_successor is not None:
+                job = session.scalar(
+                    select(Job)
+                    .where(Job.id == snapshot_migration_job_id(legacy_id))
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                if job is None:
+                    raise RuntimeError("Snapshot migration state is unavailable")
+                cleanup_result = _recover_snapshot_migration_cleanup(
+                    session,
+                    bridge,
+                    legacy_id,
+                    job,
+                    commit=False,
+                )
+                existing_successor = (
+                    lock_blueprint_successor(session, project_id, legacy_id)
+                    if cleanup_result is None
+                    else None
+                )
+                if cleanup_result is not None:
+                    result_state = cleanup_result.state
+                    result_action = cleanup_result.action
+                elif existing_successor is not None:
                     result_state = "migrated"
                     result_action = "none"
                     transition_snapshot_migration(
