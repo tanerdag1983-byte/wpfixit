@@ -1035,6 +1035,10 @@ final class WPFixPilot_Blueprint_Controller
             'wordpress_snapshot_id' => $blueprintId,
             'snapshot_version' => $this->blueprint_version($blueprintId),
             'schema_version' => (string) ($schema['schema_version'] ?? ''),
+            'post_type' => WPFixPilot_Template_Snapshot_Store::POST_TYPE,
+            'adapter_version' => defined('WPFIXPILOT_BRIDGE_VERSION')
+                ? (string) constant('WPFIXPILOT_BRIDGE_VERSION')
+                : 'development',
         ] : []);
     }
 

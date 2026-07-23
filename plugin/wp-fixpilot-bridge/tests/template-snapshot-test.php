@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.4');
+
 final class WP_Error
 {
     public function __construct(public string $code, public string $message, public array $data = []) {}
@@ -195,6 +197,8 @@ function test_capture_creates_snapshot_without_mutating_source(): void
     assert($result['wordpress_snapshot_id'] === $result['wordpress_blueprint_id']);
     assert($result['snapshot_version'] === 1);
     assert($result['schema_version'] === 'snapshot-text-v1');
+    assert($result['post_type'] === 'wpfixpilot_snapshot');
+    assert($result['adapter_version'] === '0.3.4');
     assert(get_post($result['wordpress_snapshot_id'])->post_type === 'wpfixpilot_snapshot');
     assert(get_post($result['wordpress_snapshot_id'])->post_status === 'private');
     assert((new WPFixPilot_Template_Snapshot_Store())->assert_snapshot(
@@ -202,6 +206,11 @@ function test_capture_creates_snapshot_without_mutating_source(): void
     ) instanceof WP_Post);
     assert(is_wp_error((new WPFixPilot_Template_Snapshot_Store())->assert_snapshot(41)));
     assert(get_post(41) == $sourceBefore);
+
+    $read = blueprint_controller()->read($result['wordpress_snapshot_id']);
+    assert(!is_wp_error($read));
+    assert($read['post_type'] === 'wpfixpilot_snapshot');
+    assert($read['adapter_version'] === '0.3.4');
 }
 
 test_snapshot_post_type_is_private();

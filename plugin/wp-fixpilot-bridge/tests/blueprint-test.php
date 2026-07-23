@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.4');
+
 final class WP_Error
 {
     public function __construct(public string $code, public string $message, public array $data = []) {}
@@ -879,6 +881,8 @@ assert($captured['wordpress_blueprint_id'] === 200);
 assert($captured['wordpress_snapshot_id'] === 200);
 assert($captured['snapshot_version'] === 1);
 assert($captured['schema_version'] === 'snapshot-text-v1');
+assert($captured['post_type'] === 'wpfixpilot_snapshot');
+assert($captured['adapter_version'] === '0.3.4');
 assert(get_post(200)->post_type === 'wpfixpilot_snapshot');
 assert(get_post(200)->post_status === 'private');
 assert(get_post_meta(200, '_wp_fixpilot_blueprint', true) === '1');
@@ -891,6 +895,8 @@ assert($captured['created'] === true);
 
 $read = $controller->read(200);
 assert($read['content_schema']['schema_version'] === 'snapshot-text-v1');
+assert($read['post_type'] === 'wpfixpilot_snapshot');
+assert($read['adapter_version'] === '0.3.4');
 assert($read['structure_hash'] === $captured['structure_hash']);
 
 $documentFieldDraft = $controller->create_draft(200, [

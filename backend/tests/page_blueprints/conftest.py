@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -79,6 +79,7 @@ def snapshot_capture(snapshot_schema: dict) -> Callable[..., dict]:
         version: int = 1,
         created: bool = True,
         schema: dict | None = None,
+        seo_plugin: str = "yoast",
     ) -> dict:
         return {
             "status": "ready",
@@ -95,7 +96,7 @@ def snapshot_capture(snapshot_schema: dict) -> Callable[..., dict]:
             "version": version,
             "structure_hash": f"snapshot-hash-v{version}",
             "content_schema": schema or snapshot_schema,
-            "seo_plugin": "yoast",
+            "seo_plugin": seo_plugin,
         }
 
     return build
@@ -117,6 +118,13 @@ def session() -> Generator[Session, None, None]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     with Session(engine) as database_session:
         yield database_session
@@ -144,12 +152,10 @@ def projects(session: Session) -> ProjectFixtures:
         slug="reference-page",
         url="https://blueprint.example/reference-page/",
     )
+    session.add_all([owner, viewer, outsider, organization])
+    session.commit()
     session.add_all(
         [
-            owner,
-            viewer,
-            outsider,
-            organization,
             OrganizationMember(
                 organization_id=organization.id,
                 profile_id=owner.id,
@@ -161,9 +167,10 @@ def projects(session: Session) -> ProjectFixtures:
                 role="viewer",
             ),
             project,
-            source,
         ]
     )
+    session.commit()
+    session.add(source)
     session.commit()
     return ProjectFixtures(owner, viewer, outsider, organization, project)
 

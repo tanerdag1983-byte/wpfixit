@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.domains.jobs.models import Job
 from app.domains.page_blueprints.lifecycle import (
     BLUEPRINT_LIFECYCLE_STATES,
     BlueprintLifecycleState,
@@ -14,6 +15,7 @@ from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 
 _ALLOWED_BLUEPRINT_STATES = set(BLUEPRINT_LIFECYCLE_STATES)
+SNAPSHOT_MIGRATION_JOB_TYPE = "page_blueprint_snapshot_migration"
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,7 @@ def create_blueprint_version(
     capture_state: str | None = None,
     migration_state: str | None = None,
     verified_at: datetime | None = None,
+    seo_plugin: str | None = None,
     commit: bool = True,
 ) -> PageBlueprint:
     validated_schema = _validated_schema(content_schema)
@@ -143,7 +146,7 @@ def create_blueprint_version(
         migration_state=migration_state,
         verified_at=verified_at,
         builder=original.builder,
-        seo_plugin=original.seo_plugin,
+        seo_plugin=seo_plugin or original.seo_plugin,
         version=next_version,
         structure_hash=structure_hash,
         content_schema=validated_schema,
@@ -183,7 +186,6 @@ def migrate_unapproved_proposals(
     legacy: PageBlueprint,
     successor: PageBlueprint,
 ) -> bool:
-    from app.domains.jobs.models import Job
     from app.domains.page_packages.models import PagePackageProposal
 
     proposals = session.scalars(
@@ -245,7 +247,22 @@ def migrate_unapproved_proposals(
             blueprint_structure_hash=successor.structure_hash,
             package=proposal.package,
             rendered_html=proposal.rendered_html,
-            config_snapshot=proposal.config_snapshot,
+            config_snapshot={
+                **proposal.config_snapshot,
+                "blueprint_id": successor.id,
+                "page_type": successor.page_type,
+                "version": successor.version,
+                "structure_hash": successor.structure_hash,
+                "builder": successor.builder,
+                "seo_plugin": successor.seo_plugin,
+                "content_schema": successor.content_schema,
+                "wordpress_snapshot_id": successor.wordpress_snapshot_id,
+                "snapshot_version": successor.snapshot_version,
+                "schema_version": successor.schema_version,
+                "adapter_version": successor.adapter_version,
+                "capture_state": successor.capture_state,
+                "migration_state": successor.migration_state,
+            },
             provider=proposal.provider,
             model=proposal.model,
             prompt_version=proposal.prompt_version,
@@ -265,3 +282,67 @@ def migrate_unapproved_proposals(
 
     session.flush()
     return incompatible
+
+
+def snapshot_migration_job_id(blueprint_id: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"snapshot-migration:{blueprint_id}"))
+
+
+def prepare_snapshot_migration(
+    session: Session,
+    blueprint: PageBlueprint,
+) -> Job:
+    job = session.get(Job, snapshot_migration_job_id(blueprint.id))
+    if job is None:
+        job = Job(
+            id=snapshot_migration_job_id(blueprint.id),
+            project_id=blueprint.project_id,
+            job_type=SNAPSHOT_MIGRATION_JOB_TYPE,
+            state="pending",
+            progress=0,
+            checkpoint={
+                "blueprint_id": blueprint.id,
+                "transitions": ["pending"],
+            },
+        )
+        session.add(job)
+    else:
+        checkpoint = dict(job.checkpoint)
+        transitions = list(checkpoint.get("transitions", []))
+        transitions.append("pending")
+        job.state = "pending"
+        job.progress = 0
+        job.error_code = None
+        job.error_message = None
+        job.started_at = None
+        job.completed_at = None
+        job.checkpoint = {**checkpoint, "transitions": transitions}
+    session.flush()
+    return job
+
+
+def transition_snapshot_migration(
+    job: Job,
+    state: Literal["pending", "migrating", "migrated", "incompatible", "failed"],
+    *,
+    action: Literal["none", "new_proposal", "recapture"] = "none",
+    successor_id: str | None = None,
+) -> None:
+    checkpoint = dict(job.checkpoint)
+    transitions = list(checkpoint.get("transitions", []))
+    if not transitions or transitions[-1] != state:
+        transitions.append(state)
+    checkpoint["transitions"] = transitions
+    checkpoint["action"] = action
+    if successor_id is not None:
+        checkpoint["successor_blueprint_id"] = successor_id
+    job.state = state
+    job.checkpoint = checkpoint
+    if state == "migrating":
+        job.progress = 25
+        job.started_at = datetime.now(UTC)
+    elif state in {"migrated", "incompatible", "failed"}:
+        job.progress = 100
+        job.completed_at = datetime.now(UTC)
+    if state == "failed":
+        job.error_code = "snapshot_migration_recapture_required"

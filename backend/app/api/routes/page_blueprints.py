@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.crypto import decrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
+from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 from app.domains.page_blueprints.service import (
@@ -18,8 +19,11 @@ from app.domains.page_blueprints.service import (
     create_blueprint_version,
     legacy_blueprint_candidates,
     migrate_unapproved_proposals,
+    prepare_snapshot_migration,
     set_default_blueprint,
+    snapshot_migration_job_id,
     snapshot_schema_from_capture,
+    transition_snapshot_migration,
 )
 from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.service import get_membership, get_project
@@ -34,6 +38,7 @@ SemanticRole = Literal[
 ]
 PageType = Literal["service", "brand", "location", "blog", "generic"]
 SUPPORTED_BUILDERS = {"acf", "elementor", "wpbakery", "bricks", "gutenberg"}
+SUPPORTED_SEO_PLUGINS = {"none", "yoast", "rank_math", "aioseo"}
 
 
 class BlueprintCreate(BaseModel):
@@ -141,6 +146,11 @@ def _validated_capture(
         raise HTTPException(
             status_code=502, detail="WordPress returned an invalid blueprint builder"
         )
+    if str(data.get("seo_plugin") or "") not in SUPPORTED_SEO_PLUGINS:
+        raise HTTPException(
+            status_code=502,
+            detail="WordPress returned an invalid SEO plugin identity",
+        )
     if not str(data.get("structure_hash") or ""):
         raise HTTPException(
             status_code=502, detail="WordPress returned an empty blueprint hash"
@@ -183,10 +193,9 @@ def _new_capture_snapshot_id(
         or not isinstance(wordpress_id, int)
         or wordpress_id < 1
         or captured.get("wordpress_blueprint_id") != wordpress_id
-        or (
-            captured.get("post_type") is not None
-            and captured.get("post_type") != "wpfixpilot_snapshot"
-        )
+        or captured.get("post_type") != "wpfixpilot_snapshot"
+        or not isinstance(captured.get("adapter_version"), str)
+        or not captured["adapter_version"]
     ):
         raise HTTPException(
             status_code=502,
@@ -228,10 +237,7 @@ def _read_snapshot(bridge: WordPressClient, wordpress_snapshot_id: int) -> dict:
 
 
 def _adapter_version(captured: dict) -> str:
-    adapter_version = str(captured.get("adapter_version") or "")
-    if adapter_version:
-        return adapter_version
-    return f"{captured['builder']}-snapshot-v1"
+    return str(captured["adapter_version"])
 
 
 def _payload(blueprint: PageBlueprint) -> dict:
@@ -296,25 +302,17 @@ def _verify_native_snapshot(
         "builder": blueprint.builder,
         "seo_plugin": blueprint.seo_plugin,
         "page_type": blueprint.page_type,
+        "post_type": "wpfixpilot_snapshot",
+        "adapter_version": blueprint.adapter_version,
     }
     stored_schema = SnapshotTextSchema.model_validate(blueprint.content_schema)
     schema_matches = (
         _schema_with_stored_roles(schema, stored_schema) == blueprint.content_schema
     )
-    adapter_matches = (
-        inspected.get("adapter_version") is None
-        or inspected.get("adapter_version") == blueprint.adapter_version
-    )
-    post_type_matches = (
-        inspected.get("post_type") is None
-        or inspected.get("post_type") == "wpfixpilot_snapshot"
-    )
     if (
         any(inspected.get(key) != value for key, value in expected_identity.items())
         or str(inspected.get("structure_hash")) != blueprint.structure_hash
         or not schema_matches
-        or not adapter_matches
-        or not post_type_matches
     ):
         blueprint.state = "stale"
         blueprint.is_default_for_page_type = False
@@ -420,12 +418,12 @@ def create_blueprint(
         )
         session.add(blueprint)
         session.commit()
-        session.refresh(blueprint)
     except Exception:
         session.rollback()
         if cleanup_snapshot_id is not None:
             _delete_remote_snapshot(bridge, cleanup_snapshot_id)
         raise
+    session.refresh(blueprint)
     return _payload(blueprint)
 
 
@@ -450,13 +448,26 @@ def migrate_blueprints(
         )
         .order_by(PageBlueprint.created_at, PageBlueprint.id)
     ).all()
-    session.rollback()
+    for legacy_id in legacy_ids:
+        legacy = session.get(PageBlueprint, legacy_id)
+        if legacy is not None:
+            prepare_snapshot_migration(session, legacy)
+    session.commit()
 
     results: list[SnapshotMigrationResult] = []
     for legacy_id in legacy_ids:
         trusted_snapshot_id: int | None = None
+        migration_committed = False
         try:
+            job = session.get(Job, snapshot_migration_job_id(legacy_id))
+            if job is None:
+                raise RuntimeError("Snapshot migration state is unavailable")
+            transition_snapshot_migration(job, "migrating")
+            session.commit()
             with session.begin():
+                job = session.get(Job, snapshot_migration_job_id(legacy_id))
+                if job is None:
+                    raise RuntimeError("Snapshot migration state is unavailable")
                 legacy = session.scalar(
                     select(PageBlueprint)
                     .where(
@@ -505,6 +516,7 @@ def migrate_blueprints(
                     structure_hash=str(captured["structure_hash"]),
                     content_schema=schema.model_dump(mode="python"),
                     state=state,
+                    seo_plugin=str(captured["seo_plugin"]),
                     commit=False,
                 )
                 incompatible = migrate_unapproved_proposals(
@@ -514,20 +526,42 @@ def migrate_blueprints(
                 )
                 if legacy.is_default_for_page_type:
                     set_default_blueprint(session, successor, commit=False)
+                result_state = "incompatible" if incompatible else "migrated"
+                result_action = "new_proposal" if incompatible else "none"
+                transition_snapshot_migration(
+                    job,
+                    result_state,
+                    action=result_action,
+                    successor_id=successor.id,
+                )
+            migration_committed = True
             results.append(
                 SnapshotMigrationResult(
                     blueprint_id=legacy_id,
-                    state="incompatible" if incompatible else "migrated",
-                    action="new_proposal" if incompatible else "none",
+                    state=result_state,
+                    action=result_action,
                 )
             )
         except Exception:
             session.rollback()
-            if trusted_snapshot_id is not None:
+            if trusted_snapshot_id is not None and not migration_committed:
                 try:
                     _delete_remote_snapshot(bridge, trusted_snapshot_id)
                 except requests.RequestException:
                     pass
+            with session.begin():
+                job = session.get(Job, snapshot_migration_job_id(legacy_id))
+                if job is None:
+                    legacy = session.get(PageBlueprint, legacy_id)
+                    if legacy is None:
+                        continue
+                    job = prepare_snapshot_migration(session, legacy)
+                    transition_snapshot_migration(job, "migrating")
+                transition_snapshot_migration(
+                    job,
+                    "failed",
+                    action="recapture",
+                )
             results.append(
                 SnapshotMigrationResult(
                     blueprint_id=legacy_id,
@@ -757,17 +791,18 @@ def version_blueprint(
             structure_hash=str(captured["structure_hash"]),
             content_schema=schema.model_dump(mode="python"),
             state=state,
+            seo_plugin=str(captured["seo_plugin"]),
             commit=False,
         )
         if original.is_default_for_page_type:
             set_default_blueprint(session, replacement, commit=False)
         session.commit()
-        session.refresh(replacement)
     except Exception:
         session.rollback()
         if cleanup_snapshot_id is not None:
             _delete_remote_snapshot(bridge, cleanup_snapshot_id)
         raise
+    session.refresh(replacement)
     return _payload(replacement)
 
 
@@ -798,10 +833,21 @@ def delete_blueprint_route(
     )
     if proposal is not None or successor is not None:
         raise HTTPException(status_code=409, detail="Blueprint is still referenced")
+    blueprint.state = "invalid"
+    blueprint.is_default_for_page_type = False
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     _delete_remote_snapshot(
         _bridge(session, project_id),
         blueprint.wordpress_snapshot_id or blueprint.wordpress_blueprint_id,
     )
     session.delete(blueprint)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return Response(status_code=status.HTTP_204_NO_CONTENT)

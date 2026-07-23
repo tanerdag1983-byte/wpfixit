@@ -65,6 +65,8 @@ def captured_blueprint(*, wordpress_id: int = 901, version: int = 1) -> dict:
         "wordpress_snapshot_id": wordpress_id,
         "snapshot_version": version,
         "schema_version": "snapshot-text-v1",
+        "post_type": "wpfixpilot_snapshot",
+        "adapter_version": "acf-v1",
         "source_page_id": 19,
         "builder": "acf",
         "page_type": "service",
@@ -414,6 +416,67 @@ def test_invalid_capture_is_removed_and_not_persisted(
     assert session.scalar(select(PageBlueprint)) is None
 
 
+def test_create_commit_failure_cleans_only_uncommitted_snapshot(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+
+    def fail_commit():
+        raise RuntimeError("database commit failed")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="database commit failed"):
+        client.post(
+            f"/projects/{projects.member_project.id}/page-blueprints",
+            json={
+                "name": "Commit failure",
+                "page_type": "service",
+                "source_wordpress_page_id": "source-page",
+            },
+        )
+
+    assert bridge.deleted == [901]
+    session.rollback()
+    assert session.scalar(select(PageBlueprint)) is None
+
+
+def test_create_refresh_failure_keeps_committed_snapshot(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    original_refresh = session.refresh
+
+    def fail_blueprint_refresh(instance, *args, **kwargs):
+        if isinstance(instance, PageBlueprint):
+            raise RuntimeError("database refresh failed")
+        return original_refresh(instance, *args, **kwargs)
+
+    monkeypatch.setattr(session, "refresh", fail_blueprint_refresh)
+
+    with pytest.raises(RuntimeError, match="database refresh failed"):
+        create_blueprint(client, projects.member_project.id)
+
+    assert bridge.deleted == []
+    session.expire_all()
+    stored = session.scalar(select(PageBlueprint))
+    assert stored is not None
+    assert stored.wordpress_snapshot_id == 901
+    assert stored.state == "ready"
+
+
 @pytest.mark.parametrize(
     "capture_override",
     [
@@ -446,6 +509,68 @@ def test_untrusted_capture_identity_is_never_deleted(
 
     assert response.status_code == 502
     assert bridge.deleted == []
+
+
+@pytest.mark.parametrize("missing_key", ["post_type", "adapter_version"])
+def test_capture_rejects_missing_snapshot_trust_field_without_cleanup(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    missing_key,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    bridge.captures[0].pop(missing_key)
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints",
+        json={
+            "name": "Incomplete trust contract",
+            "page_type": "service",
+            "source_wordpress_page_id": "source-page",
+        },
+    )
+
+    assert response.status_code == 502
+    assert bridge.deleted == []
+
+
+@pytest.mark.parametrize(
+    "inspection_change",
+    [
+        {"post_type": None},
+        {"post_type": "page"},
+        {"adapter_version": None},
+    ],
+)
+def test_verify_rejects_missing_or_wrong_snapshot_trust_field(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    inspection_change,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    inspected = captured_blueprint()
+    for key, value in inspection_change.items():
+        if value is None:
+            inspected.pop(key)
+        else:
+            inspected[key] = value
+    bridge.inspections[901] = inspected
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{created['id']}/verify"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Snapshot structure has changed"
 
 
 def test_duplicate_capture_identity_does_not_delete_existing_clone(
@@ -554,6 +679,45 @@ def test_new_version_rolls_back_registry_when_default_transfer_fails(
     assert bridge.deleted == [902]
 
 
+def test_new_version_refresh_failure_keeps_committed_snapshot(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    original_refresh = session.refresh
+
+    def fail_replacement_refresh(instance, *args, **kwargs):
+        if (
+            isinstance(instance, PageBlueprint)
+            and instance.wordpress_snapshot_id == 902
+        ):
+            raise RuntimeError("replacement refresh failed")
+        return original_refresh(instance, *args, **kwargs)
+
+    monkeypatch.setattr(session, "refresh", fail_replacement_refresh)
+
+    with pytest.raises(RuntimeError, match="replacement refresh failed"):
+        client.post(
+            f"/projects/{projects.member_project.id}/page-blueprints/"
+            f"{created['id']}/new-version"
+        )
+
+    assert bridge.deleted == []
+    session.expire_all()
+    replacement = session.scalar(
+        select(PageBlueprint).where(PageBlueprint.supersedes_id == created["id"])
+    )
+    assert replacement is not None
+    assert replacement.wordpress_snapshot_id == 902
+    assert replacement.state == "ready"
+
+
 def test_new_version_locks_original_before_wordpress_capture(
     client, auth_as, projects, monkeypatch, session
 ):
@@ -602,3 +766,105 @@ def test_delete_recovers_when_wordpress_clone_is_already_absent(
         f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
     )
     assert deleted.status_code == 204
+
+
+def test_delete_does_not_touch_remote_when_non_ready_commit_fails(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+
+    def fail_commit():
+        raise RuntimeError("state commit failed")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="state commit failed"):
+        client.delete(
+            f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+        )
+
+    assert bridge.deleted == []
+    session.rollback()
+    stored = session.get(PageBlueprint, created["id"])
+    assert stored is not None
+    assert stored.state == "ready"
+
+
+def test_delete_db_failure_leaves_non_ready_row_for_safe_retry(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    original_commit = session.commit
+
+    def fail_row_delete_commit():
+        if session.deleted:
+            raise RuntimeError("row delete commit failed")
+        original_commit()
+
+    monkeypatch.setattr(session, "commit", fail_row_delete_commit)
+
+    with pytest.raises(RuntimeError, match="row delete commit failed"):
+        client.delete(
+            f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+        )
+
+    assert bridge.deleted == [901]
+    session.rollback()
+    session.expire_all()
+    stored = session.get(PageBlueprint, created["id"])
+    assert stored is not None
+    assert stored.state == "invalid"
+    assert stored.is_default_for_page_type is False
+
+    monkeypatch.setattr(session, "commit", original_commit)
+    retried = client.delete(
+        f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+    )
+    assert retried.status_code == 204
+    assert bridge.deleted == [901, 901]
+    assert session.get(PageBlueprint, created["id"]) is None
+
+
+def test_remote_delete_failure_leaves_non_ready_row_for_retry(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+    session,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    created = create_blueprint(client, projects.member_project.id)
+    response = requests.Response()
+    response.status_code = 500
+
+    def fail_remote_delete(wordpress_snapshot_id: int):
+        raise requests.HTTPError(response=response)
+
+    bridge.delete_blueprint = fail_remote_delete
+
+    with pytest.raises(requests.HTTPError):
+        client.delete(
+            f"/projects/{projects.member_project.id}/page-blueprints/{created['id']}"
+        )
+
+    session.expire_all()
+    stored = session.get(PageBlueprint, created["id"])
+    assert stored is not None
+    assert stored.state == "invalid"
+    assert stored.is_default_for_page_type is False
