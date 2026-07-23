@@ -1,4 +1,8 @@
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
@@ -6,6 +10,7 @@ from app.domains.jobs.models import Job
 from app.domains.page_packages.models import (
     PagePackageProposal,
     PagePackageRegenerationCandidate,
+    PageProposalStage,
 )
 from app.domains.page_packages.service import accept_regeneration_candidate
 from app.domains.wordpress.draft_jobs import hash_draft_job_payload
@@ -399,3 +404,99 @@ def test_text_retry_creates_new_immutable_version_and_explicitly_calls_provider(
     assert original_after["package"] == original_before["package"]
     assert original_after["stages"] == original_before["stages"]
     assert current["package"]["text_replacements"]["document:title"] == "Nieuwe titel"
+
+    corrected_text = deepcopy(original_after["stages"][1]["result"])
+    corrected_text["text_replacements"]["document:title"] = {
+        "value": "Historische wijziging"
+    }
+    blocked_update = client.put(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}",
+        json={"package": corrected_text},
+    )
+    original_after_update = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}"
+    ).json()
+
+    assert blocked_update.status_code == 409
+    assert original_after_update == original_after
+
+    historical = session.get(PagePackageProposal, original_id)
+    validation = session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == original_id,
+            PageProposalStage.name == "validation",
+        )
+    )
+    assert historical is not None and validation is not None
+    historical.state = "proposed"
+    validation.state = "ready"
+    validation.errors = {}
+    session.commit()
+    before_approve = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}"
+    ).json()
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda current_session, project_id: bridge,
+    )
+
+    blocked_approve = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}/approve"
+    )
+    after_approve = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{original_id}"
+    ).json()
+
+    assert blocked_approve.status_code == 409
+    assert after_approve == before_approve
+
+
+def test_create_returns_current_attention_version_after_failed_text_retry(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    invalid = proposal_snapshot_text_package()
+    del invalid["text_replacements"]["document:title"]
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": invalid}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    first = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    ).json()
+    retried = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{first['id']}/"
+        "stages/text/retry"
+    )
+    assert retried.status_code == 202
+    current_id = retried.json()["id"]
+    historical = session.get(PagePackageProposal, first["id"])
+    assert historical is not None
+    historical.created_at = datetime.now(UTC) + timedelta(minutes=1)
+    session.commit()
+
+    created = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+
+    assert created.status_code == 202
+    assert created.json()["id"] == current_id

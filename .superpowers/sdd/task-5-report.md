@@ -57,3 +57,29 @@ legacy page-package flow. Snapshot proposals execute `template`, `text`, and
   session terminated without returning a final findings message. The scoped
   code received a local lock-order and diff audit; obtain a completed external
   review before changing the SDD ledger to `complete`.
+
+## Independent Review Fix
+
+- RED: focused review regressions exposed the missing stale-stage lease API;
+  historical snapshot update/approve, current-only proposal lookup, and stage
+  error filtering were then exercised in the same focused suite.
+- Historical snapshot versions now reject update and approval under the
+  proposal row lock unless `is_current` is true. The regressions create a text
+  retry first, then prove the archived version returns `409` without changing
+  its proposal payload, state, or stages.
+- A running stage has a fixed five-minute lease. A fresh lease returns
+  `stage_in_progress`; a row-locked, demonstrably stale lease is reclaimed by
+  a retrying worker with a new start time, retry count, and cleared incomplete
+  data. The worker resumes only the reclaimed stage. PostgreSQL coverage proves
+  that two concurrent reclaims have one winner when the optional database URL
+  is configured.
+- Existing-proposal lookup now selects only `is_current=true`, so a failed text
+  retry cannot make a later create request return an archived
+  `needs_attention` version.
+- Proposal `field_errors` now include only field IDs present in the persisted
+  snapshot schema. Technical `message`, provider, validation, and unknown-field
+  errors remain in the stage payload and never appear as user field errors.
+- Verification after the fixes: Ruff passed; focused Task 5 suites passed
+  `48` tests with `2` optional PostgreSQL skips; Alembic remained at
+  `0021_proposal_stages`; full backend passed `372` tests with `6` optional
+  PostgreSQL skips.

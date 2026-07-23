@@ -1,6 +1,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from threading import Barrier
@@ -26,10 +27,12 @@ from app.domains.page_packages.models import PageProposalStage
 from app.domains.page_packages.stages import (
     MAX_STAGE_ERRORS_BYTES,
     MAX_STAGE_RESULT_BYTES,
+    STALE_RUNNING_STAGE_SECONDS,
     attention_stage,
     begin_stage,
     complete_stage,
     fail_stage,
+    reclaim_stale_running_stage,
     retry_stage,
 )
 from tests.page_packages.test_proposal_versions import page_proposal_factory
@@ -189,6 +192,48 @@ def test_stage_transitions_record_timestamps_and_retry_metadata(
     )
     assert completed.state == "ready"
     assert completed.completed_at is not None
+
+
+def test_fresh_running_stage_cannot_be_reclaimed(
+    session: Session,
+    proposal,
+) -> None:
+    item = _stage(session, proposal.id, "text", state="running")
+    now = datetime.now(UTC)
+    item.started_at = now - timedelta(seconds=STALE_RUNNING_STAGE_SECONDS - 1)
+    session.commit()
+
+    with pytest.raises(ValueError, match="stage_in_progress"):
+        reclaim_stale_running_stage(session, proposal.id, "text", now=now)
+
+    session.refresh(item)
+    assert item.state == "running"
+    assert item.retry_count == 0
+    assert item.started_at.replace(tzinfo=UTC) == now - timedelta(
+        seconds=STALE_RUNNING_STAGE_SECONDS - 1
+    )
+
+
+def test_stale_running_stage_is_reclaimed_with_a_new_lease(
+    session: Session,
+    proposal,
+) -> None:
+    item = _stage(session, proposal.id, "text", state="running")
+    now = datetime.now(UTC)
+    item.started_at = now - timedelta(seconds=STALE_RUNNING_STAGE_SECONDS + 1)
+    item.result = {"partial": "discard"}
+    item.errors = {"message": "interrupted"}
+    session.commit()
+
+    reclaimed = reclaim_stale_running_stage(session, proposal.id, "text", now=now)
+
+    assert reclaimed.state == "running"
+    assert reclaimed.retry_count == 1
+    assert reclaimed.started_at == now
+    assert reclaimed.last_retried_at == now
+    assert reclaimed.completed_at is None
+    assert reclaimed.result == {}
+    assert reclaimed.errors == {}
 
 
 def test_text_success_survives_validation_attention(
@@ -382,6 +427,93 @@ def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> Non
             ]
         assert results.count("rejected") == 1
         assert set(results) & {"ready", "failed"}
+    finally:
+        engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin_engine.dispose()
+
+
+@pytest.mark.skipif(
+    not POSTGRES_TEST_URL,
+    reason="WP_FIXPILOT_POSTGRES_TEST_URL is required",
+)
+def test_concurrent_stale_stage_reclaims_have_one_winner_postgres() -> None:
+    schema = f"task5_reclaim_{uuid4().hex}"
+    admin_engine = create_engine(POSTGRES_TEST_URL)
+    with admin_engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        connection.execute(
+            text(
+                f'CREATE TABLE "{schema}".page_package_proposals '
+                "(id VARCHAR(64) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text(
+                f'CREATE TABLE "{schema}".page_proposal_stages ('
+                "id VARCHAR(64) PRIMARY KEY, "
+                "proposal_version_id VARCHAR(64) NOT NULL REFERENCES "
+                f'"{schema}".page_package_proposals(id) ON DELETE CASCADE, '
+                "name VARCHAR(24) NOT NULL, state VARCHAR(24) NOT NULL, "
+                "result JSON NOT NULL, errors JSON NOT NULL, "
+                "retry_count INTEGER NOT NULL DEFAULT 0, "
+                "started_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, "
+                "last_retried_at TIMESTAMPTZ NULL, "
+                "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "UNIQUE (proposal_version_id, name))"
+            )
+        )
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".page_package_proposals (id) '
+                "VALUES ('proposal-reclaim')"
+            )
+        )
+        connection.execute(
+            text(
+                f'INSERT INTO "{schema}".page_proposal_stages '
+                "(id, proposal_version_id, name, state, result, errors, started_at) "
+                "VALUES ('stage-reclaim', 'proposal-reclaim', 'text', 'running', "
+                "'{}', '{}', CURRENT_TIMESTAMP - INTERVAL '10 minutes')"
+            )
+        )
+
+    engine = create_engine(
+        POSTGRES_TEST_URL,
+        connect_args={"options": f"-csearch_path={schema}"},
+        pool_size=2,
+        max_overflow=0,
+    )
+    barrier = Barrier(2)
+
+    def reclaim() -> str:
+        with Session(engine) as current_session:
+            barrier.wait(timeout=10)
+            try:
+                reclaim_stale_running_stage(
+                    current_session,
+                    "proposal-reclaim",
+                    "text",
+                )
+                current_session.commit()
+                return "reclaimed"
+            except ValueError as error:
+                current_session.rollback()
+                return str(error)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [
+                future.result(timeout=10)
+                for future in [
+                    executor.submit(reclaim),
+                    executor.submit(reclaim),
+                ]
+            ]
+        assert results.count("reclaimed") == 1
+        assert results.count("stage_in_progress") == 1
     finally:
         engine.dispose()
         with admin_engine.begin() as connection:

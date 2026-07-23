@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from app.domains.page_packages.models import PageProposalStage
 STAGE_NAMES = ("template", "text", "validation")
 MAX_STAGE_RESULT_BYTES = 100_000
 MAX_STAGE_ERRORS_BYTES = 20_000
+STALE_RUNNING_STAGE_SECONDS = 300
 
 ALLOWED_TRANSITIONS = {
     "pending": {"running"},
@@ -146,13 +147,29 @@ def retry_stage(
     if item.state not in {"attention", "failed"}:
         raise ValueError("stage_not_retryable")
     _transition(item, "running")
-    now = datetime.now(UTC)
-    item.retry_count += 1
-    item.started_at = now
-    item.last_retried_at = now
-    item.completed_at = None
-    item.result = {}
-    item.errors = {}
+    _start_retry(item, datetime.now(UTC))
+    return item
+
+
+def reclaim_stale_running_stage(
+    session: Session,
+    proposal_version_id: str,
+    stage_name: str,
+    *,
+    now: datetime | None = None,
+) -> PageProposalStage:
+    item = locked_stage(session, proposal_version_id, stage_name)
+    if item.state != "running":
+        raise ValueError("stage_not_running")
+    current_time = now or datetime.now(UTC)
+    started_at = item.started_at
+    if started_at is None:
+        raise ValueError("stage_in_progress")
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    if current_time - started_at <= timedelta(seconds=STALE_RUNNING_STAGE_SECONDS):
+        raise ValueError("stage_in_progress")
+    _start_retry(item, current_time)
     return item
 
 
@@ -160,6 +177,15 @@ def _transition(item: PageProposalStage, target_state: str) -> None:
     if target_state not in ALLOWED_TRANSITIONS.get(item.state, set()):
         raise ValueError("invalid_stage_transition")
     item.state = target_state
+
+
+def _start_retry(item: PageProposalStage, now: datetime) -> None:
+    item.retry_count += 1
+    item.started_at = now
+    item.last_retried_at = now
+    item.completed_at = None
+    item.result = {}
+    item.errors = {}
 
 
 def _validate_json(name: str, value: dict, limit: int) -> None:

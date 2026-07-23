@@ -1,12 +1,14 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.routes.page_packages import _import_package_payload
 from app.domains.dataforseo.models import KeywordOpportunity
+from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import (
     PagePackageProposal,
@@ -681,6 +683,80 @@ def test_attention_snapshot_accepts_manual_correction_without_rerunning_provider
     )
 
 
+def test_snapshot_worker_reclaims_only_a_stale_running_text_stage(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    provider_calls = 0
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            nonlocal provider_calls
+            provider_calls += 1
+            return {"package": proposal_snapshot_text_package()}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    proposal = session.get(PagePackageProposal, proposal_id)
+    assert proposal is not None
+    text_stage = session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == proposal_id,
+            PageProposalStage.name == "text",
+        )
+    )
+    validation_stage = session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == proposal_id,
+            PageProposalStage.name == "validation",
+        )
+    )
+    assert text_stage is not None and validation_stage is not None
+    text_stage.state = "running"
+    text_stage.started_at = datetime.now(UTC) - timedelta(minutes=6)
+    text_stage.completed_at = None
+    text_stage.result = {}
+    validation_stage.state = "pending"
+    validation_stage.result = {}
+    validation_stage.errors = {}
+    proposal.state = "generating"
+    session.get(Job, proposal.job_id).state = "queued"
+    session.commit()
+
+    from app.api.routes.page_packages import _run_page_package_generation
+
+    _run_page_package_generation(session.get_bind(), proposal_id)
+    session.expire_all()
+    recovered = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    ).json()
+    recovered_text = next(
+        stage for stage in recovered["stages"] if stage["name"] == "text"
+    )
+
+    assert provider_calls == 2
+    assert recovered["state"] == "proposed"
+    assert recovered_text["state"] == "ready"
+    assert recovered_text["retry_count"] == 1
+
+
 def test_stage_response_field_errors_are_ordered(
     client: TestClient,
     session: Session,
@@ -699,7 +775,13 @@ def test_stage_response_field_errors_are_ordered(
         current_version_id="proposal-ordered-errors",
         package={},
         rendered_html="",
-        config_snapshot={},
+        config_snapshot={
+            "content_schema": {
+                "schema_version": "snapshot-text-v1",
+                "document_fields": [{"id": "document:title"}],
+                "blocks": [],
+            }
+        },
         proposed_by=projects.member.id,
     )
     from app.domains.jobs.models import Job
@@ -720,7 +802,12 @@ def test_stage_response_field_errors_are_ordered(
                 name="validation",
                 state="attention",
                 result={},
-                errors={"z:last": "required", "a:first": "unsafe_html"},
+                errors={
+                    "document:title": "required",
+                    "message": "validation worker failed",
+                    "provider": "unavailable",
+                    "unknown:field": "unsafe_html",
+                },
             ),
             PageProposalStage(
                 proposal_version_id=proposal.id,
@@ -750,7 +837,58 @@ def test_stage_response_field_errors_are_ordered(
         "text",
         "validation",
     ]
-    assert list(response.json()["field_errors"]) == ["a:first", "z:last"]
+    assert response.json()["field_errors"] == {"document:title": "required"}
+
+
+def test_legacy_proposal_response_keeps_empty_field_errors(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    proposal = PagePackageProposal(
+        id="proposal-legacy-stage-errors",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id="job-legacy-stage-errors",
+        state="needs_attention",
+        proposal_group_id="proposal-legacy-stage-errors",
+        current_version_id="proposal-legacy-stage-errors",
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    from app.domains.jobs.models import Job
+
+    session.add(
+        Job(
+            id="job-legacy-stage-errors",
+            project_id=projects.member_project.id,
+            job_type="page_package_generation",
+        )
+    )
+    session.add(proposal)
+    session.flush()
+    session.add(
+        PageProposalStage(
+            proposal_version_id=proposal.id,
+            name="validation",
+            state="failed",
+            result={"field_errors": {"document:title": "required"}},
+            errors={"message": "provider unavailable"},
+        )
+    )
+    session.commit()
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal.id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["field_errors"] == {}
 
 
 def test_page_proposal_preserves_opportunity_focus_keyword(

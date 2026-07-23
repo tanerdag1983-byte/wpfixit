@@ -62,6 +62,7 @@ from app.domains.page_packages.stages import (
     initialize_proposal_stages,
     locked_stage,
     ordered_proposal_stages,
+    reclaim_stale_running_stage,
     retry_stage,
 )
 from app.domains.projects.models import Project
@@ -297,6 +298,7 @@ def create_page_package_proposal(
             PagePackageProposal.project_id == project_id,
             PagePackageProposal.opportunity_id == opportunity_id,
             PagePackageProposal.blueprint_id == blueprint.id,
+            PagePackageProposal.is_current.is_(True),
             PagePackageProposal.state.in_(
                 ["generating", "needs_attention", "proposed"]
             ),
@@ -495,6 +497,28 @@ def _run_snapshot_page_package_generation(
             )
             job.progress = 20
             session.commit()
+        elif template.state == "running":
+            try:
+                reclaim_stale_running_stage(session, proposal.id, "template")
+            except ValueError as error:
+                if str(error) == "stage_in_progress":
+                    return
+                raise
+            job.state = "running"
+            job.progress = 5
+            job.started_at = job.started_at or datetime.now(UTC)
+            session.commit()
+            if blueprint is None:
+                raise ValueError("Snapshot changed before generation started")
+            _require_stored_snapshot_identity(proposal, blueprint)
+            complete_stage(
+                session,
+                proposal.id,
+                "template",
+                result=_snapshot_identity(blueprint),
+            )
+            job.progress = 20
+            session.commit()
         elif template.state != "ready":
             return
 
@@ -541,6 +565,52 @@ def _run_snapshot_page_package_generation(
                     )
                 )
             session.commit()
+        elif text.state == "running":
+            active_stage_name = "text"
+            try:
+                reclaim_stale_running_stage(session, proposal.id, "text")
+            except ValueError as error:
+                if str(error) == "stage_in_progress":
+                    return
+                raise
+            job.state = "running"
+            job.progress = 30
+            job.started_at = job.started_at or datetime.now(UTC)
+            session.commit()
+            if blueprint is None:
+                raise ValueError("Snapshot changed before text generation")
+            context = _generation_context(session, project, opportunity, blueprint)
+            generated = PagePackageGenerationResult.model_validate(
+                _page_package_generator(session, project).generate_page_package(context)
+            )
+            generated_text = (
+                generated.package.model_dump(mode="json")
+                if hasattr(generated.package, "model_dump")
+                else generated.package
+            )
+            complete_stage(
+                session,
+                proposal.id,
+                "text",
+                result=generated_text,
+            )
+            proposal.provider = generated.provider or proposal.provider
+            proposal.model = generated.model or proposal.model
+            proposal.input_tokens = generated.input_tokens
+            proposal.output_tokens = generated.output_tokens
+            job.progress = 70
+            token_count = generated.input_tokens + generated.output_tokens
+            if token_count:
+                session.add(
+                    UsageEvent(
+                        id=str(uuid4()),
+                        organization_id=project.organization_id,
+                        project_id=project.id,
+                        event_type="ai_tokens",
+                        quantity=token_count,
+                    )
+                )
+            session.commit()
         elif text.state != "ready":
             return
 
@@ -548,6 +618,28 @@ def _run_snapshot_page_package_generation(
         if validation.state == "pending":
             active_stage_name = "validation"
             begin_stage(session, proposal.id, "validation")
+            job.progress = 80
+            session.commit()
+            if blueprint is None:
+                raise ValueError("Snapshot changed before validation")
+            context = _generation_context(session, project, opportunity, blueprint)
+            _apply_snapshot_validation(
+                session,
+                proposal,
+                job,
+                context,
+                generated_text,
+            )
+            session.commit()
+        elif validation.state == "running":
+            active_stage_name = "validation"
+            try:
+                reclaim_stale_running_stage(session, proposal.id, "validation")
+            except ValueError as error:
+                if str(error) == "stage_in_progress":
+                    return
+                raise
+            job.state = "running"
             job.progress = 80
             session.commit()
             if blueprint is None:
@@ -757,6 +849,11 @@ def update_page_package_proposal(
         raise HTTPException(status_code=409, detail="Proposal context is unavailable")
 
     if _is_snapshot_schema(proposal.config_snapshot.get("content_schema")):
+        if not proposal.is_current:
+            raise HTTPException(
+                status_code=409,
+                detail="Only the current snapshot proposal version can be edited",
+            )
         if proposal.state != "needs_attention":
             raise HTTPException(
                 status_code=409,
@@ -822,6 +919,14 @@ def approve_page_package_proposal(
     project = _project_or_404(session, user, project_id)
     _require_manager(session, user, project.organization_id)
     proposal = _proposal_or_404(session, project_id, proposal_id, lock=True)
+    if (
+        _is_snapshot_schema(proposal.config_snapshot.get("content_schema"))
+        and not proposal.is_current
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only the current snapshot proposal version can be approved",
+        )
     if proposal.state != "proposed":
         raise HTTPException(
             status_code=409, detail="Only proposed pages can be approved"
@@ -1561,6 +1666,10 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
             stored_errors = validation_stage.result.get("field_errors")
             if isinstance(stored_errors, dict):
                 field_errors = stored_errors
+    field_errors = _schema_field_errors(
+        proposal.config_snapshot.get("content_schema"),
+        field_errors,
+    )
     active_candidate = session.scalar(
         select(PagePackageRegenerationCandidate)
         .where(
@@ -1667,6 +1776,25 @@ def _stage_payload(stage: PageProposalStage) -> dict:
         "last_retried_at": stage.last_retried_at,
         "created_at": stage.created_at,
         "updated_at": stage.updated_at,
+    }
+
+
+def _schema_field_errors(content_schema: object, errors: object) -> dict[str, str]:
+    if not isinstance(content_schema, dict) or not isinstance(errors, dict):
+        return {}
+    fields = list(content_schema.get("document_fields") or [])
+    for block in content_schema.get("blocks") or []:
+        if isinstance(block, dict):
+            fields.extend(block.get("fields") or [])
+    field_ids = {
+        field.get("id")
+        for field in fields
+        if isinstance(field, dict) and isinstance(field.get("id"), str)
+    }
+    return {
+        field_id: message
+        for field_id, message in errors.items()
+        if field_id in field_ids and isinstance(message, str)
     }
 
 
