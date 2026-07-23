@@ -96,6 +96,14 @@ def set_default_blueprint(
 ) -> None:
     if blueprint.state != "ready":
         raise ValueError("Only ready blueprints can be set as the default")
+    successor_id = session.scalar(
+        select(PageBlueprint.id).where(
+            PageBlueprint.project_id == blueprint.project_id,
+            PageBlueprint.supersedes_id == blueprint.id,
+        )
+    )
+    if successor_id is not None:
+        raise ValueError("A superseded blueprint cannot be set as the default")
 
     session.execute(
         update(PageBlueprint)
@@ -207,6 +215,13 @@ def migrate_unapproved_proposals(
             or proposal.approved_at is not None
         ):
             continue
+        if proposal.state == "failed" or not proposal.package:
+            proposal.state = "failed"
+            job = session.get(Job, proposal.job_id)
+            if job is not None:
+                job.error_code = "snapshot_migration_requires_generation"
+            incompatible = True
+            continue
         if not compatible:
             proposal.state = "failed"
             job = session.get(Job, proposal.job_id)
@@ -300,6 +315,33 @@ def lock_current_blueprint_proposals(
             .with_for_update()
         )
     )
+
+
+def lock_legacy_blueprint_and_successor(
+    session: Session,
+    project_id: str,
+    legacy_id: str,
+) -> tuple[PageBlueprint | None, PageBlueprint | None]:
+    legacy = session.scalar(
+        select(PageBlueprint)
+        .where(
+            PageBlueprint.id == legacy_id,
+            PageBlueprint.project_id == project_id,
+            PageBlueprint.wordpress_snapshot_id.is_(None),
+        )
+        .with_for_update()
+    )
+    if legacy is None:
+        return None, None
+    successor = session.scalar(
+        select(PageBlueprint)
+        .where(
+            PageBlueprint.project_id == project_id,
+            PageBlueprint.supersedes_id == legacy_id,
+        )
+        .with_for_update()
+    )
+    return legacy, successor
 
 
 def snapshot_migration_job_id(blueprint_id: str) -> str:

@@ -226,6 +226,41 @@ def test_manager_captures_lists_defaults_and_versions_blueprint(
     }
 
 
+def test_route_rejects_reactivating_superseded_legacy_default(
+    client,
+    auth_as,
+    projects,
+    monkeypatch,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    legacy = create_blueprint(client, projects.member_project.id)
+    defaulted = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{legacy['id']}/set-default"
+    )
+    assert defaulted.status_code == 200
+    successor = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{legacy['id']}/new-version"
+    ).json()
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{legacy['id']}/set-default"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "A superseded blueprint cannot be set as the default"
+    )
+    current = client.get(
+        f"/projects/{projects.member_project.id}/page-blueprints/{successor['id']}"
+    ).json()
+    assert current["is_default_for_page_type"] is True
+
+
 def test_routes_require_manager_and_project_membership(
     client, auth_as, projects, monkeypatch
 ):

@@ -47,6 +47,7 @@ from app.domains.page_packages.service import (
     create_regeneration_candidate,
     discard_regeneration_candidate,
     issue_page_package_handoff,
+    lock_active_default_blueprint,
     redeem_page_package_handoff,
     revoke_page_package_handoff,
 )
@@ -262,15 +263,17 @@ def create_page_package_proposal(
             status_code=409,
             detail="Only a new-page opportunity can create a page proposal",
         )
-    blueprint = session.scalar(
-        select(PageBlueprint).where(
-            PageBlueprint.project_id == project_id,
-            PageBlueprint.page_type == payload.page_type,
-            PageBlueprint.state == "ready",
-            PageBlueprint.is_default_for_page_type.is_(True),
-        )
+    blueprint, selection_changed = lock_active_default_blueprint(
+        session,
+        project_id,
+        payload.page_type,
     )
     if blueprint is None:
+        if selection_changed:
+            raise HTTPException(
+                status_code=409,
+                detail="Default blueprint changed; retry proposal creation",
+            )
         raise HTTPException(
             status_code=422,
             detail="Set a ready default blueprint for this page type",
@@ -909,20 +912,41 @@ def _require_current_wordpress_blueprint(
     project_id: str,
     blueprint: PageBlueprint,
 ) -> None:
+    wordpress_id = (
+        blueprint.wordpress_snapshot_id
+        if blueprint.wordpress_snapshot_id is not None
+        else blueprint.wordpress_blueprint_id
+    )
     try:
         current = _page_package_client(session, project_id).blueprint(
-            blueprint.wordpress_blueprint_id
+            wordpress_id
         )
     except Exception as error:
         raise HTTPException(
             status_code=502,
             detail="WordPress blueprint validation failed",
         ) from error
-    if (
+    identity_changed = (
         current.get("status") != "ready"
         or current.get("version") != blueprint.version
         or current.get("structure_hash") != blueprint.structure_hash
-    ):
+    )
+    if blueprint.wordpress_snapshot_id is not None:
+        expected_snapshot_identity = {
+            "wordpress_blueprint_id": blueprint.wordpress_snapshot_id,
+            "wordpress_snapshot_id": blueprint.wordpress_snapshot_id,
+            "post_type": "wpfixpilot_snapshot",
+            "adapter_version": blueprint.adapter_version,
+            "schema_version": blueprint.schema_version,
+            "builder": blueprint.builder,
+            "seo_plugin": blueprint.seo_plugin,
+            "snapshot_version": blueprint.snapshot_version,
+        }
+        identity_changed = identity_changed or any(
+            current.get(key) != value
+            for key, value in expected_snapshot_identity.items()
+        )
+    if identity_changed:
         blueprint.state = "stale"
         blueprint.is_default_for_page_type = False
         session.commit()

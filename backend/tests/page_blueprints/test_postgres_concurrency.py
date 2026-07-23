@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import Base
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
+from app.domains.page_blueprints import service as blueprint_service
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.models import Organization, Project
@@ -195,6 +196,129 @@ def test_delete_lock_blocks_new_proposal_and_successor_references() -> None:
             assert successor.result(timeout=10) == "rejected"
     finally:
         allow_delete_commit.set()
+        with Session(engine) as session:
+            project = session.get(Project, project_id)
+            if project is not None:
+                session.delete(project)
+                session.commit()
+            organization = session.get(Organization, organization_id)
+            if organization is not None:
+                session.delete(organization)
+                session.commit()
+        engine.dispose()
+
+
+def test_migration_rechecks_successor_after_waiting_for_legacy_lock() -> None:
+    engine = create_engine(POSTGRES_TEST_URL, pool_size=3, max_overflow=0)
+    Base.metadata.create_all(engine)
+    suffix = uuid4().hex[:12]
+    organization_id = f"org-migration-{suffix}"
+    project_id = f"project-migration-{suffix}"
+    source_id = f"source-migration-{suffix}"
+    legacy_id = f"legacy-migration-{suffix}"
+    successor_id = f"successor-migration-{suffix}"
+    legacy_locked = Event()
+    allow_successor_commit = Event()
+    migration_finished = Event()
+
+    with Session(engine) as session:
+        session.add(Organization(id=organization_id, name="Migration concurrency"))
+        session.commit()
+        session.add(
+            Project(
+                id=project_id,
+                organization_id=organization_id,
+                name="Migration concurrency",
+                domain=f"https://migration-{suffix}.example",
+            )
+        )
+        session.commit()
+        session.add(
+            WordPressPage(
+                id=source_id,
+                project_id=project_id,
+                wordpress_object_id=720001,
+                post_type="page",
+                status="publish",
+                title="Source",
+                slug="source",
+                url=f"https://migration-{suffix}.example/source/",
+            )
+        )
+        session.commit()
+        session.add(
+            PageBlueprint(
+                id=legacy_id,
+                project_id=project_id,
+                name="Legacy service",
+                page_type="service",
+                source_wordpress_page_id=source_id,
+                wordpress_blueprint_id=720002,
+                builder="acf",
+                seo_plugin="yoast",
+                version=1,
+                structure_hash=f"legacy-hash-{suffix}",
+                content_schema=valid_schema(),
+                state="ready",
+                is_default_for_page_type=False,
+            )
+        )
+        session.commit()
+
+    def create_successor_while_holding_legacy_lock() -> None:
+        with Session(engine) as session:
+            legacy = session.scalar(
+                select(PageBlueprint)
+                .where(PageBlueprint.id == legacy_id)
+                .with_for_update()
+            )
+            assert legacy is not None
+            legacy_locked.set()
+            assert allow_successor_commit.wait(timeout=10)
+            session.add(
+                PageBlueprint(
+                    id=successor_id,
+                    project_id=project_id,
+                    name="Snapshot successor",
+                    page_type="service",
+                    source_wordpress_page_id=source_id,
+                    wordpress_blueprint_id=720003,
+                    builder="acf",
+                    seo_plugin="yoast",
+                    version=2,
+                    structure_hash=f"successor-hash-{suffix}",
+                    content_schema=valid_schema(),
+                    state="ready",
+                    is_default_for_page_type=False,
+                    supersedes_id=legacy_id,
+                )
+            )
+            session.commit()
+
+    def find_successor_after_lock() -> str | None:
+        assert legacy_locked.wait(timeout=10)
+        with Session(engine) as session:
+            _legacy, successor = (
+                blueprint_service.lock_legacy_blueprint_and_successor(
+                    session,
+                    project_id,
+                    legacy_id,
+                )
+            )
+            migration_finished.set()
+            return successor.id if successor is not None else None
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            creating = executor.submit(create_successor_while_holding_legacy_lock)
+            assert legacy_locked.wait(timeout=10)
+            migrating = executor.submit(find_successor_after_lock)
+            assert not migration_finished.wait(timeout=0.5)
+            allow_successor_commit.set()
+            creating.result(timeout=10)
+            assert migrating.result(timeout=10) == successor_id
+    finally:
+        allow_successor_commit.set()
         with Session(engine) as session:
             project = session.get(Project, project_id)
             if project is not None:

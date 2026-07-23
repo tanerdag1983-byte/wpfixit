@@ -478,6 +478,64 @@ def test_incompatible_unapproved_proposal_requires_generation(
     assert migration_job.checkpoint["transitions"][-1] == "incompatible"
 
 
+def test_failed_unfinished_proposal_requires_generation_without_successor_version(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    legacy = legacy_blueprint(
+        blueprint_id="legacy-failed-proposal",
+        project_id=project_id,
+        wordpress_id=711,
+    )
+    session.add(legacy)
+    failed = proposal_for_blueprint(
+        session,
+        proposal_id="proposal-failed-unfinished",
+        blueprint=legacy,
+        proposed_by=projects.owner.id,
+        state="failed",
+    )
+    failed.package = {}
+    session.commit()
+    bridge = MigrationBridge([snapshot_capture(wordpress_id=812, version=2)])
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    auth_as(projects.owner)
+
+    response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {
+            "blueprint_id": legacy.id,
+            "state": "incompatible",
+            "action": "new_proposal",
+        }
+    ]
+    session.expire_all()
+    stored = session.get(PagePackageProposal, failed.id)
+    assert stored is not None
+    assert stored.state == "failed"
+    assert stored.is_current is True
+    assert stored.current_version_id == failed.id
+    assert stored.blueprint_id == legacy.id
+    assert (
+        session.scalar(
+            select(PagePackageProposal).where(
+                PagePackageProposal.parent_version_id == failed.id
+            )
+        )
+        is None
+    )
+    job = session.get(Job, stored.job_id)
+    assert job is not None
+    assert job.error_code == "snapshot_migration_requires_generation"
+
+
 def test_migration_cleans_only_trusted_new_snapshot_after_validation_failure(
     client,
     auth_as,
@@ -735,21 +793,28 @@ def test_concurrent_successor_terminalizes_migrating_job_without_capture(
     )
     bridge = MigrationBridge([])
     monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
-    original_transition = page_blueprints.transition_snapshot_migration
+    original_scalar = session.scalar
     successor_added = False
+    successor_checked_before_lock = False
 
-    def add_successor_after_migrating(job, state, **kwargs):
-        nonlocal successor_added
-        original_transition(job, state, **kwargs)
-        if state == "migrating" and not successor_added:
+    def add_successor_after_legacy_lock(statement, *args, **kwargs):
+        nonlocal successor_added, successor_checked_before_lock
+        sql = str(statement)
+        is_legacy_lock = (
+            "page_blueprints.id =" in sql
+            and "page_blueprints.wordpress_snapshot_id IS NULL" in sql
+        )
+        is_successor_recheck = "page_blueprints.supersedes_id =" in sql
+        if is_successor_recheck and not successor_added:
+            successor_checked_before_lock = True
+        result = original_scalar(statement, *args, **kwargs)
+        if is_legacy_lock and not successor_added:
             session.add(concurrent_successor)
+            session.flush()
             successor_added = True
+        return result
 
-    monkeypatch.setattr(
-        page_blueprints,
-        "transition_snapshot_migration",
-        add_successor_after_migrating,
-    )
+    monkeypatch.setattr(session, "scalar", add_successor_after_legacy_lock)
     auth_as(projects.owner)
 
     response = client.post(f"/projects/{project_id}/page-blueprints/migrate")
@@ -759,6 +824,7 @@ def test_concurrent_successor_terminalizes_migrating_job_without_capture(
         {"blueprint_id": legacy.id, "state": "migrated"}
     ]
     assert bridge.capture_payloads == []
+    assert successor_checked_before_lock is False
     session.expire_all()
     migration_job = session.scalar(
         select(Job).where(

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.jobs.models import Job
+from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.models import (
     PagePackageHandoff,
     PagePackageProposal,
@@ -20,6 +21,62 @@ from app.domains.wordpress.models import WordPressConnection, WordPressDraftJob
 
 HANDOFF_TTL = timedelta(minutes=10)
 REVOCABLE_HANDOFF_STATES = {"issued", "redeemed"}
+
+
+def lock_active_default_blueprint(
+    session: Session,
+    project_id: str,
+    page_type: str,
+) -> tuple[PageBlueprint | None, bool]:
+    selected_id = session.scalar(
+        select(PageBlueprint.id).where(
+            PageBlueprint.project_id == project_id,
+            PageBlueprint.page_type == page_type,
+            PageBlueprint.state == "ready",
+            PageBlueprint.is_default_for_page_type.is_(True),
+        )
+    )
+    if selected_id is None:
+        return None, False
+
+    for _attempt in range(2):
+        candidate = session.scalar(
+            select(PageBlueprint)
+            .where(
+                PageBlueprint.project_id == project_id,
+                PageBlueprint.id == selected_id,
+            )
+            .with_for_update()
+        )
+        has_successor = (
+            candidate is not None
+            and session.scalar(
+                select(PageBlueprint.id).where(
+                    PageBlueprint.project_id == project_id,
+                    PageBlueprint.supersedes_id == candidate.id,
+                )
+            )
+            is not None
+        )
+        if (
+            candidate is not None
+            and candidate.state == "ready"
+            and candidate.is_default_for_page_type
+            and not has_successor
+        ):
+            return candidate, True
+        selected_id = session.scalar(
+            select(PageBlueprint.id).where(
+                PageBlueprint.project_id == project_id,
+                PageBlueprint.page_type == page_type,
+                PageBlueprint.state == "ready",
+                PageBlueprint.is_default_for_page_type.is_(True),
+            )
+        )
+        if selected_id is None:
+            break
+
+    return None, True
 
 
 @dataclass

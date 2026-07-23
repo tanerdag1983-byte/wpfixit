@@ -1,5 +1,7 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,35 @@ from tests.page_packages.test_generation import (
     valid_package,
 )
 from tests.recommendations.conftest import ProjectFixtures
+
+
+def valid_snapshot_schema() -> dict:
+    def field(field_id: str, path: str, value_type: str) -> dict:
+        return {
+            "id": field_id,
+            "path": path,
+            "label": field_id,
+            "value_type": value_type,
+            "current_value": "",
+            "required": True,
+            "max_length": 180,
+        }
+
+    return {
+        "schema_version": "snapshot-text-v1",
+        "document_fields": [
+            field("document:title", "post_title", "heading"),
+            field("document:slug", "post_name", "plain_text"),
+            field("seo:title", "seo.title", "seo_title"),
+            field(
+                "seo:meta_description",
+                "seo.meta_description",
+                "meta_description",
+            ),
+            field("seo:focus_keyword", "seo.focus_keyword", "focus_keyword"),
+        ],
+        "blocks": valid_blueprint_schema()["blocks"],
+    }
 
 
 def proposal_package() -> dict:
@@ -106,13 +137,24 @@ class BlueprintBridge:
         self.wordpress_ids: list[int] = []
         self.version = 2
         self.structure_hash = "hash-v2"
+        self.current_overrides: dict = {}
 
     def blueprint(self, wordpress_blueprint_id: int) -> dict:
-        return {
+        current = {
             "status": "ready",
+            "wordpress_blueprint_id": wordpress_blueprint_id,
+            "wordpress_snapshot_id": wordpress_blueprint_id,
+            "post_type": "wpfixpilot_snapshot",
+            "adapter_version": "acf-v1",
+            "schema_version": "snapshot-text-v1",
+            "builder": "acf",
+            "seo_plugin": "yoast",
             "version": self.version,
+            "snapshot_version": self.version,
             "structure_hash": self.structure_hash,
         }
+        current.update(self.current_overrides)
+        return current
 
     def create_blueprint_draft(
         self, wordpress_blueprint_id: int, payload: dict
@@ -280,6 +322,87 @@ def test_proposal_uses_requested_page_type_default_blueprint(
     assert proposal["blueprint"]["version"] == 2
     assert proposal["config_snapshot"]["structure_hash"] == "hash-v2"
     assert proposal["config_snapshot"]["content_schema"] == valid_blueprint_schema()
+
+
+def test_proposal_reselects_default_after_migration_transfer_while_locking(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    legacy = session.get(PageBlueprint, "blueprint-service-v2")
+    successor = PageBlueprint(
+        id="blueprint-service-v3",
+        project_id=legacy.project_id,
+        name="Snapshot dienstpagina",
+        page_type=legacy.page_type,
+        source_wordpress_page_id=legacy.source_wordpress_page_id,
+        wordpress_blueprint_id=903,
+        wordpress_snapshot_id=903,
+        snapshot_version=3,
+        schema_version="snapshot-text-v1",
+        adapter_version="acf-v1",
+        capture_state="ready",
+        migration_state="native",
+        verified_at=datetime.now(UTC),
+        builder="acf",
+        seo_plugin="yoast",
+        version=3,
+        structure_hash="hash-v3",
+        content_schema=valid_snapshot_schema(),
+        state="ready",
+        is_default_for_page_type=True,
+        supersedes_id=legacy.id,
+    )
+    original_scalar = session.scalar
+    default_transferred = False
+
+    def transfer_default_after_initial_selection(statement, *args, **kwargs):
+        nonlocal default_transferred
+        result = original_scalar(statement, *args, **kwargs)
+        sql = str(statement)
+        if (
+            not default_transferred
+            and "page_blueprints.is_default_for_page_type IS true" in sql
+        ):
+            legacy.is_default_for_page_type = False
+            session.add(successor)
+            session.flush()
+            default_transferred = True
+        return result
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": proposal_blueprint_package()}
+
+    monkeypatch.setattr(session, "scalar", transfer_default_after_initial_selection)
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda session, project: Generator(),
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+
+    assert response.status_code == 202, response.text
+    proposal = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{response.json()['id']}"
+    ).json()
+    assert proposal["blueprint"]["id"] == successor.id
+    assert proposal["config_snapshot"]["structure_hash"] == "hash-v3"
+    assert (
+        proposal["config_snapshot"]["content_schema"]["schema_version"]
+        == "snapshot-text-v1"
+    )
 
 
 def test_creates_persistent_reviewable_page_proposal(
@@ -624,6 +747,80 @@ def test_approval_marks_blueprint_stale_when_wordpress_hash_changed(
 
     assert response.status_code == 409
     blueprint = session.get(PageBlueprint, "blueprint-service-v2")
+    session.refresh(blueprint)
+    assert blueprint.state == "stale"
+    assert blueprint.is_default_for_page_type is False
+
+
+@pytest.mark.parametrize(
+    "current_overrides",
+    [
+        {"wordpress_snapshot_id": 999},
+        {"wordpress_blueprint_id": 999},
+        {"post_type": "page"},
+        {"adapter_version": "acf-v2"},
+        {"schema_version": "blueprint-v1"},
+        {"builder": "elementor"},
+        {"seo_plugin": "rank_math"},
+        {"version": 3},
+        {"snapshot_version": 3},
+        {"structure_hash": "changed-hash"},
+    ],
+    ids=[
+        "snapshot-id",
+        "compatibility-snapshot-id",
+        "post-type",
+        "adapter-version",
+        "schema-version",
+        "builder",
+        "seo-plugin",
+        "version",
+        "snapshot-version",
+        "structure-hash",
+    ],
+)
+def test_native_approval_rejects_snapshot_trust_mismatch(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+    current_overrides,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    blueprint = session.get(PageBlueprint, "blueprint-service-v2")
+    blueprint.wordpress_snapshot_id = 902
+    blueprint.snapshot_version = 2
+    blueprint.schema_version = "snapshot-text-v1"
+    blueprint.adapter_version = "acf-v1"
+    blueprint.capture_state = "ready"
+    blueprint.migration_state = "native"
+    blueprint.verified_at = datetime.now(UTC)
+    blueprint.content_schema = valid_snapshot_schema()
+    session.commit()
+    proposal = generated_blueprint_proposal(
+        client,
+        projects,
+        opportunity,
+        monkeypatch,
+    )
+    bridge = BlueprintBridge()
+    bridge.current_overrides = current_overrides
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda session, project_id: bridge,
+    )
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{proposal['id']}/approve"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Blueprint structure changed; generate a new proposal"
+    )
     session.refresh(blueprint)
     assert blueprint.state == "stale"
     assert blueprint.is_default_for_page_type is False

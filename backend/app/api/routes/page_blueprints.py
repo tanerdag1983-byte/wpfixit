@@ -19,6 +19,7 @@ from app.domains.page_blueprints.service import (
     create_blueprint_version,
     legacy_blueprint_candidates,
     lock_current_blueprint_proposals,
+    lock_legacy_blueprint_and_successor,
     migrate_unapproved_proposals,
     prepare_snapshot_migration,
     set_default_blueprint,
@@ -501,14 +502,13 @@ def migrate_blueprints(
                 job = session.get(Job, snapshot_migration_job_id(legacy_id))
                 if job is None:
                     raise RuntimeError("Snapshot migration state is unavailable")
-                existing_successor = session.scalar(
-                    select(PageBlueprint)
-                    .where(
-                        PageBlueprint.project_id == project_id,
-                        PageBlueprint.supersedes_id == legacy_id,
-                    )
-                    .with_for_update()
+                legacy, existing_successor = lock_legacy_blueprint_and_successor(
+                    session,
+                    project_id,
+                    legacy_id,
                 )
+                if legacy is None:
+                    raise RuntimeError("Legacy blueprint is unavailable")
                 if existing_successor is not None:
                     result_state = "migrated"
                     result_action = "none"
@@ -518,17 +518,6 @@ def migrate_blueprints(
                         successor_id=existing_successor.id,
                     )
                 else:
-                    legacy = session.scalar(
-                        select(PageBlueprint)
-                        .where(
-                            PageBlueprint.id == legacy_id,
-                            PageBlueprint.project_id == project_id,
-                            PageBlueprint.wordpress_snapshot_id.is_(None),
-                        )
-                        .with_for_update()
-                    )
-                    if legacy is None:
-                        raise RuntimeError("Legacy blueprint is unavailable")
                     proposals = lock_current_blueprint_proposals(session, legacy)
                     mutating = [
                         proposal

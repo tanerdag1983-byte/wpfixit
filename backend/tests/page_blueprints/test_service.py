@@ -388,3 +388,34 @@ def test_set_default_blueprint_rejects_non_ready_blueprints_before_mutating_defa
     session.refresh(candidate)
     assert current_default.is_default_for_page_type is True
     assert candidate.is_default_for_page_type is False
+
+
+def test_set_default_blueprint_rejects_superseded_legacy_blueprint(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    source_page(session, projects)
+    legacy = blueprint(
+        projects.member_project.id,
+        "service",
+        version=1,
+        blueprint_id="legacy-default",
+    )
+    successor = blueprint(
+        projects.member_project.id,
+        "service",
+        version=2,
+        blueprint_id="active-successor",
+        supersedes_id=legacy.id,
+    )
+    session.add_all([legacy, successor])
+    session.commit()
+    set_default_blueprint(session, successor)
+
+    with pytest.raises(ValueError, match="superseded blueprint"):
+        set_default_blueprint(session, legacy)
+
+    session.refresh(legacy)
+    session.refresh(successor)
+    assert legacy.is_default_for_page_type is False
+    assert successor.is_default_for_page_type is True
