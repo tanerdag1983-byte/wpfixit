@@ -106,3 +106,81 @@ snapshot identity`
 No open implementation concerns. An independent reviewer was not available in
 this session; the requested self-review and database portability checks were
 completed before commit.
+
+## Review Fix
+
+### Status
+
+Complete. The snapshot identity constraint no longer accepts SQL `UNKNOWN` for
+partially populated native snapshot rows.
+
+### Files
+
+- `backend/app/domains/page_blueprints/models.py`
+- `backend/alembic/versions/0020_versioned_template_snapshots.py`
+- `backend/tests/page_blueprints/test_models.py`
+- `backend/tests/page_blueprints/test_snapshot_migration.py`
+
+### RED Evidence
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q tests/page_blueprints/test_models.py tests/page_blueprints/test_snapshot_migration.py
+```
+
+Result: `2 failed, 26 passed in 1.07s`.
+
+- The model regression populated every native snapshot field after
+  `schema_version` and set `schema_version=None`; it failed because no
+  `IntegrityError` was raised.
+- The PostgreSQL migration regression upgraded a fresh database from `0019`,
+  inserted the same middle-null identity, and also failed because no
+  `IntegrityError` was raised.
+
+### GREEN Verification
+
+```bash
+cd backend
+.venv/bin/ruff check app tests alembic
+.venv/bin/python -m pytest --import-mode=importlib -q tests/page_blueprints/test_models.py tests/page_blueprints/test_service.py tests/page_blueprints/test_snapshot_migration.py tests/page_packages/test_model_registration.py
+.venv/bin/alembic downgrade 0019_outbound_wp_draft_jobs
+.venv/bin/alembic upgrade head
+.venv/bin/alembic current
+```
+
+Result: Ruff passed; `41 passed in 1.59s`; PostgreSQL downgraded from `0020`,
+upgraded back to `0020_template_snapshots`, and reported
+`0020_template_snapshots (head)`.
+
+The committed migration regression starts at `0019`, preserves a legacy row
+with all snapshot columns null during upgrade, rejects the middle-null native
+identity, and verifies downgrade removes the new columns while preserving that
+legacy row. The matching SQLite batch-migration round trip passed with:
+
+```text
+SQLite snapshot migration upgrade/downgrade and partial-identity rejection passed
+```
+
+### Commit
+
+`383c8e4cf886d078306c66f9cb0a65e27f1f9dde` - `fix: harden template snapshot
+identity constraint`
+
+### Self-Review
+
+- The populated branch now explicitly checks every identity field for
+  non-nullness. `schema_version`, `capture_state`, and `migration_state` each
+  have an `IS NOT NULL` guard immediately before their equality condition.
+- The same expression is present in ORM metadata and Alembic `0020`, so fresh
+  schema creation and migrated databases have identical semantics.
+- Same-project snapshot-ID reuse remains rejected; the new model test proves
+  a matching snapshot ID is accepted for a different project.
+- The migration regression is committed and follows the repository's isolated
+  PostgreSQL Alembic database pattern. The user-owned Task 1 report edit and
+  untracked manual-handoff plan were not changed or staged.
+
+### Concerns
+
+No open implementation concerns. An independent reviewer was not available in
+this session; the requested self-review and committed migration regression were
+completed.
