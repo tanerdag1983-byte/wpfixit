@@ -1,3 +1,5 @@
+import html
+
 import pytest
 from pydantic import ValidationError
 
@@ -330,6 +332,53 @@ def test_required_missing_and_invalid_fields_block_only_validation() -> None:
     assert result.missing_required_field_ids == ["document:title"]
     assert result.replacements["seo:focus_keyword"] == "dsg revisie schiedam"
     assert result.ready is False
+
+
+def test_snapshot_plain_text_decodes_entities_before_safety_and_markup_rules() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"].update(
+        {
+            "document:title": {
+                "value": "&lt;strong&gt;Nieuwe titel&lt;/strong&gt;"
+            },
+            "acf:hero:label": {
+                "value": "&lt;img src=x onerror&#61;alert(1)&gt;Meer"
+            },
+        }
+    )
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["document:title"] == "Nieuwe titel"
+    assert result.field_errors == {"acf:hero:label": "unsafe_html"}
+    assert result.ready is True
+
+
+def test_snapshot_plain_text_decodes_nested_entities_to_a_stable_value() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"].update(
+        {
+            "document:title": {
+                "value": (
+                    "&amp;amp;lt;strong&amp;amp;gt;Nieuwe titel"
+                    "&amp;amp;lt;/strong&amp;amp;gt;"
+                )
+            },
+            "acf:hero:label": {
+                "value": (
+                    "&amp;amp;lt;img src=x onerror&amp;amp;#61;alert(1)"
+                    "&amp;amp;gt;Meer"
+                )
+            },
+        }
+    )
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["document:title"] == "Nieuwe titel"
+    assert result.field_errors == {"acf:hero:label": "unsafe_html"}
+    assert html.unescape(result.replacements["document:title"]) == "Nieuwe titel"
+    assert result.ready is True
 
 
 def test_snapshot_rich_text_is_sanitized_and_urls_must_be_approved() -> None:

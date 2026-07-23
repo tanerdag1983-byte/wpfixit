@@ -60,6 +60,7 @@ def _rich_text_urls(value: str) -> list[str]:
 
 _SNAPSHOT_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_IGNORED_FIELD_IDS = 100
+_MAX_ENTITY_DECODE_PASSES = 8
 _RICH_TEXT_TAGS = {
     "a",
     "b",
@@ -82,6 +83,17 @@ _RICH_TEXT_TAGS = {
     "u",
     "ul",
 }
+
+
+def _decode_html_entities(value: str) -> str:
+    for _ in range(_MAX_ENTITY_DECODE_PASSES):
+        decoded = html.unescape(value)
+        if decoded == value:
+            return value
+        value = decoded
+    if html.unescape(value) != value:
+        raise ValueError("nested HTML entities exceed the normalization limit")
+    return value
 
 
 class _RichTextSanitizer(HTMLParser):
@@ -124,7 +136,7 @@ class _RichTextSanitizer(HTMLParser):
 
 def _strip_markup(value: str) -> str:
     without_tags = re.sub(r"<[^>]*>", " ", value)
-    return " ".join(html.unescape(without_tags).split())
+    return " ".join(without_tags.split())
 
 
 def _sanitize_rich_text(value: str) -> str:
@@ -140,17 +152,22 @@ def _snapshot_field_value(
     approved_urls: set[str],
 ) -> tuple[str | None, str | None]:
     try:
-        safe_html(value)
+        decoded = _decode_html_entities(value)
+        safe_html(decoded)
     except ValueError:
         return None, "unsafe_html"
 
     if field.value_type == "rich_text":
-        if any(url not in approved_urls for url in _rich_text_urls(value)):
+        if any(url not in approved_urls for url in _rich_text_urls(decoded)):
             return None, "unapproved_url"
-        normalized = _sanitize_rich_text(value)
+        normalized = _sanitize_rich_text(decoded)
         empty_value = not _strip_markup(normalized)
     else:
-        normalized = _strip_markup(value)
+        normalized = _strip_markup(decoded)
+        try:
+            plain_text(normalized)
+        except ValueError:
+            return None, "unsafe_html"
         empty_value = not normalized
 
     if field.id == "document:slug" and normalized:
