@@ -19,6 +19,9 @@ final class WPFixPilot_Post_Cloner
         '_wp_fixpilot_content_schema',
         '_wp_fixpilot_structure_hash',
         '_wp_fixpilot_seo_plugin',
+        '_wp_fixpilot_snapshot',
+        '_wp_fixpilot_snapshot_version',
+        '_wp_fixpilot_snapshot_schema_version',
     ];
 
     /**
@@ -28,12 +31,17 @@ final class WPFixPilot_Post_Cloner
         int $sourceId,
         string $title,
         bool $asBlueprint,
-        array $allowedMetaKeys
+        array $allowedMetaKeys,
+        ?string $targetPostType = null
     ): int|WP_Error {
         $source = get_post($sourceId);
         if (
             !$source instanceof WP_Post
-            || !in_array($source->post_type, ['page', 'post'], true)
+            || !in_array(
+                $source->post_type,
+                ['page', 'post', WPFixPilot_Template_Snapshot_Store::POST_TYPE],
+                true
+            )
         ) {
             return new WP_Error(
                 'wp_fixpilot_source_missing',
@@ -42,9 +50,34 @@ final class WPFixPilot_Post_Cloner
             );
         }
 
+        $target = $targetPostType ?? $source->post_type;
+        if (
+            ($targetPostType !== null
+                && !in_array(
+                    $targetPostType,
+                    [WPFixPilot_Template_Snapshot_Store::POST_TYPE, 'page'],
+                    true
+                ))
+            || ($source->post_type === WPFixPilot_Template_Snapshot_Store::POST_TYPE
+                && $target !== 'page')
+            || ($source->post_type !== WPFixPilot_Template_Snapshot_Store::POST_TYPE
+                && $targetPostType !== null
+                && $target !== WPFixPilot_Template_Snapshot_Store::POST_TYPE)
+        ) {
+            return new WP_Error(
+                'wp_fixpilot_clone_target_invalid',
+                'Het doeltype voor de kloon is niet toegestaan.',
+                ['status' => 400]
+            );
+        }
+
+        $targetStatus = $target === WPFixPilot_Template_Snapshot_Store::POST_TYPE
+            ? 'private'
+            : 'draft';
+
         $newId = wp_insert_post([
-            'post_type' => $source->post_type,
-            'post_status' => 'draft',
+            'post_type' => $target,
+            'post_status' => $targetStatus,
             'post_title' => $title,
             'post_content' => (string) $source->post_content,
             'post_excerpt' => (string) $source->post_excerpt,
@@ -54,7 +87,7 @@ final class WPFixPilot_Post_Cloner
         if (is_wp_error($newId)) {
             return $newId;
         }
-        if (!$this->is_valid_draft_post(get_post((int) $newId), $source->post_type)) {
+        if (!$this->is_valid_clone_post(get_post((int) $newId), $target, $targetStatus)) {
             return $this->failed_clone_error((int) $newId);
         }
 
@@ -92,11 +125,15 @@ final class WPFixPilot_Post_Cloner
         return (int) $newId;
     }
 
-    private function is_valid_draft_post(mixed $post, string $expectedPostType): bool
+    private function is_valid_clone_post(
+        mixed $post,
+        string $expectedPostType,
+        string $expectedStatus
+    ): bool
     {
         return $post instanceof WP_Post
             && $post->post_type === $expectedPostType
-            && $post->post_status === 'draft';
+            && $post->post_status === $expectedStatus;
     }
 
     private function failed_clone_error(int $cloneId): WP_Error

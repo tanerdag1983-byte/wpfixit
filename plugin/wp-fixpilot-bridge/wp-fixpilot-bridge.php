@@ -33,6 +33,7 @@ require_once __DIR__ . '/includes/builder-adapters/class-bricks-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-wpbakery-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-acf-adapter.php';
 require_once __DIR__ . '/includes/builder-adapters/class-acf-blueprint-adapter.php';
+require_once __DIR__ . '/includes/class-template-snapshot-store.php';
 require_once __DIR__ . '/includes/class-post-cloner.php';
 require_once __DIR__ . '/includes/class-page-package-controller.php';
 require_once __DIR__ . '/includes/class-blueprint-controller.php';
@@ -59,6 +60,10 @@ register_activation_hook(__FILE__, static function (): void {
 
 register_deactivation_hook(__FILE__, static function (): void {
     wp_clear_scheduled_hook('wp_fixpilot_poll_draft_jobs');
+});
+
+add_action('init', static function (): void {
+    (new WPFixPilot_Template_Snapshot_Store())->register();
 });
 
 add_action('rest_api_init', static function (): void {

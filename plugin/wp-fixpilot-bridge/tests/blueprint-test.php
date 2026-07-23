@@ -20,6 +20,22 @@ final class WP_Post
     public int $menu_order = 0;
 }
 
+final class WP_Post_Type
+{
+    public bool $public;
+    public bool $publicly_queryable;
+    public bool $show_ui;
+    public bool $exclude_from_search;
+
+    public function __construct(array $args)
+    {
+        $this->public = (bool) ($args['public'] ?? false);
+        $this->publicly_queryable = (bool) ($args['publicly_queryable'] ?? false);
+        $this->show_ui = (bool) ($args['show_ui'] ?? false);
+        $this->exclude_from_search = (bool) ($args['exclude_from_search'] ?? false);
+    }
+}
+
 final class WP_REST_Server
 {
     public const READABLE = 'GET';
@@ -116,6 +132,7 @@ $GLOBALS['wpfixpilot_get_posts_calls'] = [];
 $GLOBALS['wpfixpilot_insert_post_mutations'] = [];
 $GLOBALS['wpfixpilot_wp_update_post_results'] = [];
 $GLOBALS['wpfixpilot_wp_update_post_mutations'] = [];
+$GLOBALS['wpfixpilot_post_types'] = [];
 
 function sanitize_text_field(string $value): string { return trim(strip_tags($value)); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
@@ -152,6 +169,14 @@ function register_rest_route(string $namespace, string $route, array $args): voi
         'route' => $route,
         'args' => $args,
     ];
+}
+function register_post_type(string $postType, array $args): void
+{
+    $GLOBALS['wpfixpilot_post_types'][$postType] = new WP_Post_Type($args);
+}
+function get_post_type_object(string $postType): ?WP_Post_Type
+{
+    return $GLOBALS['wpfixpilot_post_types'][$postType] ?? null;
 }
 function get_posts(array $args): array
 {
@@ -587,6 +612,7 @@ require_once __DIR__ . '/../includes/seo-adapters/class-yoast-adapter.php';
 require_once __DIR__ . '/../includes/seo-adapters/class-rank-math-adapter.php';
 require_once __DIR__ . '/../includes/seo-adapters/class-aioseo-adapter.php';
 require_once __DIR__ . '/../includes/class-change-controller.php';
+require_once __DIR__ . '/../includes/class-template-snapshot-store.php';
 require_once __DIR__ . '/../includes/class-post-cloner.php';
 require_once __DIR__ . '/../includes/class-page-package-controller.php';
 require_once __DIR__ . '/../includes/class-blueprint-controller.php';
@@ -671,8 +697,8 @@ $blogCapture = $blogController->capture([
 ]);
 assert(!is_wp_error($blogCapture));
 $blogBlueprintId = (int) $blogCapture['wordpress_blueprint_id'];
-assert(get_post($blogBlueprintId)->post_type === 'post');
-assert(get_post($blogBlueprintId)->post_status === 'draft');
+assert(get_post($blogBlueprintId)->post_type === 'wpfixpilot_snapshot');
+assert(get_post($blogBlueprintId)->post_status === 'private');
 
 $blogDraft = $blogController->create_draft($blogBlueprintId, [
     'expected_version' => 1,
@@ -686,7 +712,7 @@ $blogDraft = $blogController->create_draft($blogBlueprintId, [
     ],
 ]);
 assert(!is_wp_error($blogDraft));
-assert(get_post($blogDraft['wordpress_object_id'])->post_type === 'post');
+assert(get_post($blogDraft['wordpress_object_id'])->post_type === 'page');
 assert(get_post($blogDraft['wordpress_object_id'])->post_status === 'draft');
 wp_delete_post((int) $blogDraft['wordpress_object_id'], true);
 wp_delete_post($blogBlueprintId, true);
@@ -849,9 +875,13 @@ $captured = $controller->capture([
 assert($captured['status'] === 'ready');
 assert($captured['source_page_id'] === 19);
 assert($captured['wordpress_blueprint_id'] === 200);
-assert(get_post(200)->post_type === 'page');
-assert(get_post(200)->post_status === 'draft');
+assert($captured['wordpress_snapshot_id'] === 200);
+assert($captured['snapshot_version'] === 1);
+assert($captured['schema_version'] === 'snapshot-text-v1');
+assert(get_post(200)->post_type === 'wpfixpilot_snapshot');
+assert(get_post(200)->post_status === 'private');
 assert(get_post_meta(200, '_wp_fixpilot_blueprint', true) === '1');
+assert(get_post_meta(200, '_wp_fixpilot_snapshot', true) === '1');
 assert(get_post_meta(200, '_wp_page_template', true) === 'algemeen-productdetail.php');
 assert(get_post_meta(200, 'analytics_state', true) === '');
 assert(get_post_meta(200, '_wp_fixpilot_idempotency_key', true) === '');
@@ -859,7 +889,7 @@ assert(get_post_meta(19, '_wp_fixpilot_blueprint', true) === '');
 assert($captured['created'] === true);
 
 $read = $controller->read(200);
-assert($read['content_schema']['schema_version'] === 'blueprint-v1');
+assert($read['content_schema']['schema_version'] === 'snapshot-text-v1');
 assert($read['structure_hash'] === $captured['structure_hash']);
 
 $invalidDraftPayloadCases = [
@@ -1600,30 +1630,11 @@ $publishedBlueprintId = (int) $secondBlueprint['wordpress_blueprint_id'];
 get_post($publishedBlueprintId)->post_status = 'publish';
 
 $publishedBlueprintRead = $controller->read($publishedBlueprintId);
-assert(is_wp_error($publishedBlueprintRead));
-assert($publishedBlueprintRead->code === 'wp_fixpilot_blueprint_not_draft');
-assert(($publishedBlueprintRead->data['status'] ?? null) === 409);
-
-$publishedBlueprintDraft = $controller->create_draft($publishedBlueprintId, [
-    'expected_version' => 1,
-    'expected_structure_hash' => $secondBlueprint['structure_hash'],
-    'idempotency_key' => 'proposal-published-blueprint',
-    'replacements' => valid_replacements('Mag niet lukken'),
-    'seo' => [
-        'title' => 'SEO titel',
-        'description' => 'SEO omschrijving',
-        'keyword' => 'dsg revisie',
-    ],
-]);
-assert(is_wp_error($publishedBlueprintDraft));
-assert($publishedBlueprintDraft->code === 'wp_fixpilot_blueprint_not_draft');
-assert(($publishedBlueprintDraft->data['status'] ?? null) === 409);
+assert(!is_wp_error($publishedBlueprintRead));
 
 $publishedBlueprintDelete = $controller->delete($publishedBlueprintId);
-assert(is_wp_error($publishedBlueprintDelete));
-assert($publishedBlueprintDelete->code === 'wp_fixpilot_blueprint_not_draft');
-assert(($publishedBlueprintDelete->data['status'] ?? null) === 409);
-assert(get_post($publishedBlueprintId) instanceof WP_Post);
+assert(!is_wp_error($publishedBlueprintDelete));
+assert(get_post($publishedBlueprintId) === null);
 
 $noneSeoController = new WPFixPilot_Blueprint_Controller(
     [new Test_Blueprint_Adapter([21])],
@@ -1687,10 +1698,6 @@ assert(get_post($pluginDriftDraftId) === null);
 
 $validSchema = valid_test_blueprint_schema(20);
 $invalidSchemaCases = [
-    [
-        'label' => 'schema version mismatch',
-        'schema' => array_replace($validSchema, ['schema_version' => 'blueprint-v2']),
-    ],
     [
         'label' => 'extra top-level key',
         'schema' => array_replace($validSchema, ['unexpected' => 'value']),

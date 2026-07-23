@@ -133,7 +133,8 @@ final class WPFixPilot_Blueprint_Controller
             $sourceId,
             $name,
             true,
-            $adapter->clone_meta_keys($sourceId)
+            $adapter->clone_meta_keys($sourceId),
+            WPFixPilot_Template_Snapshot_Store::POST_TYPE
         );
         if (is_wp_error($blueprintId)) {
             return $blueprintId;
@@ -149,6 +150,14 @@ final class WPFixPilot_Blueprint_Controller
                 }
                 return $schema;
             }
+            $schema['schema_version'] = 'snapshot-text-v1';
+            $schema['document_fields'] = [
+                $this->snapshot_field('document:title', 'post_title', 'Paginatitel', 'heading', $source->post_title, true, 180),
+                $this->snapshot_field('document:slug', 'post_name', 'Slug', 'plain_text', $source->post_name, true, 160),
+                $this->snapshot_field('seo:title', 'seo.title', 'SEO-titel', 'seo_title', '', true, 70),
+                $this->snapshot_field('seo:meta_description', 'seo.meta_description', 'Meta description', 'meta_description', '', true, 170),
+                $this->snapshot_field('seo:focus_keyword', 'seo.focus_keyword', 'Focuszoekwoord', 'focus_keyword', '', true, 160),
+            ];
             $structureHash = $adapter->structure_hash($blueprintId);
             $snapshotValidation = $this->validate_snapshot_contract(
                 $schema,
@@ -163,9 +172,11 @@ final class WPFixPilot_Blueprint_Controller
             }
 
             $captureMeta = [
+                '_wp_fixpilot_snapshot' => '1',
+                '_wp_fixpilot_snapshot_version' => $version,
+                '_wp_fixpilot_snapshot_schema_version' => 'snapshot-text-v1',
                 '_wp_fixpilot_source_page_id' => $sourceId,
                 '_wp_fixpilot_blueprint_builder' => $adapter->key(),
-                '_wp_fixpilot_blueprint_version' => $version,
                 '_wp_fixpilot_blueprint_page_type' => $pageType,
                 '_wp_fixpilot_structure_hash' => $structureHash,
                 '_wp_fixpilot_content_schema' => $schema,
@@ -229,7 +240,7 @@ final class WPFixPilot_Blueprint_Controller
 
         $storedVersion = (int) get_post_meta(
             $blueprintId,
-            '_wp_fixpilot_blueprint_version',
+            '_wp_fixpilot_snapshot_version',
             true
         );
         if ($storedVersion !== $validatedPayload['expected_version']) {
@@ -350,7 +361,8 @@ final class WPFixPilot_Blueprint_Controller
             $blueprintId,
             (string) $blueprint->post_title,
             false,
-            $adapter->clone_meta_keys($blueprintId)
+            $adapter->clone_meta_keys($blueprintId),
+            'page'
         );
         if (is_wp_error($draftId)) {
             return $draftId;
@@ -695,27 +707,7 @@ final class WPFixPilot_Blueprint_Controller
 
     private function blueprint(int $blueprintId): WP_Post|WP_Error
     {
-        $post = get_post($blueprintId);
-        if (
-            !$post instanceof WP_Post
-            || !in_array($post->post_type, ['page', 'post'], true)
-            || get_post_meta($blueprintId, '_wp_fixpilot_blueprint', true) !== '1'
-        ) {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_not_found',
-                'Blueprintpagina niet gevonden.',
-                ['status' => 404]
-            );
-        }
-        if ($post->post_status !== 'draft') {
-            return new WP_Error(
-                'wp_fixpilot_blueprint_not_draft',
-                'Blueprintpagina is geen concept meer.',
-                ['status' => 409]
-            );
-        }
-
-        return $post;
+        return (new WPFixPilot_Template_Snapshot_Store())->assert_snapshot($blueprintId);
     }
 
     /** @return array{adapter: WPFixPilot_Blueprint_Adapter, schema: array<string, mixed>, structure_hash: string}|WP_Error */
@@ -734,6 +726,20 @@ final class WPFixPilot_Blueprint_Controller
         $schema = $adapter->schema($blueprintId);
         if (is_wp_error($schema)) {
             return $schema;
+        }
+        $storedSchema = get_post_meta(
+            $blueprintId,
+            '_wp_fixpilot_content_schema',
+            true
+        );
+        if (
+            $this->is_snapshot($blueprintId)
+            && is_array($storedSchema)
+            && isset($storedSchema['document_fields'])
+            && is_array($storedSchema['document_fields'])
+        ) {
+            $schema['schema_version'] = 'snapshot-text-v1';
+            $schema['document_fields'] = $storedSchema['document_fields'];
         }
         $structureHash = $adapter->structure_hash($blueprintId);
         $snapshotValidation = $this->validate_snapshot_contract(
@@ -941,9 +947,16 @@ final class WPFixPilot_Blueprint_Controller
             ),
             'version' => (int) get_post_meta(
                 $blueprintId,
-                '_wp_fixpilot_blueprint_version',
+                '_wp_fixpilot_snapshot_version',
                 true
             ),
+            'wordpress_snapshot_id' => $blueprintId,
+            'snapshot_version' => (int) get_post_meta(
+                $blueprintId,
+                '_wp_fixpilot_snapshot_version',
+                true
+            ),
+            'schema_version' => (string) ($schema['schema_version'] ?? ''),
             'structure_hash' => $structureHash,
             'content_schema' => $schema,
             'seo_plugin' => (string) get_post_meta(
@@ -980,8 +993,7 @@ final class WPFixPilot_Blueprint_Controller
         string $structureHash
     ): true|WP_Error {
         if (
-            !$this->has_exact_keys($schema, ['schema_version', 'blocks'])
-            || $schema['schema_version'] !== 'blueprint-v1'
+            !$this->has_snapshot_schema_shape($schema)
             || !is_array($schema['blocks'])
             || $schema['blocks'] === []
         ) {
@@ -994,6 +1006,13 @@ final class WPFixPilot_Blueprint_Controller
             ) {
                 return $this->invalid_snapshot_error();
             }
+        }
+
+        if (
+            $schema['schema_version'] === 'snapshot-text-v1'
+            && (!$this->has_valid_document_fields($schema['document_fields'] ?? null))
+        ) {
+            return $this->invalid_snapshot_error();
         }
 
         $fieldIds = $this->field_ids($schema);
@@ -1223,6 +1242,87 @@ final class WPFixPilot_Blueprint_Controller
 
         return array_diff($actualKeys, $expectedKeys) === []
             && array_diff($expectedKeys, $actualKeys) === [];
+    }
+
+    /** @return array<string, mixed> */
+    private function snapshot_field(
+        string $id,
+        string $path,
+        string $label,
+        string $valueType,
+        string $currentValue,
+        bool $required,
+        int $maxLength
+    ): array {
+        return [
+            'id' => $id,
+            'path' => $path,
+            'label' => $label,
+            'value_type' => $valueType,
+            'current_value' => $currentValue,
+            'required' => $required,
+            'max_length' => $maxLength,
+        ];
+    }
+
+    private function is_snapshot(int $postId): bool
+    {
+        return (new WPFixPilot_Template_Snapshot_Store())->is_snapshot($postId);
+    }
+
+    /** @param array<string, mixed> $schema */
+    private function has_snapshot_schema_shape(array $schema): bool
+    {
+        $schemaVersion = $schema['schema_version'] ?? null;
+        if ($schemaVersion === 'blueprint-v1') {
+            return $this->has_exact_keys($schema, ['schema_version', 'blocks']);
+        }
+
+        return $schemaVersion === 'snapshot-text-v1'
+            && $this->has_exact_keys(
+                $schema,
+                ['schema_version', 'blocks', 'document_fields']
+            );
+    }
+
+    private function has_valid_document_fields(mixed $documentFields): bool
+    {
+        if (!is_array($documentFields) || count($documentFields) !== 5) {
+            return false;
+        }
+
+        foreach ($documentFields as $field) {
+            if (
+                !is_array($field)
+                || !$this->has_exact_keys(
+                    $field,
+                    [
+                        'id',
+                        'path',
+                        'label',
+                        'value_type',
+                        'current_value',
+                        'required',
+                        'max_length',
+                    ]
+                )
+                || !is_string($field['id'])
+                || !is_string($field['path'])
+                || !is_string($field['label'])
+                || !in_array(
+                    $field['value_type'],
+                    ['plain_text', 'heading', 'seo_title', 'meta_description', 'focus_keyword'],
+                    true
+                )
+                || !is_string($field['current_value'])
+                || !is_bool($field['required'])
+                || !is_int($field['max_length'])
+            ) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function is_valid_block(mixed $block): bool
