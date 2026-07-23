@@ -46,4 +46,5 @@ Start: 980b8c5
 
 Baseline: backend 281 passed, 3 optional PostgreSQL skips, Ruff clean; frontend 26 files/88 tests passed, lint/build clean; all plugin suites and PHP lint passed under PHP 8.2.
 Preflight: fixed the stale AI settings API-module mock that omitted `apiBaseUrl`.
-Task 1: in progress.
+Task 1: complete (commits 59176b9..9047785, independent review approved after legacy v1 compatibility and document-field validation fixes; all 10 plugin suites and PHP lint passed under PHP 8.2).
+Task 2: in progress.
