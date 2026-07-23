@@ -139,5 +139,22 @@ def test_openai_snapshot_generation_uses_only_field_id_contract() -> None:
         "gpt-test",
     ).generate_page_package(snapshot_context())
 
+    full_prompt = "\n".join(message["content"] for message in captured["input"])
+    assert (
+        '{"text_replacements":{"known-field-id":{"value":"candidate text"}}}'
+        in full_prompt
+    )
+    for forbidden in (
+        "complete nederlandse seo-landingspagina",
+        "paginavorm",
+        '"landing_page"',
+        '"package"',
+        '"hero_title"',
+        '"sections"',
+        '"faq"',
+        '"cta"',
+        '"blueprint_schema"',
+    ):
+        assert forbidden not in full_prompt.lower()
     assert set(captured["text_format"].model_fields) == {"text_replacements"}
     assert set(result.package.model_dump()) == {"text_replacements"}

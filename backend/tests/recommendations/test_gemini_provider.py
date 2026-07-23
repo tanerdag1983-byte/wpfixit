@@ -81,5 +81,10 @@ def test_gemini_snapshot_generation_sends_only_field_id_schema(monkeypatch) -> N
     ).generate_page_package(snapshot_context())
 
     response_schema = captured["json"]["generationConfig"]["responseSchema"]
+    user_prompt = json.loads(
+        captured["json"]["contents"][0]["parts"][0]["text"]
+    )
     assert set(response_schema["properties"]) == {"text_replacements"}
+    assert "field_definitions" in user_prompt
+    assert "blueprint_schema" not in user_prompt
     assert set(result.package.model_dump()) == {"text_replacements"}

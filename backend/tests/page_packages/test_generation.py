@@ -1,4 +1,6 @@
+import hashlib
 import html
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -7,6 +9,7 @@ from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSch
 from app.domains.page_packages.generation import (
     normalize_snapshot_text_package,
     page_package_contract,
+    prompt_version,
     validate_blueprint_replacements,
 )
 from app.domains.page_packages.schemas import (
@@ -419,6 +422,34 @@ def test_snapshot_rich_text_is_sanitized_and_urls_must_be_approved() -> None:
     assert result.field_errors == {"acf:hero:url": "unapproved_url"}
 
 
+def test_snapshot_canonicalizes_approved_self_closing_rich_text_anchor() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"]["acf:hero:copy"] = {
+        "value": '<p><a href="/transmissie-diagnose/"/>tekst</p>'
+    }
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["acf:hero:copy"] == (
+        '<p><a href="/transmissie-diagnose/"></a>tekst</p>'
+    )
+    assert result.field_errors == {}
+    assert result.ready is True
+
+
+def test_snapshot_rejects_unapproved_self_closing_rich_text_anchor() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"]["acf:hero:copy"] = {
+        "value": '<p><a href="https://outside.example/"/>tekst</p>'
+    }
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.field_errors == {"acf:hero:copy": "unapproved_url"}
+    assert "acf:hero:copy" not in result.replacements
+    assert result.ready is True
+
+
 def test_snapshot_validates_urls_removed_by_rich_text_sanitization() -> None:
     payload = valid_snapshot_text_package()
     payload["text_replacements"]["acf:hero:copy"] = {
@@ -508,6 +539,23 @@ def test_rejects_unsafe_approved_cta_url() -> None:
 
     with pytest.raises(ValidationError, match="Approved CTA URL"):
         PagePackageContext.model_validate(payload)
+
+
+def test_legacy_blueprint_prompt_version_uses_replacements_contract_name() -> None:
+    context = blueprint_context()
+    expected = hashlib.sha256(
+        json.dumps(
+            {
+                "contract": "blueprint-replacements-v1",
+                "context": context.model_dump(),
+                "model": "model-test",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+    assert prompt_version(context, "model-test") == expected
 
 
 def test_rejects_duplicate_schema_field_ids() -> None:

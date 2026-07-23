@@ -97,6 +97,9 @@ def test_anthropic_snapshot_generation_accepts_only_field_id_output(
         "claude-test",
     ).generate_page_package(snapshot_context())
 
+    user_prompt = json.loads(captured["json"]["messages"][0]["content"])
     assert '"text_replacements"' in captured["json"]["system"]
     assert '"replacements"' not in captured["json"]["system"]
+    assert "field_definitions" in user_prompt
+    assert "blueprint_schema" not in user_prompt
     assert set(result.package.model_dump()) == {"text_replacements"}

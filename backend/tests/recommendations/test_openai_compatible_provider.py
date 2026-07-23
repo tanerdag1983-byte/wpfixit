@@ -75,6 +75,9 @@ def test_openai_compatible_snapshot_generation_keeps_exact_top_level_shape(
     ).generate_page_package(snapshot_context())
 
     prompt = captured["json"]["messages"][0]["content"]
+    user_prompt = json.loads(captured["json"]["messages"][1]["content"])
     assert '"text_replacements"' in prompt
     assert '"replacements"' not in prompt
+    assert "field_definitions" in user_prompt
+    assert "blueprint_schema" not in user_prompt
     assert set(result.package.model_dump()) == {"text_replacements"}

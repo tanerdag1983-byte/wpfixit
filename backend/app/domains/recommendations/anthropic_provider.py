@@ -6,6 +6,7 @@ from app.domains.page_packages.generation import (
     generation_result,
     page_package_contract,
     page_package_system_prompt,
+    page_package_user_prompt,
 )
 from app.domains.page_packages.schemas import PagePackageContext
 from app.domains.recommendations.provider import (
@@ -94,9 +95,7 @@ class AnthropicRecommendationGenerator:
                     "messages": [
                         {
                             "role": "user",
-                            "content": json.dumps(
-                                context.model_dump(), ensure_ascii=False
-                            ),
+                            "content": page_package_user_prompt(context),
                         }
                     ],
                 },

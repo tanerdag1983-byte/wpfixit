@@ -121,6 +121,8 @@ class _RichTextSanitizer(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         self.handle_starttag(tag, attrs)
+        if tag.lower() in _RICH_TEXT_TAGS and tag.lower() != "br":
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -288,20 +290,33 @@ def page_package_contract(context: PagePackageContext):
 
 
 def page_package_system_prompt(context: PagePackageContext) -> str:
-    blueprint_rules = ""
     if (
         context.blueprint_schema is not None
         and context.blueprint_schema.schema_version == "snapshot-text-v1"
     ):
-        blueprint_rules = (
-            " Geef uitsluitend een top-level text_replacements-object terug. "
-            "Gebruik alleen bekende field-ID's als keys met exact een value-string. "
-            "Geef geen paginavorm, title, slug, sections, faq, cta, package, "
-            "landing_page, builderdata of andere top-level velden terug. Laat "
-            "onbekende velden volledig weg en gebruik voor URL-velden uitsluitend "
-            "de aangeleverde goedgekeurde URL's."
+        schema_prompt = json.dumps(
+            page_package_contract(context).model_json_schema(),
+            ensure_ascii=False,
+            sort_keys=True,
         )
-    elif context.blueprint_schema is not None:
+        return (
+            "Genereer uitsluitend Nederlandse kandidaatwaarden voor bekende "
+            "field-ID's. Antwoord exact als een JSON-object met deze vorm: "
+            '{"text_replacements":{"known-field-id":{"value":"candidate text"}}}. '
+            "De enige top-level key is text_replacements. Gebruik uitsluitend "
+            "field-ID's uit de invoer en geef per ID exact een value-string. Laat "
+            "onbekende field-ID's weg. Gebruik voor URL-waarden uitsluitend de "
+            "aangeleverde goedgekeurde URL's. Verzin geen garanties, prijzen, "
+            "locaties of certificeringen. Geef geen toelichting buiten het "
+            "JSON-object. HTML mag geen scripts, formulieren, inline event handlers "
+            "of javascript-URL's bevatten. Het resultaat is een concept voor "
+            "menselijke beoordeling en mag nooit automatisch worden gepubliceerd."
+            f"\n\nContractschema:\n{schema_prompt}\n\n"
+            f"Projectcontext:\n"
+            f"{context.company_context[:10_000] or 'Niet ingesteld.'}"
+        )
+    blueprint_rules = ""
+    if context.blueprint_schema is not None:
         blueprint_rules = (
             " Bewaar iedere block- en field-ID uit het blueprint-schema. Geef exact "
             "een replacement voor ieder verplicht tekst- of URL-veld en respecteer "
@@ -329,6 +344,37 @@ def page_package_system_prompt(context: PagePackageContext) -> str:
         f"{blueprint_rules}\n\n"
         f"Contractschema:\n{schema_prompt}\n\n"
         f"Projectcontext:\n{context.company_context[:10_000] or 'Niet ingesteld.'}"
+    )
+
+
+def page_package_user_prompt(context: PagePackageContext) -> str:
+    schema = context.blueprint_schema
+    if schema is None or schema.schema_version != "snapshot-text-v1":
+        return json.dumps(context.model_dump(), ensure_ascii=False)
+    approved_urls = sorted(
+        {link.url for link in context.internal_link_candidates}
+        | set(context.approved_cta_urls)
+    )
+    return json.dumps(
+        {
+            "keyword": context.keyword,
+            "search_volume": context.search_volume,
+            "intent": context.intent,
+            "project_domain": context.project_domain,
+            "approved_urls": approved_urls,
+            "field_definitions": [
+                {
+                    "id": field.id,
+                    "label": field.label,
+                    "value_type": field.value_type,
+                    "current_value": field.current_value,
+                    "required": field.required,
+                    "max_length": field.max_length,
+                }
+                for field in schema.fields_by_id().values()
+            ],
+        },
+        ensure_ascii=False,
     )
 
 
@@ -436,14 +482,17 @@ def render_page_package(package: GeneratedPagePackage) -> str:
 
 
 def prompt_version(context: PagePackageContext, model: str) -> str:
+    contract = (
+        context.blueprint_schema.schema_version
+        if context.blueprint_schema is not None
+        else "page-package-v1"
+    )
+    if contract == "blueprint-v1":
+        contract = "blueprint-replacements-v1"
     return hashlib.sha256(
         json.dumps(
             {
-                "contract": (
-                    context.blueprint_schema.schema_version
-                    if context.blueprint_schema is not None
-                    else "page-package-v1"
-                ),
+                "contract": contract,
                 "context": context.model_dump(),
                 "model": model,
             },
