@@ -413,3 +413,163 @@ terminalizing the durable migration job.
   explicitly uses SQLAlchemy `with_for_update()` for PostgreSQL row locking.
 - Independent re-review is still required before Task 3 is marked complete in
   the progress ledger.
+
+## Third Review Fix
+
+### Status
+
+All five in-scope Task 3 findings from the third re-review are fixed and
+committed. The requested snapshot draft-job contract remains explicitly
+deferred to Task 6.
+
+### Files
+
+- `backend/app/api/routes/page_blueprints.py`
+- `backend/app/api/routes/page_packages.py`
+- `backend/app/domains/page_blueprints/service.py`
+- `backend/app/domains/page_packages/service.py`
+- `backend/tests/page_blueprints/test_migration.py`
+- `backend/tests/page_blueprints/test_postgres_concurrency.py`
+- `backend/tests/page_blueprints/test_routes.py`
+- `backend/tests/page_blueprints/test_service.py`
+- `backend/tests/page_packages/test_proposal_routes.py`
+- `.superpowers/sdd/task-3-report.md`
+
+### Commits
+
+- `a0e4a02bf2177f2c1fe50735bb8a036620daaece` - `fix: close task
+  three third review findings`
+
+### RED Evidence
+
+Successor lock ordering:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py -k concurrent_successor
+```
+
+Result before the lock-ordering change: `1 failed, 10 deselected`. The route
+checked for a successor before locking the legacy blueprint and attempted
+another capture.
+
+Proposal default transfer:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_packages/test_proposal_routes.py -k reselects_default
+```
+
+Result before locked selection: `1 failed, 12 deselected`. Proposal creation
+remained bound to the former legacy default after default ownership moved.
+
+Legacy default reactivation:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_service.py -k superseded_legacy
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_routes.py -k reactivating_superseded
+```
+
+Results before the guard: each selection failed (`1 failed`); both service and
+route allowed a superseded legacy blueprint to become default.
+
+Native approval trust:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_packages/test_proposal_routes.py -k native_approval_rejects
+```
+
+Initial result: `6 failed, 2 passed`. Snapshot ID, post type, adapter version,
+schema version, builder, and SEO identity mismatches were accepted. The final
+matrix also covers compatibility snapshot ID, version, snapshot version, and
+structure hash.
+
+Failed proposal migration:
+
+```bash
+cd backend
+.venv/bin/python -m pytest --import-mode=importlib -q \
+  tests/page_blueprints/test_migration.py -k failed_unfinished
+```
+
+Result before the recovery guard: `1 failed, 11 deselected`. Migration cloned
+an unfinished failed proposal into a proposed successor version.
+
+### GREEN Evidence
+
+- Successor lock-ordering regression: `1 passed, 10 deselected`.
+- Proposal default-transfer regression: `1 passed, 12 deselected`.
+- Superseded-default service compatibility selection:
+  `2 passed, 11 deselected`.
+- Superseded-default route compatibility selection:
+  `2 passed, 37 deselected`.
+- Native approval mismatch matrix: `10 passed, 13 deselected`.
+- Legacy approval compatibility selection: `2 passed, 19 deselected`.
+- Failed proposal migration regression: `1 passed, 11 deselected`.
+- Task 3 routes, migration, service, and WordPress client:
+  `66 passed in 1.74s`.
+- Proposal selection, approval, and generation: `36 passed in 1.40s`.
+- Optional PostgreSQL concurrency suite: `2 skipped` because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is absent.
+- Ruff: `.venv/bin/ruff check app tests alembic` returned
+  `All checks passed!`.
+- Full backend: `332 passed, 4 skipped in 9.47s`; all four skips are optional
+  PostgreSQL concurrency tests requiring `WP_FIXPILOT_POSTGRES_TEST_URL`.
+- Alembic: `.venv/bin/alembic upgrade head` exited `0` at migration head.
+- `git diff --check` passed.
+- Plugin tests were not rerun because this review fix changed no plugin file.
+
+### Invariants
+
+- Migration acquires the legacy `PageBlueprint` row lock before querying for a
+  successor, within the same transaction. A waiting migration observes a
+  concurrently committed successor, terminalizes its job as `migrated`, and
+  does not capture.
+- Proposal creation locks the selected default row and then revalidates ready
+  state, default ownership, and absence of a successor. A transferred default
+  is reselected once; an unresolved race returns bounded `409` retry guidance.
+- A legacy blueprint with a successor can never be reactivated as default.
+  Native active snapshots and pre-migration legacy defaults remain supported.
+- Native proposal approval requires exact WordPress snapshot identity and trust
+  fields. Legacy proposal approval retains its existing validation contract.
+- Failed or package-less current proposals remain legacy-bound and receive the
+  existing `snapshot_migration_requires_generation` recovery code; no proposed
+  successor version is copied.
+
+### Task 6 Boundary
+
+`wordpress-snapshot-draft-job-v1` is intentionally not implemented in Task 3.
+`_draft_job_payload` and plugin dispatch are unchanged, and legacy v1 jobs
+remain available for legacy proposals. Task 6 owns the `SnapshotTextSchema`
+outbound payload and plugin dispatch. The third-review draft-job item is
+therefore recorded as cross-task `Cannot verify`, not as a Task 3 change.
+
+### Self-Review
+
+- The deterministic route test proves no successor lookup occurs before the
+  legacy lock; the optional real PostgreSQL test proves a waiter observes a
+  successor committed by the lock holder.
+- Proposal locking remains held through proposal insertion, preserving the
+  migration/proposal serialization boundary.
+- Default rejection happens before any default flags are mutated.
+- Native trust mismatch coverage shares one fixture and spans every bounded
+  identity class without weakening the legacy branch.
+- No draft-job payload, plugin, source WordPress page, authorization, or legacy
+  blueprint identity behavior was changed.
+- The unrelated Task 1 report and untracked manual-handoff plan were neither
+  edited nor staged.
+
+### Concerns
+
+- The real PostgreSQL concurrency tests could not execute locally because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured; their optional suite was
+  collected and skipped as designed.
+- Independent re-review is still required before Task 3 is marked complete in
+  the progress ledger.
