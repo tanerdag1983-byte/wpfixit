@@ -1,12 +1,17 @@
 import pytest
 from pydantic import ValidationError
 
-from app.domains.page_blueprints.schemas import BlueprintSchema
-from app.domains.page_packages.generation import validate_blueprint_replacements
+from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
+from app.domains.page_packages.generation import (
+    normalize_snapshot_text_package,
+    page_package_contract,
+    validate_blueprint_replacements,
+)
 from app.domains.page_packages.schemas import (
     FieldReplacement,
     GeneratedBlueprintPackage,
     GeneratedPagePackage,
+    GeneratedSnapshotTextPackage,
     InternalLink,
     PagePackageContext,
 )
@@ -120,6 +125,130 @@ def blueprint_context() -> PagePackageContext:
     )
 
 
+def valid_snapshot_schema() -> dict:
+    def field(
+        field_id: str,
+        value_type: str,
+        *,
+        current_value: str,
+        required: bool = True,
+        max_length: int = 200,
+    ) -> dict:
+        return {
+            "id": field_id,
+            "path": field_id,
+            "label": field_id,
+            "value_type": value_type,
+            "current_value": current_value,
+            "required": required,
+            "max_length": max_length,
+        }
+
+    return {
+        "schema_version": "snapshot-text-v1",
+        "document_fields": [
+            field(
+                "document:title",
+                "heading",
+                current_value="Bestaande titel",
+                max_length=180,
+            ),
+            field(
+                "document:slug",
+                "plain_text",
+                current_value="bestaande-titel",
+                max_length=160,
+            ),
+            field(
+                "seo:title",
+                "seo_title",
+                current_value="Bestaande SEO-titel",
+                max_length=70,
+            ),
+            field(
+                "seo:meta_description",
+                "meta_description",
+                current_value="Bestaande metabeschrijving",
+                max_length=170,
+            ),
+            field(
+                "seo:focus_keyword",
+                "focus_keyword",
+                current_value="",
+                max_length=160,
+            ),
+        ],
+        "blocks": [
+            {
+                "id": "acf:hero",
+                "layout": "hero",
+                "label": "Hero",
+                "semantic_role": "hero",
+                "fields": [
+                    field(
+                        "acf:hero:title",
+                        "heading",
+                        current_value="Bestaande hero",
+                        max_length=180,
+                    ),
+                    field(
+                        "acf:hero:label",
+                        "button_text",
+                        current_value="Meer informatie",
+                        required=False,
+                        max_length=80,
+                    ),
+                    field(
+                        "acf:hero:copy",
+                        "rich_text",
+                        current_value="<p>Bestaande tekst.</p>",
+                        required=False,
+                        max_length=5_000,
+                    ),
+                    field(
+                        "acf:hero:url",
+                        "url",
+                        current_value="/contact/",
+                        required=False,
+                        max_length=2_048,
+                    ),
+                ],
+            }
+        ],
+    }
+
+
+def snapshot_context() -> PagePackageContext:
+    return PagePackageContext(
+        keyword="dsg revisie schiedam",
+        search_volume=320,
+        intent="commercial",
+        company_context="SHM Transmissie in Schiedam",
+        project_domain="https://member.example",
+        internal_link_candidates=[
+            InternalLink(anchor="Transmissie diagnose", url="/transmissie-diagnose/")
+        ],
+        approved_cta_urls=["/offerte-aanvragen/"],
+        blueprint_schema=SnapshotTextSchema.model_validate(valid_snapshot_schema()),
+        template_slots={},
+    )
+
+
+def valid_snapshot_text_package() -> dict:
+    return {
+        "text_replacements": {
+            "document:title": {"value": "<strong>Nieuwe titel</strong>"},
+            "document:slug": {"value": "<em>nieuwe-titel</em>"},
+            "seo:title": {"value": "<b>Nieuwe SEO-titel</b>"},
+            "seo:meta_description": {
+                "value": "<p>Nieuwe metabeschrijving voor deze pagina.</p>"
+            },
+            "seo:focus_keyword": {"value": "ander zoekwoord"},
+            "acf:hero:title": {"value": "<h1>Nieuwe hero</h1>"},
+        }
+    }
+
+
 def blueprint_package(
     *, field_id: str = "acf-title", url: str = "/offerte-aanvragen/"
 ) -> GeneratedBlueprintPackage:
@@ -148,6 +277,124 @@ def test_complete_page_package_contract() -> None:
     assert package.slug == "dsg-versnellingsbak-reviseren"
     assert len(package.sections) == 2
     assert len(package.faq) == 2
+
+
+def test_snapshot_contract_contains_only_field_id_values() -> None:
+    contract = page_package_contract(snapshot_context())
+
+    assert contract is GeneratedSnapshotTextPackage
+    assert set(contract.model_json_schema()["properties"]) == {"text_replacements"}
+
+    with pytest.raises(ValidationError):
+        contract.model_validate(
+            {
+                **valid_snapshot_text_package(),
+                "title": "Legacy top-level title",
+            }
+        )
+
+
+def test_invalid_optional_field_does_not_fail_valid_required_fields() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"].update(
+        {
+            "acf:hero:label": {"value": "<script>bad</script>"},
+            "unknown:id": {"value": "ignore"},
+        }
+    )
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["document:title"] == "Nieuwe titel"
+    assert result.replacements["document:slug"] == "nieuwe-titel"
+    assert result.replacements["seo:focus_keyword"] == "dsg revisie schiedam"
+    assert "acf:hero:label" not in result.replacements
+    assert result.field_errors == {"acf:hero:label": "unsafe_html"}
+    assert result.blocking_field_ids == []
+    assert result.ignored_field_ids == ["unknown:id"]
+    assert result.missing_required_field_ids == []
+    assert result.ready is True
+
+
+def test_required_missing_and_invalid_fields_block_only_validation() -> None:
+    payload = valid_snapshot_text_package()
+    del payload["text_replacements"]["document:title"]
+    payload["text_replacements"]["document:slug"] = {
+        "value": "<strong>Onveilige Slug</strong>"
+    }
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.field_errors == {"document:slug": "invalid_slug"}
+    assert result.blocking_field_ids == ["document:slug"]
+    assert result.missing_required_field_ids == ["document:title"]
+    assert result.replacements["seo:focus_keyword"] == "dsg revisie schiedam"
+    assert result.ready is False
+
+
+def test_snapshot_rich_text_is_sanitized_and_urls_must_be_approved() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"].update(
+        {
+            "acf:hero:copy": {
+                "value": (
+                    '<p class="lead">Lees <span>onze</span> '
+                    '<a href="/transmissie-diagnose/" onclick="bad()">'
+                    "diagnose</a>.</p>"
+                )
+            },
+            "acf:hero:url": {"value": "<b>/offerte-aanvragen/</b>"},
+        }
+    )
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.field_errors == {"acf:hero:copy": "unsafe_html"}
+    assert result.replacements["acf:hero:url"] == "/offerte-aanvragen/"
+
+    payload["text_replacements"]["acf:hero:copy"] = {
+        "value": (
+            '<p class="lead">Lees <span>onze</span> '
+            '<a href="/transmissie-diagnose/">diagnose</a>.</p>'
+        )
+    }
+    payload["text_replacements"]["acf:hero:url"] = {
+        "value": "https://outside.example/"
+    }
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["acf:hero:copy"] == (
+        '<p>Lees onze <a href="/transmissie-diagnose/">diagnose</a>.</p>'
+    )
+    assert result.field_errors == {"acf:hero:url": "unapproved_url"}
+
+
+def test_snapshot_validates_urls_removed_by_rich_text_sanitization() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"]["acf:hero:copy"] = {
+        "value": '<p>Tekst<img src="https://outside.example/image.jpg"></p>'
+    }
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.field_errors == {"acf:hero:copy": "unapproved_url"}
+    assert "acf:hero:copy" not in result.replacements
+    assert result.ready is True
+
+
+def test_snapshot_ignores_only_a_bounded_number_of_unknown_field_ids() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"].update(
+        {f"unknown:{index:03d}": {"value": "ignore"} for index in range(150)}
+    )
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert len(result.ignored_field_ids) == 100
+    assert result.ignored_field_ids[0] == "unknown:000"
+    assert result.ignored_field_ids[-1] == "unknown:099"
+    assert result.ready is True
 
 
 @pytest.mark.parametrize(

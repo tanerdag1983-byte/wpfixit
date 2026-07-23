@@ -13,10 +13,13 @@ from app.domains.recommendations.openai_compatible_provider import (
     normalize_blueprint_package,
 )
 from app.domains.recommendations.openai_provider import OpenAIRecommendationGenerator
+from app.domains.recommendations.provider import ProviderGenerationError
 from tests.page_packages.test_generation import (
     blueprint_context,
     blueprint_package,
+    snapshot_context,
     valid_package,
+    valid_snapshot_text_package,
 )
 
 
@@ -74,6 +77,27 @@ def test_openai_uses_blueprint_replacement_contract() -> None:
     assert captured["text_format"].__name__ == "GeneratedBlueprintPackage"
     assert "bewaar iedere block- en field-id" in captured["input"][0]["content"].lower()
     assert result.package.replacements[0].field_id == "acf-title"
+
+
+def test_openai_uses_snapshot_field_id_contract_without_page_shape() -> None:
+    captured = {}
+
+    def parse(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_parsed=kwargs["text_format"].model_validate(
+                valid_snapshot_text_package()
+            ),
+            usage=SimpleNamespace(input_tokens=20, output_tokens=40),
+        )
+
+    result = OpenAIRecommendationGenerator(
+        SimpleNamespace(responses=SimpleNamespace(parse=parse)), "gpt-test"
+    ).generate_page_package(snapshot_context())
+
+    assert captured["text_format"].__name__ == "GeneratedSnapshotTextPackage"
+    assert set(result.package.model_dump()) == {"text_replacements"}
+    assert '"replacements"' not in captured["input"][0]["content"]
 
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
@@ -179,6 +203,48 @@ def test_openai_compatible_uses_blueprint_contract(monkeypatch, provider) -> Non
     assert '"replacements"' in system_content
     assert "herhaal nooit de inputcontext" in system_content
     assert result.package.replacements[0].field_id == "acf-title"
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])
+def test_openai_compatible_snapshot_contract_rejects_legacy_page_wrappers(
+    monkeypatch, provider
+) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "landing_page": {
+                                        "package": valid_snapshot_text_package()
+                                    }
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(
+        ProviderGenerationError,
+        match="OpenAI-compatible page generation failed",
+    ) as exc_info:
+        OpenAICompatibleRecommendationGenerator(
+            "https://gateway.example/v1",
+            "secret",
+            "model-test",
+            provider=provider,
+        ).generate_page_package(snapshot_context())
+
+    assert len(str(exc_info.value)) <= 550
 
 
 @pytest.mark.parametrize("provider", ["openai_compatible", "openrouter"])

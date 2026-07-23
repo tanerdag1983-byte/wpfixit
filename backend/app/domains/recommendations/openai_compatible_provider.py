@@ -77,6 +77,11 @@ def _extract_page_package_payload(payload, contract):
 
 def _parse_page_package_content(content: str, context: PagePackageContext):
     contract = page_package_contract(context)
+    if (
+        context.blueprint_schema is not None
+        and context.blueprint_schema.schema_version == "snapshot-text-v1"
+    ):
+        return contract.model_validate_json(content)
     if context.blueprint_schema is not None:
         return normalize_blueprint_package(json.loads(content), context)
     try:

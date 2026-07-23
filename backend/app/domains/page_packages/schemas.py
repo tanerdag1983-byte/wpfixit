@@ -156,6 +156,32 @@ class GeneratedBlueprintPackage(BaseModel):
     )(plain_text)
 
 
+class SnapshotTextValue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: str = Field(max_length=20_000)
+
+
+class GeneratedSnapshotTextPackage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text_replacements: dict[str, SnapshotTextValue] = Field(min_length=1)
+
+
+class SnapshotTextValidation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    replacements: dict[str, str]
+    field_errors: dict[str, str]
+    blocking_field_ids: list[str]
+    ignored_field_ids: list[str]
+    missing_required_field_ids: list[str]
+
+    @property
+    def ready(self) -> bool:
+        return not self.blocking_field_ids and not self.missing_required_field_ids
+
+
 class PagePackageContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -181,7 +207,11 @@ class PagePackageContext(BaseModel):
 
 
 class PagePackageGenerationResult(BaseModel):
-    package: GeneratedPagePackage | GeneratedBlueprintPackage
+    package: (
+        GeneratedPagePackage
+        | GeneratedBlueprintPackage
+        | GeneratedSnapshotTextPackage
+    )
     provider: str = ""
     model: str | None = None
     input_tokens: int = 0

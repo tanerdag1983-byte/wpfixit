@@ -6,6 +6,10 @@ from app.domains.recommendations.anthropic_provider import (
     AnthropicRecommendationGenerator,
 )
 from app.domains.recommendations.provider import ProviderGenerationError
+from tests.page_packages.test_generation import (
+    snapshot_context,
+    valid_snapshot_text_package,
+)
 from tests.recommendations.provider_contract import VALID_RESULT, facts
 
 
@@ -63,3 +67,36 @@ def test_anthropic_rejects_unknown_evidence(monkeypatch) -> None:
         AnthropicRecommendationGenerator(
             "https://api.anthropic.com/v1", "secret", "claude-test"
         ).generate(facts())
+
+
+def test_anthropic_snapshot_generation_accepts_only_field_id_output(
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    class SnapshotResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "content": [
+                    {"text": json.dumps(valid_snapshot_text_package())}
+                ],
+                "usage": {},
+            }
+
+    def post(url: str, **kwargs):
+        captured.update(url=url, **kwargs)
+        return SnapshotResponse()
+
+    monkeypatch.setattr("requests.post", post)
+    result = AnthropicRecommendationGenerator(
+        "https://api.anthropic.com/v1",
+        "secret",
+        "claude-test",
+    ).generate_page_package(snapshot_context())
+
+    assert '"text_replacements"' in captured["json"]["system"]
+    assert '"replacements"' not in captured["json"]["system"]
+    assert set(result.package.model_dump()) == {"text_replacements"}

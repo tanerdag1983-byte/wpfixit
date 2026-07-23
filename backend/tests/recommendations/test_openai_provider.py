@@ -11,6 +11,10 @@ from app.domains.recommendations.schemas import (
     GeneratedRecommendation,
     PageFacts,
 )
+from tests.page_packages.test_generation import (
+    snapshot_context,
+    valid_snapshot_text_package,
+)
 
 
 def facts() -> PageFacts:
@@ -116,3 +120,24 @@ def test_openai_generator_translates_provider_failures() -> None:
         match="OpenAI generation failed: secret",
     ):
         OpenAIRecommendationGenerator(client, "gpt-test").generate(facts())
+
+
+def test_openai_snapshot_generation_uses_only_field_id_contract() -> None:
+    captured = {}
+
+    def parse(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_parsed=kwargs["text_format"].model_validate(
+                valid_snapshot_text_package()
+            ),
+            usage=SimpleNamespace(input_tokens=8, output_tokens=13),
+        )
+
+    result = OpenAIRecommendationGenerator(
+        SimpleNamespace(responses=SimpleNamespace(parse=parse)),
+        "gpt-test",
+    ).generate_page_package(snapshot_context())
+
+    assert set(captured["text_format"].model_fields) == {"text_replacements"}
+    assert set(result.package.model_dump()) == {"text_replacements"}

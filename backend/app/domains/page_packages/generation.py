@@ -1,14 +1,19 @@
 import hashlib
 import html
 import json
+import re
 from html.parser import HTMLParser
 
+from app.domains.page_blueprints.schemas import SnapshotTextField
 from app.domains.page_packages.schemas import (
     GeneratedBlueprintPackage,
     GeneratedPagePackage,
+    GeneratedSnapshotTextPackage,
     PagePackageContext,
     PagePackageGenerationResult,
     PageProposalRegenerationRequest,
+    SnapshotTextValidation,
+    SnapshotTextValue,
     plain_text,
     safe_html,
 )
@@ -34,7 +39,232 @@ def _html_urls(value: str) -> list[str]:
     return parser.urls
 
 
+class _RichTextUrlCollector(HTMLParser):
+    URL_ATTRIBUTES = {"action", "formaction", "href", "poster", "src"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.urls: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        for name, value in attrs:
+            if name.lower() in self.URL_ATTRIBUTES and value:
+                self.urls.append(value.strip())
+
+
+def _rich_text_urls(value: str) -> list[str]:
+    parser = _RichTextUrlCollector()
+    parser.feed(value)
+    return parser.urls
+
+
+_SNAPSHOT_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_MAX_IGNORED_FIELD_IDS = 100
+_RICH_TEXT_TAGS = {
+    "a",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "em",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "s",
+    "strong",
+    "u",
+    "ul",
+}
+
+
+class _RichTextSanitizer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        if tag not in _RICH_TEXT_TAGS:
+            return
+        rendered_attrs = ""
+        if tag == "a":
+            href = next(
+                (
+                    value.strip()
+                    for name, value in attrs
+                    if name.lower() == "href" and value
+                ),
+                None,
+            )
+            if href is not None:
+                rendered_attrs = f' href="{html.escape(href, quote=True)}"'
+        self.parts.append(f"<{tag}{rendered_attrs}>")
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in _RICH_TEXT_TAGS and tag != "br":
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html.escape(data, quote=False))
+
+    def sanitized(self) -> str:
+        return "".join(self.parts).strip()
+
+
+def _strip_markup(value: str) -> str:
+    without_tags = re.sub(r"<[^>]*>", " ", value)
+    return " ".join(html.unescape(without_tags).split())
+
+
+def _sanitize_rich_text(value: str) -> str:
+    sanitizer = _RichTextSanitizer()
+    sanitizer.feed(value)
+    sanitizer.close()
+    return sanitizer.sanitized()
+
+
+def _snapshot_field_value(
+    field: SnapshotTextField,
+    value: str,
+    approved_urls: set[str],
+) -> tuple[str | None, str | None]:
+    try:
+        safe_html(value)
+    except ValueError:
+        return None, "unsafe_html"
+
+    if field.value_type == "rich_text":
+        if any(url not in approved_urls for url in _rich_text_urls(value)):
+            return None, "unapproved_url"
+        normalized = _sanitize_rich_text(value)
+        empty_value = not _strip_markup(normalized)
+    else:
+        normalized = _strip_markup(value)
+        empty_value = not normalized
+
+    if field.id == "document:slug" and normalized:
+        if _SNAPSHOT_SLUG.fullmatch(normalized) is None:
+            return None, "invalid_slug"
+    if field.value_type == "url" and normalized not in approved_urls:
+        return None, "unapproved_url"
+    if len(normalized) > field.max_length:
+        return None, "max_length"
+    if field.required and empty_value:
+        return None, "required"
+    return normalized, None
+
+
+def normalize_snapshot_text_package(
+    raw: object,
+    context: PagePackageContext,
+) -> SnapshotTextValidation:
+    schema = context.blueprint_schema
+    if schema is None or schema.schema_version != "snapshot-text-v1":
+        raise ValueError("snapshot-text-v1 schema is required")
+    if isinstance(raw, GeneratedSnapshotTextPackage):
+        payload = raw.model_dump(mode="python")
+    elif isinstance(raw, dict):
+        payload = raw
+    else:
+        raise ValueError("invalid snapshot text package")
+    if set(payload) != {"text_replacements"} or not isinstance(
+        payload["text_replacements"], dict
+    ):
+        raise ValueError("invalid snapshot text package")
+
+    fields = schema.fields_by_id()
+    candidates = payload["text_replacements"]
+    approved_urls = {
+        link.url for link in context.internal_link_candidates
+    } | set(context.approved_cta_urls)
+    replacements: dict[str, str] = {}
+    field_errors: dict[str, str] = {}
+    provided_field_ids: set[str] = set()
+    ignored_field_ids: list[str] = []
+
+    for field_id, candidate in candidates.items():
+        if field_id not in fields:
+            if (
+                isinstance(field_id, str)
+                and len(ignored_field_ids) < _MAX_IGNORED_FIELD_IDS
+            ):
+                ignored_field_ids.append(field_id)
+            continue
+        provided_field_ids.add(field_id)
+        if isinstance(candidate, SnapshotTextValue):
+            value = candidate.value
+        elif (
+            isinstance(candidate, dict)
+            and set(candidate) == {"value"}
+            and isinstance(candidate["value"], str)
+        ):
+            value = candidate["value"]
+        else:
+            field_errors[field_id] = "invalid_value"
+            continue
+        normalized, error = _snapshot_field_value(
+            fields[field_id],
+            value,
+            approved_urls,
+        )
+        if error is not None:
+            field_errors[field_id] = error
+        else:
+            assert normalized is not None
+            replacements[field_id] = normalized
+
+    focus_field = fields.get("seo:focus_keyword")
+    if focus_field is not None:
+        provided_field_ids.add(focus_field.id)
+        normalized, error = _snapshot_field_value(
+            focus_field,
+            context.keyword,
+            approved_urls,
+        )
+        if error is not None:
+            field_errors[focus_field.id] = error
+            replacements.pop(focus_field.id, None)
+        else:
+            assert normalized is not None
+            replacements[focus_field.id] = normalized
+            field_errors.pop(focus_field.id, None)
+
+    missing_required = sorted(
+        field.id
+        for field in fields.values()
+        if field.required and field.id not in provided_field_ids
+    )
+    blocking = sorted(
+        field_id
+        for field_id in field_errors
+        if fields[field_id].required
+    )
+    return SnapshotTextValidation(
+        replacements=replacements,
+        field_errors=dict(sorted(field_errors.items())),
+        blocking_field_ids=blocking,
+        ignored_field_ids=sorted(ignored_field_ids),
+        missing_required_field_ids=missing_required,
+    )
+
+
 def page_package_contract(context: PagePackageContext):
+    if (
+        context.blueprint_schema is not None
+        and context.blueprint_schema.schema_version == "snapshot-text-v1"
+    ):
+        return GeneratedSnapshotTextPackage
     if context.blueprint_schema is not None:
         return GeneratedBlueprintPackage
     return GeneratedPagePackage
@@ -42,7 +272,19 @@ def page_package_contract(context: PagePackageContext):
 
 def page_package_system_prompt(context: PagePackageContext) -> str:
     blueprint_rules = ""
-    if context.blueprint_schema is not None:
+    if (
+        context.blueprint_schema is not None
+        and context.blueprint_schema.schema_version == "snapshot-text-v1"
+    ):
+        blueprint_rules = (
+            " Geef uitsluitend een top-level text_replacements-object terug. "
+            "Gebruik alleen bekende field-ID's als keys met exact een value-string. "
+            "Geef geen paginavorm, title, slug, sections, faq, cta, package, "
+            "landing_page, builderdata of andere top-level velden terug. Laat "
+            "onbekende velden volledig weg en gebruik voor URL-velden uitsluitend "
+            "de aangeleverde goedgekeurde URL's."
+        )
+    elif context.blueprint_schema is not None:
         blueprint_rules = (
             " Bewaar iedere block- en field-ID uit het blueprint-schema. Geef exact "
             "een replacement voor ieder verplicht tekst- of URL-veld en respecteer "
@@ -74,7 +316,11 @@ def page_package_system_prompt(context: PagePackageContext) -> str:
 
 
 def generation_result(
-    package: GeneratedPagePackage | GeneratedBlueprintPackage,
+    package: (
+        GeneratedPagePackage
+        | GeneratedBlueprintPackage
+        | GeneratedSnapshotTextPackage
+    ),
     *,
     provider: str,
     model: str,
@@ -177,7 +423,7 @@ def prompt_version(context: PagePackageContext, model: str) -> str:
         json.dumps(
             {
                 "contract": (
-                    "blueprint-replacements-v1"
+                    context.blueprint_schema.schema_version
                     if context.blueprint_schema is not None
                     else "page-package-v1"
                 ),
