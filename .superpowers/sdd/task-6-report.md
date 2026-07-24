@@ -1,47 +1,56 @@
-# Versioned Template Snapshots Release 1 - Task 6
+# Task 6 Report
 
 ## Scope
 
-Create normal WordPress drafts from the exact private template snapshot through
-the strict `wordpress-snapshot-draft-job-v1` outbound contract. Keep legacy
-`wordpress-draft-job-v1` dispatch unchanged.
+Implemented schema-keyed AI page generation while retaining the legacy page-package
+contract until Task 7 switches the draft workflow to managed blueprints.
 
-## RED
+## RED Evidence
 
-- Backend snapshot payload tests failed because the legacy
-  `GeneratedBlueprintPackage` parser rejected `text_replacements`.
-- The plugin snapshot test failed with `wp_fixpilot_unsupported_contract`.
+```text
+.venv/bin/pytest -q tests/page_packages/test_generation.py
+ImportError: cannot import name 'validate_blueprint_replacements'
 
-## GREEN
+.venv/bin/pytest -q tests/page_packages/test_provider_page_packages.py -k blueprint
+GeneratedPagePackage rejected the blueprint replacement payload
+```
 
-- Native snapshots with a ready validation stage now emit only the eight
-  contract-v2 fields from stored normalized validation output.
-- Validation freezes approved URLs alongside normalized field replacements.
-- Legacy blueprints continue to emit and process `wordpress-draft-job-v1`.
-- The plugin requires the exact v2 key set and strict scalar types, asserts the
-  private snapshot, verifies snapshot and schema versions, then delegates to the
-  existing verified clone/write/cleanup/idempotency path.
-- Document title, slug, and SEO values are derived from their field IDs; only
-  remaining block fields reach the builder adapter.
-- Migration `0022_snapshot_draft_jobs` allows exactly the legacy and snapshot
-  contract versions.
+## Implementation
+
+- Added `FieldReplacement` and `GeneratedBlueprintPackage` structured models.
+- Extended generation context with a managed `BlueprintSchema` and approved CTA URLs.
+- Selects the blueprint replacement contract for OpenAI, OpenRouter/OpenAI-compatible,
+  Anthropic, and Gemini whenever a blueprint schema is present.
+- Requires unique, known field IDs and every required blueprint field.
+- Enforces field type, maximum length, safe HTML, and plain-text constraints.
+- Allows URL replacements, rich-text links, and returned internal links only when they
+  match project-approved candidates.
+- Keeps layout, media, styles, and builder structure outside the AI output contract.
+- Revalidates every provider response locally before returning a generation result.
 
 ## Verification
 
-- Ruff: clean.
-- Focused backend contract and route suite: 37 passed.
-- Full backend: 379 passed, 6 optional PostgreSQL concurrency tests skipped.
-- All plugin tests and PHP lint passed under PHP 8.2.
-- PostgreSQL `0021 -> 0022 -> 0021 -> 0022` passed.
-- Isolated SQLite `0021 -> 0022 -> 0021 -> 0022` passed.
-- Snapshot plugin regression proves private snapshot to normal `page`/`draft`,
-  exact-key rejection, strict ID typing, and idempotent replay.
+```text
+.venv/bin/pytest -q tests/page_packages/test_generation.py tests/page_packages/test_provider_page_packages.py
+23 passed
 
-## Invariants
+.venv/bin/pytest -q
+210 passed
 
-- Draft-job payload and hash remain immutable after insertion.
-- Native proposal identity must match the stored snapshot ID, version, schema
-  version, and structure hash.
-- Source pages and private snapshots are never modified or published.
-- Failed writes use the existing cleanup path; successful writes are verified as
-  persisted WordPress drafts.
+.venv/bin/ruff check .
+clean
+```
+
+## Review Focus
+
+- Provider parity and structured-output schema selection.
+- Required/unknown/duplicate field behavior.
+- URL allowlisting in URL fields, rich HTML, and internal links.
+- Backward compatibility before Task 7 activates blueprint draft generation.
+
+## Final Review
+
+Approved with no Critical or Important findings. The final pass rechecked provider
+parity, local validation after structured parsing, URL handling, and Pydantic union
+serialization. `GeneratedBlueprintPackage` retains its replacements and internal links
+without coercion to the legacy package model.
