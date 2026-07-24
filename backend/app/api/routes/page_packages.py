@@ -1170,9 +1170,17 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
                 if hasattr(generated.package, "model_dump")
                 else generated.package
             )
-            package = normalize_blueprint_package(raw_package, context)
-            package = validate_blueprint_replacements(package, context)
-            candidate.candidate_package = package.model_dump()
+            if _is_snapshot_schema(base.config_snapshot.get("content_schema")):
+                validation = normalize_snapshot_text_package(raw_package, context)
+                if not validation.ready:
+                    raise ValueError("Snapshot candidate requires correction")
+                candidate.candidate_package = {
+                    "text_replacements": validation.replacements
+                }
+            else:
+                package = normalize_blueprint_package(raw_package, context)
+                package = validate_blueprint_replacements(package, context)
+                candidate.candidate_package = package.model_dump()
             candidate.candidate_rendered_html = ""
             candidate.provider = generated.provider or candidate.provider
             candidate.model = generated.model or candidate.model

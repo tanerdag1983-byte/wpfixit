@@ -77,7 +77,7 @@ export type ProposalCandidate = {
   prompt_version?: string | null;
   input_tokens?: number;
   output_tokens?: number;
-  candidate_package?: PagePackage;
+  candidate_package?: ProposalPackage;
   candidate_rendered_html?: string;
 };
 

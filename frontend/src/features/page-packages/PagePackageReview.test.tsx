@@ -436,6 +436,93 @@ describe("PagePackageReview", () => {
     });
   });
 
+  it("allows approval when only an optional snapshot field is invalid", async () => {
+    const optionalError = {
+      ...attentionProposal,
+      state: "proposed",
+      field_errors: {
+        "acf:hero:optional": "unsafe_html",
+      },
+      config_snapshot: {
+        content_schema: {
+          ...attentionProposal.config_snapshot.content_schema,
+          blocks: [{
+            ...attentionProposal.config_snapshot.content_schema.blocks[0],
+            fields: [
+              ...attentionProposal.config_snapshot.content_schema.blocks[0].fields,
+              {
+                id: "acf:hero:optional",
+                path: "page_blocks/0/optional",
+                label: "Extra label",
+                value_type: "plain_text",
+                current_value: "",
+                required: false,
+                max_length: 80,
+              },
+            ],
+          }],
+        },
+      },
+    };
+    apiRequest.mockResolvedValue(optionalError);
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Extra label bevat niet-toegestane opmaak")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Voorstel goedkeuren" })).toBeEnabled();
+  });
+
+  it("replaces raw API validation details with a bounded action error", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/stages/validation/retry") && init?.method === "POST") {
+        return Promise.reject(new Error(
+          "7 validation errors for GeneratedBlueprintPackage extra_forbidden",
+        ));
+      }
+      return Promise.resolve(attentionProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Validatie opnieuw uitvoeren",
+    }));
+
+    expect(await screen.findByText("Opnieuw uitvoeren mislukt.")).toBeVisible();
+    expect(screen.queryByText(/validation errors for/i)).not.toBeInTheDocument();
+  });
+
+  it("does not mark manual approval complete while attention is required", async () => {
+    apiRequest.mockResolvedValue(attentionProposal);
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    const step = (await screen.findByText("Handmatig goedgekeurd")).closest("li");
+    expect(step).not.toHaveClass("complete");
+  });
+
+  it("compares a generated snapshot candidate without legacy title fields", async () => {
+    apiRequest.mockResolvedValue({
+      ...attentionProposal,
+      state: "approved",
+      field_errors: {},
+      active_candidate: {
+        ...activeCandidate,
+        candidate_package: {
+          text_replacements: {
+            ...attentionProposal.package.text_replacements,
+            "document:title": "Nieuwe DSG snapshotversie",
+          },
+        },
+      },
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Vergelijk gegenereerde versie")).toBeVisible();
+    expect(screen.getAllByText("DSG revisie Schiedam").length).toBeGreaterThan(0);
+    expect(screen.getByText("Nieuwe DSG snapshotversie")).toBeVisible();
+  });
+
   it("saves, approves, and queues a WordPress draft without opening a window", async () => {
     render(<PagePackageReview projectId="project-1" />);
     const title = await screen.findByLabelText("Paginatitel");

@@ -16,7 +16,9 @@ export function ProposalVersionCompare({
   onDiscard,
 }: ProposalVersionCompareProps) {
   const currentTitle = proposalTitle(current);
-  const candidateTitle = candidate.candidate_package?.title || currentTitle;
+  const candidateTitle = candidate.candidate_package
+    ? packageTitle(candidate.candidate_package)
+    : currentTitle;
   return (
     <section className="proposal-compare-shell">
       <div className="proposal-compare-heading">
@@ -85,9 +87,13 @@ export function ProposalVersionCompare({
 }
 
 function proposalTitle(proposal: Proposal) {
-  return "text_replacements" in proposal.package
-    ? proposal.package.text_replacements["document:title"] || "Gegenereerde pagina"
-    : proposal.package.title;
+  return packageTitle(proposal.package);
+}
+
+function packageTitle(packageValue: Proposal["package"]) {
+  return "text_replacements" in packageValue
+    ? packageValue.text_replacements["document:title"] || "Gegenereerde pagina"
+    : packageValue.title;
 }
 
 function sanitizeHtml(value: string) {

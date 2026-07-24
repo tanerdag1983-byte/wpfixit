@@ -338,6 +338,83 @@ def test_regenerate_normalizes_legacy_page_package_into_blueprint_candidate(
     assert {"acf-title", "acf-copy", "acf-cta-url"}.issubset(replacement_ids)
 
 
+def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
+    client,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda current_session, project_id: bridge,
+    )
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-2"
+
+        def generate_page_package(self, context):
+            return {
+                "package": proposal_snapshot_text_package(),
+                "input_tokens": 12,
+                "output_tokens": 8,
+            }
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    approved = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}/approve"
+    )
+    assert approved.status_code == 200, approved.text
+
+    regenerated = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}/regenerate",
+        json={"mode": "full", "instruction": "Maak de tekst concreter."},
+    )
+    assert regenerated.status_code == 202, regenerated.text
+    from app.api.routes.page_packages import _run_page_package_regeneration
+
+    candidate_id = regenerated.json()["candidate"]["id"]
+    _run_page_package_regeneration(session.get_bind(), candidate_id)
+    session.expire_all()
+    candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
+    assert candidate is not None
+    assert candidate.status == "ready", candidate.candidate_package
+    assert set(candidate.candidate_package) == {"text_replacements"}
+
+    accepted = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"candidates/{candidate_id}/accept"
+    )
+    assert accepted.status_code == 200, accepted.text
+    current = accepted.json()["current_version"]
+    assert current["state"] == "proposed"
+    assert [stage["state"] for stage in current["stages"]] == [
+        "ready",
+        "ready",
+        "ready",
+    ]
+
+    reapproved = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{current['id']}/approve"
+    )
+    assert reapproved.status_code == 200, reapproved.text
+
+
 def test_text_retry_creates_new_immutable_version_and_explicitly_calls_provider(
     client,
     session: Session,

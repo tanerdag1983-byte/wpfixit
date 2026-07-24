@@ -13,6 +13,7 @@ from app.domains.page_packages.models import (
     PagePackageHandoff,
     PagePackageProposal,
     PagePackageRegenerationCandidate,
+    PageProposalStage,
 )
 from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership
@@ -117,6 +118,34 @@ def accept_regeneration_candidate(
         or current.state != "approved"
     ):
         raise ValueError("Base proposal version is no longer current")
+    snapshot_replacements: dict[str, str] | None = None
+    snapshot_approved_urls: list[str] | None = None
+    content_schema = current.config_snapshot.get("content_schema")
+    if (
+        isinstance(content_schema, dict)
+        and content_schema.get("schema_version") == "snapshot-text-v1"
+    ):
+        replacements = candidate.candidate_package.get("text_replacements")
+        validation = session.scalar(
+            select(PageProposalStage).where(
+                PageProposalStage.proposal_version_id == current.id,
+                PageProposalStage.name == "validation",
+                PageProposalStage.state == "ready",
+            )
+        )
+        approved_urls = validation.result.get("approved_urls") if validation else None
+        if (
+            not isinstance(replacements, dict)
+            or not all(
+                isinstance(field_id, str) and isinstance(value, str)
+                for field_id, value in replacements.items()
+            )
+            or not isinstance(approved_urls, list)
+            or not all(isinstance(url, str) for url in approved_urls)
+        ):
+            raise ValueError("Snapshot regeneration candidate is invalid")
+        snapshot_replacements = replacements
+        snapshot_approved_urls = approved_urls
 
     job = Job(
         id=str(uuid4()),
@@ -167,6 +196,47 @@ def accept_regeneration_candidate(
         synchronize_session="fetch",
     )
     session.add_all([job, next_version])
+    if snapshot_replacements is not None and snapshot_approved_urls is not None:
+        session.add_all(
+            [
+                PageProposalStage(
+                    proposal_version_id=next_version_id,
+                    name="template",
+                    state="ready",
+                    result={},
+                    errors={},
+                    completed_at=datetime.now(UTC),
+                ),
+                PageProposalStage(
+                    proposal_version_id=next_version_id,
+                    name="text",
+                    state="ready",
+                    result={
+                        "text_replacements": {
+                            field_id: {"value": value}
+                            for field_id, value in snapshot_replacements.items()
+                        }
+                    },
+                    errors={},
+                    completed_at=datetime.now(UTC),
+                ),
+                PageProposalStage(
+                    proposal_version_id=next_version_id,
+                    name="validation",
+                    state="ready",
+                    result={
+                        "text_replacements": snapshot_replacements,
+                        "approved_urls": snapshot_approved_urls,
+                        "field_errors": {},
+                        "blocking_field_ids": [],
+                        "ignored_field_ids": [],
+                        "missing_required_field_ids": [],
+                    },
+                    errors={},
+                    completed_at=datetime.now(UTC),
+                ),
+            ]
+        )
     cancel_ineligible_draft_jobs(
         session,
         current.project_id,

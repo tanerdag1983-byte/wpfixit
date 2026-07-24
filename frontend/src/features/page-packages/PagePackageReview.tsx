@@ -62,9 +62,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         }
       } catch (error) {
         if (!active) return;
-        setMessage(
-          error instanceof Error ? error.message : "Voorstel laden mislukt.",
-        );
+        setMessage(actionError(error, "Voorstel laden mislukt."));
         setLoading(false);
       }
     };
@@ -96,7 +94,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setDraft(result.package);
       setMessage("Het complete paginapakket is opgeslagen.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Opslaan mislukt.");
+      setMessage(actionError(error, "Opslaan mislukt."));
     } finally {
       setBusy(false);
     }
@@ -118,7 +116,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         "Voorstel goedgekeurd. Het WordPress-concept kan nu worden aangemaakt.",
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Goedkeuren mislukt.");
+      setMessage(actionError(error, "Goedkeuren mislukt."));
     } finally {
       setBusy(false);
     }
@@ -145,9 +143,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setCandidate(result.candidate);
       setMessage("Er staat nu een nieuwe gegenereerde versie klaar om te vergelijken.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Nieuwe versie genereren mislukt.",
-      );
+      setMessage(actionError(error, "Nieuwe versie genereren mislukt."));
     } finally {
       setBusy(false);
     }
@@ -174,9 +170,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           : "Validatie is opnieuw uitgevoerd.",
       );
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Opnieuw uitvoeren mislukt.",
-      );
+      setMessage(actionError(error, "Opnieuw uitvoeren mislukt."));
     } finally {
       setBusy(false);
     }
@@ -202,9 +196,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           : "Nieuwe versie opgeslagen als actuele voorstelversie.",
       );
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Nieuwe versie accepteren mislukt.",
-      );
+      setMessage(actionError(error, "Nieuwe versie accepteren mislukt."));
     } finally {
       setBusy(false);
     }
@@ -222,9 +214,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setCandidate(null);
       setMessage("De gegenereerde kandidaat is verworpen.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Kandidaat verwerpen mislukt.",
-      );
+      setMessage(actionError(error, "Kandidaat verwerpen mislukt."));
     } finally {
       setBusy(false);
     }
@@ -242,9 +232,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setProposal({ ...proposal, state: "draft_in_progress", draft_job: draftJob });
       setMessage("De concepttaak wacht op WordPress.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "WordPress-concept starten mislukt.",
-      );
+      setMessage(actionError(error, "WordPress-concept starten mislukt."));
     } finally {
       setBusy(false);
     }
@@ -265,9 +253,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         "De WordPress-importpagina is geopend. Rond daar het concept aanmaken af.",
       );
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "WordPress-import starten mislukt.",
-      );
+      setMessage(actionError(error, "WordPress-import starten mislukt."));
     } finally {
       setBusy(false);
     }
@@ -435,7 +421,13 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 <li className="complete">
                   <CheckCircle2 size={16} /> Pakket gegenereerd
                 </li>
-                <li className={proposal.state !== "proposed" ? "complete" : ""}>
+                <li className={
+                  ["approved", "draft_in_progress", "draft_created"].includes(
+                    proposal.state,
+                  )
+                    ? "complete"
+                    : ""
+                }>
                   <CheckCircle2 size={16} /> Handmatig goedgekeurd
                 </li>
                 <li className={proposal.state === "draft_created" ? "complete" : ""}>
@@ -453,7 +445,11 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 </button>
                 <button
                   className="primary-button"
-                  disabled={proposal.state !== "proposed" || fieldErrors.length > 0 || busy}
+                  disabled={
+                    proposal.state !== "proposed"
+                    || fieldErrors.some((error) => error.required)
+                    || busy
+                  }
                   onClick={approve}
                   type="button"
                 >
@@ -878,16 +874,17 @@ function fieldInputId(fieldId: string) {
 
 function proposalFieldErrors(proposal: Proposal) {
   const schema = proposal.config_snapshot.content_schema;
-  const labels = new Map(
+  const fields = new Map(
     [
       ...(schema?.document_fields ?? []),
       ...(schema?.blocks.flatMap((block) => block.fields) ?? []),
-    ].map((field) => [field.id, field.label]),
+    ].map((field) => [field.id, field]),
   );
   return Object.entries(proposal.field_errors ?? {}).map(([fieldId, code]) => ({
     fieldId,
-    label: labels.get(fieldId) ?? "Veld",
+    label: fields.get(fieldId)?.label ?? "Veld",
     message: fieldErrorMessage(code),
+    required: fields.get(fieldId)?.required ?? true,
   }));
 }
 
@@ -900,4 +897,18 @@ function fieldErrorMessage(code: string) {
     required: "is verplicht",
     invalid_value: "heeft een ongeldige waarde",
   }[code] ?? "heeft een ongeldige waarde";
+}
+
+function actionError(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  const message = error.message.trim();
+  if (
+    message.length > 240
+    || /validation errors?|extra_forbidden|field required|pydantic|traceback|openai-compatible/i.test(
+      message,
+    )
+  ) {
+    return fallback;
+  }
+  return message || fallback;
 }
