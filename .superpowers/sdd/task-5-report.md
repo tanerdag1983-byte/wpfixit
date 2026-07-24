@@ -104,3 +104,9 @@ legacy page-package flow. Snapshot proposals execute `template`, `text`, and
 - Verification: focused Task 5 suites passed `51` tests with `2` optional
   PostgreSQL skips; Ruff passed; the full backend passed `375` tests with `6`
   optional PostgreSQL concurrency skips; `git diff --check` passed.
+- Independent review found one remaining terminal race: a stale failure could
+  bypass `fail_stage` after the replacement attempt had already become ready.
+  `_fail_snapshot_generation` now compares the locked stage token before
+  inspecting its state, so late workers cannot change a completed proposal or
+  job. The route regression covers both a running replacement and a completed
+  replacement; focused and full-backend counts remain unchanged.

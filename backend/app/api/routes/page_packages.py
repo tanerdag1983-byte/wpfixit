@@ -741,6 +741,9 @@ def _fail_snapshot_generation(
     message = str(error)[:2_000]
     try:
         stage = locked_stage(session, proposal.id, stage_name)
+        if attempt_token is not None and stage.attempt_token != attempt_token:
+            session.rollback()
+            return
         if stage.state == "running" and attempt_token is not None:
             fail_stage(
                 session,

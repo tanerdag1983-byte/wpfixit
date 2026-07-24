@@ -849,6 +849,29 @@ def test_reclaimed_validation_attempt_fences_late_proposal_and_job_writes(
     assert stored_stage.result == {}
     assert stored_stage.errors == {}
 
+    _apply_snapshot_validation(
+        session,
+        stored_proposal,
+        stored_job,
+        SimpleNamespace(),
+        {},
+        current.attempt_token,
+    )
+    session.commit()
+    _fail_snapshot_generation(
+        session,
+        stored_proposal,
+        stored_job,
+        "validation",
+        RuntimeError("late failure after replacement completed"),
+        previous_token,
+    )
+
+    session.expire_all()
+    assert session.get(PagePackageProposal, proposal.id).state == "proposed"
+    assert session.get(Job, job.id).state == "completed"
+    assert session.get(PageProposalStage, stage.id).state == "ready"
+
 
 def test_stage_response_field_errors_are_ordered(
     client: TestClient,
