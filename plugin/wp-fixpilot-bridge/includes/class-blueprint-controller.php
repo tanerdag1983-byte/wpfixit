@@ -1229,47 +1229,30 @@ final class WPFixPilot_Blueprint_Controller
         );
     }
 
-    /** @return array{key: string, owner: string}|WP_Error */
-    private function acquire_draft_lock(string $idempotencyKey): array|WP_Error
+    private function acquire_draft_lock(string $idempotencyKey): string|WP_Error
     {
-        $key = 'wp_fixpilot_draft_lock_' . hash('sha256', $idempotencyKey);
-        $owner = bin2hex(random_bytes(16));
-        $value = ['owner' => $owner, 'created_at' => time()];
-        if (!add_option($key, $value, '', false)) {
-            $existing = get_option($key);
-            if (
-                !is_array($existing)
-                || (int) ($existing['created_at'] ?? 0) > time() - 900
-            ) {
-                return new WP_Error(
-                    'wp_fixpilot_draft_in_progress',
-                    'Een andere worker maakt dit concept al aan.',
-                    ['status' => 409]
-                );
-            }
-            delete_option($key);
-            if (!add_option($key, $value, '', false)) {
-                return new WP_Error(
-                    'wp_fixpilot_draft_in_progress',
-                    'Een andere worker maakt dit concept al aan.',
-                    ['status' => 409]
-                );
-            }
+        global $wpdb;
+
+        $key = 'wpfixpilot:' . substr(hash('sha256', $idempotencyKey), 0, 52);
+        $acquired = $wpdb->get_var(
+            $wpdb->prepare('SELECT GET_LOCK(%s, 0)', $key)
+        );
+        if ((string) $acquired !== '1') {
+            return new WP_Error(
+                'wp_fixpilot_draft_in_progress',
+                'Een andere worker maakt dit concept al aan.',
+                ['status' => 409]
+            );
         }
 
-        return ['key' => $key, 'owner' => $owner];
+        return $key;
     }
 
-    /** @param array{key: string, owner: string} $lock */
-    private function release_draft_lock(array $lock): void
+    private function release_draft_lock(string $lock): void
     {
-        $current = get_option($lock['key']);
-        if (
-            is_array($current)
-            && hash_equals((string) ($current['owner'] ?? ''), $lock['owner'])
-        ) {
-            delete_option($lock['key']);
-        }
+        global $wpdb;
+
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
     }
 
     private function meta_value_matches(mixed $actual, mixed $expected): bool
