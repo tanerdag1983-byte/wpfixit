@@ -166,7 +166,16 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       ) {
         activeProposal = await writeDraft(proposal, draft);
         setProposal(activeProposal);
+        setCandidate(readActiveCandidate(activeProposal));
         setDraft(activeProposal.package);
+        if (
+          activeProposal.stages?.some(
+            (stage) => stage.name === "validation" && stage.state === "ready",
+          )
+        ) {
+          setMessage("Wijzigingen opgeslagen en gevalideerd.");
+          return;
+        }
       }
       const result = await apiRequest<Proposal>(
         `/projects/${projectId}/page-proposals/${activeProposal.id}/stages/${stageName}/retry`,

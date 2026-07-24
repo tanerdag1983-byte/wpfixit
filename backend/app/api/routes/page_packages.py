@@ -1174,10 +1174,17 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
                 validation = normalize_snapshot_text_package(raw_package, context)
                 if not validation.ready:
                     raise ValueError("Snapshot candidate requires correction")
+                base_replacements = base.package.get("text_replacements", {})
+                if not isinstance(base_replacements, dict):
+                    raise ValueError("Base snapshot package is invalid")
+                replacements = {
+                    **base_replacements,
+                    **validation.replacements,
+                }
                 candidate.candidate_package = {
-                    "text_replacements": validation.replacements,
+                    "text_replacements": replacements,
                     "approved_urls": _snapshot_validation_result(
-                        validation.replacements,
+                        replacements,
                         context,
                     )["approved_urls"],
                 }

@@ -149,7 +149,12 @@ function changedSnapshotFields(
       ) ?? []),
     ].map((field) => [field.id, field.label]),
   );
-  return Object.keys(candidateReplacements)
+  return Array.from(
+    new Set([
+      ...Object.keys(currentReplacements),
+      ...Object.keys(candidateReplacements),
+    ]),
+  )
     .filter(
       (fieldId) =>
         currentReplacements[fieldId] !== candidateReplacements[fieldId],

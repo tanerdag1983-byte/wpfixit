@@ -13,8 +13,15 @@ from app.domains.page_packages.models import (
     PageProposalStage,
 )
 from app.domains.page_packages.service import accept_regeneration_candidate
-from app.domains.wordpress.draft_jobs import hash_draft_job_payload
-from app.domains.wordpress.models import WordPressDraftJob
+from app.domains.wordpress.draft_jobs import (
+    create_or_get_draft_job,
+    hash_draft_job_payload,
+    hash_project_key,
+)
+from app.domains.wordpress.models import (
+    WordPressDraftJob,
+    WordPressOutboundCredential,
+)
 from tests.page_packages.test_generation import valid_package
 from tests.page_packages.test_proposal_routes import (
     BlueprintBridge,
@@ -347,7 +354,28 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
 ) -> None:
     auth_as(projects.member)
     opportunity = prepare_project(session, projects)
-    make_native_snapshot(session)
+    snapshot = make_native_snapshot(session)
+    optional_field = {
+        "id": "acf-optional",
+        "path": "page_blocks/0/optional",
+        "label": "Optionele tekst",
+        "value_type": "plain_text",
+        "current_value": "",
+        "required": False,
+        "max_length": 180,
+    }
+    snapshot_schema = deepcopy(snapshot.content_schema)
+    snapshot_schema["blocks"][0]["fields"].append(optional_field)
+    snapshot.content_schema = snapshot_schema
+    session.add(
+        WordPressOutboundCredential(
+            id="snapshot-draft-credential",
+            project_id=projects.member_project.id,
+            key_hash=hash_project_key("wpfx_snapshot_test"),
+            site_url="https://member.example",
+        )
+    )
+    session.commit()
     bridge = BlueprintBridge()
     monkeypatch.setattr(
         "app.api.routes.page_packages._page_package_client",
@@ -357,17 +385,25 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
     class Generator:
         provider = "openrouter"
         model = "model-2"
+        calls = 0
 
         def generate_page_package(self, context):
+            package = proposal_snapshot_text_package()
+            if self.calls == 0:
+                package["text_replacements"]["acf-optional"] = {
+                    "value": "Behouden tekst"
+                }
+            self.calls += 1
             return {
-                "package": proposal_snapshot_text_package(),
+                "package": package,
                 "input_tokens": 12,
                 "output_tokens": 8,
             }
 
+    generator = Generator()
     monkeypatch.setattr(
         "app.api.routes.page_packages._page_package_generator",
-        lambda current_session, project: Generator(),
+        lambda current_session, project: generator,
     )
     queued = client.post(
         f"/projects/{projects.member_project.id}/keyword-opportunities/"
@@ -399,6 +435,9 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
     }
     candidate_approved_urls = candidate.candidate_package["approved_urls"]
     assert candidate_approved_urls
+    assert candidate.candidate_package["text_replacements"]["acf-optional"] == (
+        "Behouden tekst"
+    )
 
     accepted = client.post(
         f"/projects/{projects.member_project.id}/page-proposals/"
@@ -420,6 +459,11 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
         f"{current['id']}/approve"
     )
     assert reapproved.status_code == 200, reapproved.text
+    approved_proposal = session.get(PagePackageProposal, current["id"])
+    assert approved_proposal is not None
+    draft_job = create_or_get_draft_job(session, approved_proposal)
+    assert draft_job.payload["text_replacements"]["acf-optional"] == "Behouden tekst"
+    assert draft_job.payload["approved_urls"] == candidate_approved_urls
 
 
 def test_text_retry_creates_new_immutable_version_and_explicitly_calls_provider(

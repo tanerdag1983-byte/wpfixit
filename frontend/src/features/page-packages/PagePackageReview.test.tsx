@@ -364,7 +364,12 @@ describe("PagePackageReview", () => {
       if (init?.method === "PUT") {
         return Promise.resolve({
           ...attentionProposal,
+          state: "proposed",
           package: correctedPackage,
+          field_errors: {},
+          stages: attentionProposal.stages.map((stage) => (
+            stage.name === "validation" ? { ...stage, state: "ready" } : stage
+          )),
         });
       }
       if (path.endsWith("/stages/validation/retry") && init?.method === "POST") {
@@ -390,9 +395,10 @@ describe("PagePackageReview", () => {
       const methods = apiRequest.mock.calls
         .map(([, init]) => init?.method)
         .filter(Boolean);
-      expect(methods).toEqual(["PUT", "POST"]);
+      expect(methods).toEqual(["PUT"]);
     });
     expect(screen.getByLabelText("Hero-label")).toHaveValue("DSG-specialist");
+    expect(screen.getByText("Wijzigingen opgeslagen en gevalideerd.")).toBeVisible();
   });
 
   it("follows the new proposal version after retrying failed text", async () => {
@@ -578,7 +584,6 @@ describe("PagePackageReview", () => {
           text_replacements: {
             ...attentionProposal.package.text_replacements,
             "document:title": "Nieuwe DSG snapshotversie",
-            "acf:hero:label": "Nieuwe hero-inhoud",
           },
         },
       },
@@ -591,7 +596,7 @@ describe("PagePackageReview", () => {
     expect(screen.getAllByText("Nieuwe DSG snapshotversie").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Hero-label")).toHaveLength(2);
     expect(screen.getByText("Huidige hero-inhoud")).toBeVisible();
-    expect(screen.getByText("Nieuwe hero-inhoud")).toBeVisible();
+    expect(screen.getByText("Leeg")).toBeVisible();
   });
 
   it("does not offer comparison actions for a failed candidate", async () => {
