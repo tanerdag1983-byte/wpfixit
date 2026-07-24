@@ -478,10 +478,12 @@ def _run_snapshot_page_package_generation(
     blueprint: PageBlueprint | None,
 ) -> None:
     active_stage_name = "template"
+    active_attempt_token: str | None = None
     try:
         template = locked_stage(session, proposal.id, "template")
         if template.state == "pending":
-            begin_stage(session, proposal.id, "template")
+            template = begin_stage(session, proposal.id, "template")
+            active_attempt_token = template.attempt_token
             job.state = "running"
             job.progress = 5
             job.started_at = job.started_at or datetime.now(UTC)
@@ -494,16 +496,20 @@ def _run_snapshot_page_package_generation(
                 proposal.id,
                 "template",
                 result=_snapshot_identity(blueprint),
+                attempt_token=active_attempt_token,
             )
             job.progress = 20
             session.commit()
         elif template.state == "running":
             try:
-                reclaim_stale_running_stage(session, proposal.id, "template")
+                template = reclaim_stale_running_stage(
+                    session, proposal.id, "template"
+                )
             except ValueError as error:
                 if str(error) == "stage_in_progress":
                     return
                 raise
+            active_attempt_token = template.attempt_token
             job.state = "running"
             job.progress = 5
             job.started_at = job.started_at or datetime.now(UTC)
@@ -516,6 +522,7 @@ def _run_snapshot_page_package_generation(
                 proposal.id,
                 "template",
                 result=_snapshot_identity(blueprint),
+                attempt_token=active_attempt_token,
             )
             job.progress = 20
             session.commit()
@@ -526,7 +533,8 @@ def _run_snapshot_page_package_generation(
         generated_text = text.result
         if text.state == "pending":
             active_stage_name = "text"
-            begin_stage(session, proposal.id, "text")
+            text = begin_stage(session, proposal.id, "text")
+            active_attempt_token = text.attempt_token
             job.state = "running"
             job.progress = 30
             job.started_at = job.started_at or datetime.now(UTC)
@@ -547,6 +555,7 @@ def _run_snapshot_page_package_generation(
                 proposal.id,
                 "text",
                 result=generated_text,
+                attempt_token=active_attempt_token,
             )
             proposal.provider = generated.provider or proposal.provider
             proposal.model = generated.model or proposal.model
@@ -568,11 +577,12 @@ def _run_snapshot_page_package_generation(
         elif text.state == "running":
             active_stage_name = "text"
             try:
-                reclaim_stale_running_stage(session, proposal.id, "text")
+                text = reclaim_stale_running_stage(session, proposal.id, "text")
             except ValueError as error:
                 if str(error) == "stage_in_progress":
                     return
                 raise
+            active_attempt_token = text.attempt_token
             job.state = "running"
             job.progress = 30
             job.started_at = job.started_at or datetime.now(UTC)
@@ -593,6 +603,7 @@ def _run_snapshot_page_package_generation(
                 proposal.id,
                 "text",
                 result=generated_text,
+                attempt_token=active_attempt_token,
             )
             proposal.provider = generated.provider or proposal.provider
             proposal.model = generated.model or proposal.model
@@ -617,7 +628,8 @@ def _run_snapshot_page_package_generation(
         validation = locked_stage(session, proposal.id, "validation")
         if validation.state == "pending":
             active_stage_name = "validation"
-            begin_stage(session, proposal.id, "validation")
+            validation = begin_stage(session, proposal.id, "validation")
+            active_attempt_token = validation.attempt_token
             job.progress = 80
             session.commit()
             if blueprint is None:
@@ -629,16 +641,20 @@ def _run_snapshot_page_package_generation(
                 job,
                 context,
                 generated_text,
+                active_attempt_token,
             )
             session.commit()
         elif validation.state == "running":
             active_stage_name = "validation"
             try:
-                reclaim_stale_running_stage(session, proposal.id, "validation")
+                validation = reclaim_stale_running_stage(
+                    session, proposal.id, "validation"
+                )
             except ValueError as error:
                 if str(error) == "stage_in_progress":
                     return
                 raise
+            active_attempt_token = validation.attempt_token
             job.state = "running"
             job.progress = 80
             session.commit()
@@ -651,6 +667,7 @@ def _run_snapshot_page_package_generation(
                 job,
                 context,
                 generated_text,
+                active_attempt_token,
             )
             session.commit()
     except Exception as error:
@@ -660,6 +677,7 @@ def _run_snapshot_page_package_generation(
             job,
             active_stage_name,
             error,
+            active_attempt_token,
         )
 
 
@@ -669,6 +687,7 @@ def _apply_snapshot_validation(
     job: Job,
     context: PagePackageContext,
     generated_text: dict,
+    attempt_token: str,
 ) -> None:
     validation = normalize_snapshot_text_package(generated_text, context)
     field_errors = dict(validation.field_errors)
@@ -681,16 +700,15 @@ def _apply_snapshot_validation(
         "ignored_field_ids": validation.ignored_field_ids,
         "missing_required_field_ids": validation.missing_required_field_ids,
     }
-    proposal.package = {"text_replacements": validation.replacements}
-    proposal.rendered_html = ""
     if validation.ready:
         complete_stage(
             session,
             proposal.id,
             "validation",
             result=result,
+            attempt_token=attempt_token,
         )
-        proposal.state = "proposed"
+        proposal_state = "proposed"
     else:
         attention_stage(
             session,
@@ -698,8 +716,12 @@ def _apply_snapshot_validation(
             "validation",
             result=result,
             errors=dict(sorted(field_errors.items())),
+            attempt_token=attempt_token,
         )
-        proposal.state = "needs_attention"
+        proposal_state = "needs_attention"
+    proposal.package = {"text_replacements": validation.replacements}
+    proposal.rendered_html = ""
+    proposal.state = proposal_state
     job.state = "completed"
     job.progress = 100
     job.error_code = None
@@ -714,18 +736,23 @@ def _fail_snapshot_generation(
     job: Job,
     stage_name: str,
     error: Exception,
+    attempt_token: str | None,
 ) -> None:
     message = str(error)[:2_000]
     try:
         stage = locked_stage(session, proposal.id, stage_name)
-        if stage.state == "running":
+        if stage.state == "running" and attempt_token is not None:
             fail_stage(
                 session,
                 proposal.id,
                 stage_name,
                 errors={"message": message},
+                attempt_token=attempt_token,
             )
-    except ValueError:
+    except ValueError as stage_error:
+        if str(stage_error) == "stale_stage_attempt":
+            session.rollback()
+            return
         pass
     proposal.state = "failed"
     job.state = "failed"
@@ -802,7 +829,7 @@ def retry_page_proposal_stage(
             detail="Proposal text is not ready for validation",
         )
     try:
-        retry_stage(session, proposal.id, "validation")
+        validation = retry_stage(session, proposal.id, "validation")
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     proposal.state = "generating"
@@ -818,6 +845,7 @@ def retry_page_proposal_stage(
             job,
             context,
             text.result,
+            validation.attempt_token,
         )
         session.commit()
     except Exception as error:
@@ -827,6 +855,7 @@ def retry_page_proposal_stage(
             job,
             "validation",
             error,
+            validation.attempt_token,
         )
     return _proposal_payload(session, proposal)
 
@@ -871,7 +900,7 @@ def update_page_package_proposal(
                 detail="Proposal text is not ready for validation",
             )
         try:
-            retry_stage(session, proposal.id, "validation")
+            validation = retry_stage(session, proposal.id, "validation")
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         job = session.get(Job, proposal.job_id)
@@ -887,6 +916,7 @@ def update_page_package_proposal(
             job,
             _generation_context(session, project, opportunity, blueprint),
             payload.package.model_dump(mode="json"),
+            validation.attempt_token,
         )
         session.commit()
         return _proposal_payload(session, proposal)
@@ -1534,12 +1564,13 @@ def _create_snapshot_text_retry_version(
     session.add_all([job, next_version])
     initialize_proposal_stages(session, next_version.id)
     session.flush()
-    begin_stage(session, next_version.id, "template")
+    template_stage = begin_stage(session, next_version.id, "template")
     complete_stage(
         session,
         next_version.id,
         "template",
         result=dict(template.result),
+        attempt_token=template_stage.attempt_token,
     )
     session.commit()
     session.refresh(next_version)

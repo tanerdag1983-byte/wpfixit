@@ -186,6 +186,10 @@ class PageProposalStage(Base):
             name="ck_page_proposal_stages_retry_count",
         ),
         CheckConstraint(
+            "length(attempt_token) BETWEEN 1 AND 64",
+            name="ck_page_proposal_stages_attempt_token",
+        ),
+        CheckConstraint(
             "length(CAST(result AS TEXT)) <= 100000",
             name="ck_page_proposal_stages_result_size",
         ),
@@ -223,6 +227,11 @@ class PageProposalStage(Base):
         Integer,
         default=0,
         server_default="0",
+        nullable=False,
+    )
+    attempt_token: Mapped[str] = mapped_column(
+        String(64),
+        default=lambda: str(uuid4()),
         nullable=False,
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

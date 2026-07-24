@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
@@ -85,6 +86,7 @@ def begin_stage(
     item.completed_at = None
     item.result = {}
     item.errors = {}
+    item.attempt_token = str(uuid4())
     return item
 
 
@@ -94,9 +96,11 @@ def complete_stage(
     stage_name: str,
     *,
     result: dict,
+    attempt_token: str,
 ) -> PageProposalStage:
     _validate_json("result", result, MAX_STAGE_RESULT_BYTES)
     item = locked_stage(session, proposal_version_id, stage_name)
+    _require_attempt(item, attempt_token)
     _transition(item, "ready")
     item.result = result
     item.errors = {}
@@ -111,11 +115,13 @@ def attention_stage(
     *,
     errors: dict,
     result: dict | None = None,
+    attempt_token: str,
 ) -> PageProposalStage:
     _validate_json("errors", errors, MAX_STAGE_ERRORS_BYTES)
     if result is not None:
         _validate_json("result", result, MAX_STAGE_RESULT_BYTES)
     item = locked_stage(session, proposal_version_id, stage_name)
+    _require_attempt(item, attempt_token)
     _transition(item, "attention")
     item.result = result or {}
     item.errors = errors
@@ -129,9 +135,11 @@ def fail_stage(
     stage_name: str,
     *,
     errors: dict,
+    attempt_token: str,
 ) -> PageProposalStage:
     _validate_json("errors", errors, MAX_STAGE_ERRORS_BYTES)
     item = locked_stage(session, proposal_version_id, stage_name)
+    _require_attempt(item, attempt_token)
     _transition(item, "failed")
     item.errors = errors
     item.completed_at = datetime.now(UTC)
@@ -186,6 +194,12 @@ def _start_retry(item: PageProposalStage, now: datetime) -> None:
     item.completed_at = None
     item.result = {}
     item.errors = {}
+    item.attempt_token = str(uuid4())
+
+
+def _require_attempt(item: PageProposalStage, attempt_token: str) -> None:
+    if item.attempt_token != attempt_token:
+        raise ValueError("stale_stage_attempt")
 
 
 def _validate_json(name: str, value: dict, limit: int) -> None:

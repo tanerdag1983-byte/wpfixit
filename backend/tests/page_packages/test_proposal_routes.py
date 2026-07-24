@@ -757,6 +757,99 @@ def test_snapshot_worker_reclaims_only_a_stale_running_text_stage(
     assert recovered_text["retry_count"] == 1
 
 
+def test_reclaimed_validation_attempt_fences_late_proposal_and_job_writes(
+    session: Session,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    from app.api.routes.page_packages import (
+        _apply_snapshot_validation,
+        _fail_snapshot_generation,
+    )
+    from app.domains.page_packages.stages import reclaim_stale_running_stage
+
+    opportunity = prepare_project(session, projects)
+    proposal = PagePackageProposal(
+        id="proposal-fenced-attempt",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id="job-fenced-attempt",
+        state="generating",
+        proposal_group_id="proposal-fenced-attempt",
+        current_version_id="proposal-fenced-attempt",
+        package={"original": True},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    job = Job(
+        id=proposal.job_id,
+        project_id=proposal.project_id,
+        job_type="page_package_generation",
+        state="running",
+        progress=80,
+    )
+    stage = PageProposalStage(
+        proposal_version_id=proposal.id,
+        name="validation",
+        state="running",
+        result={},
+        errors={},
+        started_at=datetime.now(UTC) - timedelta(minutes=6),
+    )
+    session.add_all([job, proposal, stage])
+    session.commit()
+    previous_token = stage.attempt_token
+    current = reclaim_stale_running_stage(
+        session,
+        proposal.id,
+        "validation",
+    )
+    session.commit()
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages.normalize_snapshot_text_package",
+        lambda raw, context: SimpleNamespace(
+            replacements={"document:title": "late"},
+            field_errors={},
+            blocking_field_ids=[],
+            ignored_field_ids=[],
+            missing_required_field_ids=[],
+            ready=True,
+        ),
+    )
+    with pytest.raises(ValueError, match="stale_stage_attempt"):
+        _apply_snapshot_validation(
+            session,
+            proposal,
+            job,
+            SimpleNamespace(),
+            {},
+            previous_token,
+        )
+    _fail_snapshot_generation(
+        session,
+        proposal,
+        job,
+        "validation",
+        RuntimeError("late failure"),
+        previous_token,
+    )
+
+    session.expire_all()
+    stored_proposal = session.get(PagePackageProposal, proposal.id)
+    stored_job = session.get(Job, job.id)
+    stored_stage = session.get(PageProposalStage, stage.id)
+    assert stored_proposal.state == "generating"
+    assert stored_proposal.package == {"original": True}
+    assert stored_job.state == "running"
+    assert stored_job.progress == 80
+    assert stored_stage.state == "running"
+    assert stored_stage.attempt_token == current.attempt_token
+    assert stored_stage.result == {}
+    assert stored_stage.errors == {}
+
+
 def test_stage_response_field_errors_are_ordered(
     client: TestClient,
     session: Session,

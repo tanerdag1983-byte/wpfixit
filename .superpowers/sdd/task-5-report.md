@@ -83,3 +83,24 @@ legacy page-package flow. Snapshot proposals execute `template`, `text`, and
   `48` tests with `2` optional PostgreSQL skips; Alembic remained at
   `0021_proposal_stages`; full backend passed `372` tests with `6` optional
   PostgreSQL skips.
+
+## Lease Fencing Review Fix
+
+- RED: two stage regressions failed because `PageProposalStage` had no
+  `attempt_token`; the SQLite migration check also failed because revision
+  `0021` did not create that column.
+- Every begin, retry, and stale reclaim now issues a new opaque attempt token.
+  Ready, attention, and failed transitions lock the stage row and require the
+  exact token before changing state, result, or errors.
+- Snapshot generation carries the token through template, text, and validation
+  writes. Validation applies proposal and job changes only after the fenced
+  stage transition succeeds.
+- A late exception from a reclaimed worker rolls back and returns without
+  changing the current stage, proposal, or job. Route coverage verifies both
+  late success and late failure behavior after reclaim.
+- Revision `0021` and the ORM model enforce a non-empty token of at most 64
+  characters. The unreleased migration was verified with a PostgreSQL
+  `0021 -> 0020 -> 0021` round trip and a SQLite upgrade/downgrade test.
+- Verification: focused Task 5 suites passed `51` tests with `2` optional
+  PostgreSQL skips; Ruff passed; the full backend passed `375` tests with `6`
+  optional PostgreSQL concurrency skips; `git diff --check` passed.

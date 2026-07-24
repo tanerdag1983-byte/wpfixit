@@ -37,6 +37,7 @@ def upgrade() -> None:
             server_default="0",
             nullable=False,
         ),
+        sa.Column("attempt_token", sa.String(length=64), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_retried_at", sa.DateTime(timezone=True), nullable=True),
@@ -63,6 +64,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "retry_count >= 0",
             name="ck_page_proposal_stages_retry_count",
+        ),
+        sa.CheckConstraint(
+            "length(attempt_token) BETWEEN 1 AND 64",
+            name="ck_page_proposal_stages_attempt_token",
         ),
         sa.CheckConstraint(
             "length(CAST(result AS TEXT)) <= 100000",

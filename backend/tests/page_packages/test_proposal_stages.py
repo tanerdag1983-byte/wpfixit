@@ -172,6 +172,7 @@ def test_stage_transitions_record_timestamps_and_retry_metadata(
         proposal.id,
         "validation",
         errors={"document:title": "required"},
+        attempt_token=running.attempt_token,
     )
     assert attention.state == "attention"
     assert attention.completed_at is not None
@@ -189,6 +190,7 @@ def test_stage_transitions_record_timestamps_and_retry_metadata(
         proposal.id,
         "validation",
         result={"replacements": {"document:title": "Nieuwe titel"}},
+        attempt_token=retried.attempt_token,
     )
     assert completed.state == "ready"
     assert completed.completed_at is not None
@@ -236,24 +238,94 @@ def test_stale_running_stage_is_reclaimed_with_a_new_lease(
     assert reclaimed.errors == {}
 
 
+def test_reclaimed_stage_rejects_late_success_from_previous_attempt(
+    session: Session,
+    proposal,
+) -> None:
+    item = _stage(session, proposal.id, "text")
+    previous = begin_stage(session, proposal.id, "text")
+    previous_token = previous.attempt_token
+    previous.started_at = datetime.now(UTC) - timedelta(
+        seconds=STALE_RUNNING_STAGE_SECONDS + 1
+    )
+    session.commit()
+
+    current = reclaim_stale_running_stage(session, proposal.id, "text")
+
+    with pytest.raises(ValueError, match="stale_stage_attempt"):
+        complete_stage(
+            session,
+            proposal.id,
+            "text",
+            result={"winner": "previous"},
+            attempt_token=previous_token,
+        )
+
+    session.refresh(item)
+    assert item.state == "running"
+    assert item.attempt_token == current.attempt_token
+    assert item.result == {}
+
+    complete_stage(
+        session,
+        proposal.id,
+        "text",
+        result={"winner": "current"},
+        attempt_token=current.attempt_token,
+    )
+    assert item.state == "ready"
+    assert item.result == {"winner": "current"}
+
+
+def test_reclaimed_stage_rejects_late_failure_from_previous_attempt(
+    session: Session,
+    proposal,
+) -> None:
+    item = _stage(session, proposal.id, "validation")
+    previous = begin_stage(session, proposal.id, "validation")
+    previous_token = previous.attempt_token
+    previous.started_at = datetime.now(UTC) - timedelta(
+        seconds=STALE_RUNNING_STAGE_SECONDS + 1
+    )
+    session.commit()
+
+    current = reclaim_stale_running_stage(session, proposal.id, "validation")
+
+    with pytest.raises(ValueError, match="stale_stage_attempt"):
+        fail_stage(
+            session,
+            proposal.id,
+            "validation",
+            errors={"message": "late failure"},
+            attempt_token=previous_token,
+        )
+
+    session.refresh(item)
+    assert item.state == "running"
+    assert item.attempt_token == current.attempt_token
+    assert item.errors == {}
+
+
 def test_text_success_survives_validation_attention(
     session: Session,
     proposal,
 ) -> None:
-    _stage(session, proposal.id, "text", state="running")
-    _stage(session, proposal.id, "validation", state="running")
+    text_stage = _stage(session, proposal.id, "text", state="running")
+    validation_stage = _stage(session, proposal.id, "validation", state="running")
 
     complete_stage(
         session,
         proposal.id,
         "text",
         result={"text_replacements": {"a": {"value": "b"}}},
+        attempt_token=text_stage.attempt_token,
     )
     attention_stage(
         session,
         proposal.id,
         "validation",
         errors={"acf:hero:label": "unsafe_html"},
+        attempt_token=validation_stage.attempt_token,
     )
     session.commit()
     session.expire_all()
@@ -274,7 +346,7 @@ def test_terminal_transition_race_has_one_winner_and_locks_the_row(
     proposal,
     monkeypatch,
 ) -> None:
-    _stage(session, proposal.id, "text", state="running")
+    item = _stage(session, proposal.id, "text", state="running")
     statements = []
     original_scalar = session.scalar
 
@@ -283,7 +355,13 @@ def test_terminal_transition_race_has_one_winner_and_locks_the_row(
         return original_scalar(statement, *args, **kwargs)
 
     monkeypatch.setattr(session, "scalar", capture_scalar)
-    complete_stage(session, proposal.id, "text", result={"ok": True})
+    complete_stage(
+        session,
+        proposal.id,
+        "text",
+        result={"ok": True},
+        attempt_token=item.attempt_token,
+    )
 
     with pytest.raises(ValueError, match="invalid_stage_transition"):
         fail_stage(
@@ -291,6 +369,7 @@ def test_terminal_transition_race_has_one_winner_and_locks_the_row(
             proposal.id,
             "text",
             errors={"provider": "late failure"},
+            attempt_token=item.attempt_token,
         )
 
     assert any(statement._for_update_arg is not None for statement in statements)
@@ -300,12 +379,18 @@ def test_helpers_reject_oversized_json_before_flush(
     session: Session,
     proposal,
 ) -> None:
-    _stage(session, proposal.id, "text", state="running")
+    item = _stage(session, proposal.id, "text", state="running")
     oversized = {"value": "x" * MAX_STAGE_RESULT_BYTES}
     assert len(json.dumps(oversized).encode()) > MAX_STAGE_RESULT_BYTES
 
     with pytest.raises(ValueError, match="stage_result_too_large"):
-        complete_stage(session, proposal.id, "text", result=oversized)
+        complete_stage(
+            session,
+            proposal.id,
+            "text",
+            result=oversized,
+            attempt_token=item.attempt_token,
+        )
 
 
 def test_stage_migration_round_trip_on_sqlite(tmp_path: Path) -> None:
@@ -332,6 +417,12 @@ def test_stage_migration_round_trip_on_sqlite(tmp_path: Path) -> None:
         migration.op = Operations(MigrationContext.configure(connection))
         migration.upgrade()
         assert "page_proposal_stages" in inspect(connection).get_table_names()
+        attempt_token = next(
+            column
+            for column in inspect(connection).get_columns("page_proposal_stages")
+            if column["name"] == "attempt_token"
+        )
+        assert attempt_token["nullable"] is False
         migration.downgrade()
         assert "page_proposal_stages" not in inspect(connection).get_table_names()
 
@@ -362,6 +453,7 @@ def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> Non
                 "name VARCHAR(24) NOT NULL, state VARCHAR(24) NOT NULL, "
                 "result JSON NOT NULL, errors JSON NOT NULL, "
                 "retry_count INTEGER NOT NULL DEFAULT 0, "
+                "attempt_token VARCHAR(64) NOT NULL, "
                 "started_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, "
                 "last_retried_at TIMESTAMPTZ NULL, "
                 "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
@@ -378,9 +470,10 @@ def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> Non
         connection.execute(
             text(
                 f'INSERT INTO "{schema}".page_proposal_stages '
-                "(id, proposal_version_id, name, state, result, errors) "
+                "(id, proposal_version_id, name, state, result, errors, "
+                "attempt_token) "
                 "VALUES ('stage-race', 'proposal-race', 'text', 'running', "
-                "'{}', '{}')"
+                "'{}', '{}', 'attempt-race')"
             )
         )
 
@@ -402,6 +495,7 @@ def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> Non
                         "proposal-race",
                         "text",
                         result={"winner": target},
+                        attempt_token="attempt-race",
                     )
                 else:
                     fail_stage(
@@ -409,6 +503,7 @@ def test_concurrent_terminal_stage_transitions_have_one_winner_postgres() -> Non
                         "proposal-race",
                         "text",
                         errors={"winner": target},
+                        attempt_token="attempt-race",
                     )
                 current_session.commit()
                 return target
@@ -458,6 +553,7 @@ def test_concurrent_stale_stage_reclaims_have_one_winner_postgres() -> None:
                 "name VARCHAR(24) NOT NULL, state VARCHAR(24) NOT NULL, "
                 "result JSON NOT NULL, errors JSON NOT NULL, "
                 "retry_count INTEGER NOT NULL DEFAULT 0, "
+                "attempt_token VARCHAR(64) NOT NULL, "
                 "started_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, "
                 "last_retried_at TIMESTAMPTZ NULL, "
                 "created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
@@ -474,9 +570,11 @@ def test_concurrent_stale_stage_reclaims_have_one_winner_postgres() -> None:
         connection.execute(
             text(
                 f'INSERT INTO "{schema}".page_proposal_stages '
-                "(id, proposal_version_id, name, state, result, errors, started_at) "
+                "(id, proposal_version_id, name, state, result, errors, "
+                "attempt_token, started_at) "
                 "VALUES ('stage-reclaim', 'proposal-reclaim', 'text', 'running', "
-                "'{}', '{}', CURRENT_TIMESTAMP - INTERVAL '10 minutes')"
+                "'{}', '{}', 'attempt-reclaim', "
+                "CURRENT_TIMESTAMP - INTERVAL '10 minutes')"
             )
         )
 
