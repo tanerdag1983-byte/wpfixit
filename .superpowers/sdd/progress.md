@@ -37,7 +37,8 @@ Task 3: complete (commit 7ab28b1, iterative independent review findings resolved
 Task 4: complete (commit 64952fa, local review because subagent usage was exhausted; all plugin contract suites and PHP lint passed).
 Task 5: complete (commit 0accc1a, local review because subagent usage was exhausted; all plugin suites and PHP lint passed).
 Task 6: complete (local review because subagent usage was exhausted; frontend 26 files/87 tests passed, lint/build clean; focused backend proposal and draft-job routes 18 passed, Ruff clean).
-Task 7: in progress.
+Task 7: complete (commits d77cd8f..76066dd, independent review approved after persistent recovery status, scoped per-template retries, sibling-state preservation, and misleading migration CTA removal; 15 focused backend migration tests passed, 381 backend tests passed with 6 optional PostgreSQL skips, 17 focused frontend tests and 92 full frontend tests passed, Ruff/lint/build clean).
+Task 8: in progress.
 
 # Versioned Template Snapshots Release 1 SDD Progress
 
