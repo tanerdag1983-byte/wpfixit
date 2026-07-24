@@ -51,6 +51,11 @@ type MigrationResult = {
   state: string;
   action?: string;
 };
+type RegistryResponse = {
+  items: Blueprint[];
+  legacy_candidates?: LegacyCandidate[];
+  migration_results?: Array<Omit<MigrationResult, "name">>;
+};
 
 const stateLabels: Record<BlueprintState, string> = {
   capture_required: "Vastlegging nodig",
@@ -67,6 +72,17 @@ const pageTypes = [
   ["blog", "Blogartikel"],
   ["generic", "Algemene pagina"],
 ] as const;
+
+function nameMigrationResults(
+  results: Array<Omit<MigrationResult, "name">>,
+  blueprints: Blueprint[],
+) {
+  return results.map((result) => ({
+    ...result,
+    name: blueprints.find((item) => item.id === result.blueprint_id)?.name
+      ?? result.blueprint_id,
+  }));
+}
 
 export function BlueprintSettingsPanel({
   projectId,
@@ -104,12 +120,16 @@ export function BlueprintSettingsPanel({
     setMigrationResults([]);
     onAvailabilityChange?.(null);
 
-    apiRequest<{ items: Blueprint[]; legacy_candidates?: LegacyCandidate[] }>(`/projects/${projectId}/page-blueprints`)
+    apiRequest<RegistryResponse>(`/projects/${projectId}/page-blueprints`)
       .then((registry) => {
         if (!active) return;
         const items = registry.items ?? [];
         setBlueprints(items);
         setLegacyCandidates(registry.legacy_candidates ?? []);
+        setMigrationResults(nameMigrationResults(
+          registry.migration_results ?? [],
+          items,
+        ));
         setSelectedId(items[0]?.id ?? "");
         setRegistryStatus("loaded");
         onAvailabilityChange?.(items.length > 0);
@@ -137,7 +157,7 @@ export function BlueprintSettingsPanel({
   const selectedSource = pages.find(
     (page) => page.id === selected?.source_wordpress_page_id,
   );
-  const hasMigratableBlueprint = legacyCandidates.length > 0 || blueprints.some(
+  const hasMigratableBlueprint = blueprints.some(
     (item) =>
       item.wordpress_snapshot_id === null
       && !blueprints.some((candidate) => candidate.supersedes_id === item.id),
@@ -258,19 +278,28 @@ export function BlueprintSettingsPanel({
         },
       );
       if (projectIdRef.current !== requestProjectId) return;
-      setMigrationResults(response.items.map((result) => ({
-        ...result,
-        name: blueprints.find((item) => item.id === result.blueprint_id)?.name
-          ?? result.blueprint_id,
-      })));
-      const registry = await apiRequest<{
-        items: Blueprint[];
-        legacy_candidates?: LegacyCandidate[];
-      }>(`/projects/${requestProjectId}/page-blueprints`);
+      setMigrationResults((current) => {
+        const updated = nameMigrationResults(response.items, blueprints);
+        if (!blueprintId) return updated;
+        const updatedIds = new Set(updated.map((item) => item.blueprint_id));
+        return [
+          ...current.filter((item) => !updatedIds.has(item.blueprint_id)),
+          ...updated,
+        ];
+      });
+      const registry = await apiRequest<RegistryResponse>(
+        `/projects/${requestProjectId}/page-blueprints`,
+      );
       if (projectIdRef.current !== requestProjectId) return;
       const items = registry.items ?? [];
       setBlueprints(items);
       setLegacyCandidates(registry.legacy_candidates ?? []);
+      if (registry.migration_results) {
+        setMigrationResults(nameMigrationResults(
+          registry.migration_results,
+          items,
+        ));
+      }
       setSelectedId((current) =>
         items.some((item) => item.id === current)
           ? current

@@ -10,7 +10,11 @@ from app.api.routes import page_blueprints, page_packages
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_blueprints.service import legacy_blueprint_candidates
+from app.domains.page_blueprints.service import (
+    legacy_blueprint_candidates,
+    prepare_snapshot_migration,
+    transition_snapshot_migration,
+)
 from app.domains.page_packages.models import (
     PagePackageProposal,
     PageProposalStage,
@@ -217,6 +221,53 @@ def test_invalid_legacy_settings_do_not_create_candidate(
     session.commit()
 
     assert legacy_blueprint_candidates(session, projects.member_project.id) == []
+
+
+def test_registry_exposes_persisted_migration_recovery(
+    client,
+    auth_as,
+    projects,
+    session,
+):
+    project_id = projects.member_project.id
+    waiting = legacy_blueprint(
+        blueprint_id="legacy-waiting",
+        project_id=project_id,
+        wordpress_id=701,
+    )
+    incompatible = legacy_blueprint(
+        blueprint_id="legacy-incompatible",
+        project_id=project_id,
+        wordpress_id=702,
+    )
+    session.add_all([waiting, incompatible])
+    session.flush()
+    waiting_job = prepare_snapshot_migration(session, waiting)
+    transition_snapshot_migration(waiting_job, "pending", action="wait")
+    incompatible_job = prepare_snapshot_migration(session, incompatible)
+    transition_snapshot_migration(
+        incompatible_job,
+        "incompatible",
+        action="new_proposal",
+    )
+    session.commit()
+    auth_as(projects.owner)
+
+    response = client.get(f"/projects/{project_id}/page-blueprints")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["migration_results"] == [
+        {
+            "blueprint_id": incompatible.id,
+            "state": "incompatible",
+            "action": "new_proposal",
+        },
+        {
+            "blueprint_id": waiting.id,
+            "state": "pending",
+            "action": "wait",
+        },
+    ]
 
 
 def test_migration_can_retry_one_legacy_blueprint(

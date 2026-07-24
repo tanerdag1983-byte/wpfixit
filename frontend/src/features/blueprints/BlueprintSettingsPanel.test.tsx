@@ -285,6 +285,48 @@ describe("BlueprintSettingsPanel", () => {
       "/projects/project-1/page-blueprints/migrate?blueprint_id=legacy-5",
       { method: "POST" },
     ));
+    expect(screen.getByText("1 template wacht op een actieve generatie")).toBeVisible();
+    expect(screen.getByText("Nieuw voorstel nodig: Template 7")).toBeVisible();
+  });
+
+  it("restores persisted migration recovery after reload", async () => {
+    const waiting = {
+      ...blueprint,
+      id: "legacy-waiting",
+      name: "Wachtend template",
+      wordpress_snapshot_id: null,
+    };
+    const incompatible = {
+      ...blueprint,
+      id: "legacy-incompatible",
+      name: "Oud template",
+      wordpress_snapshot_id: null,
+    };
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({
+          items: [waiting, incompatible],
+          migration_results: [
+            {
+              blueprint_id: waiting.id,
+              state: "pending",
+              action: "wait",
+            },
+            {
+              blueprint_id: incompatible.id,
+              state: "incompatible",
+              action: "new_proposal",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByText("1 template wacht op een actieve generatie")).toBeVisible();
+    expect(screen.getByText("Nieuw voorstel nodig: Oud template")).toBeVisible();
   });
 
   it("hides migration after every legacy template has a successor", async () => {
@@ -484,6 +526,9 @@ describe("BlueprintSettingsPanel", () => {
 
     expect(await screen.findByText(/Geldige oude paginapakketinstellingen gevonden/)).toBeVisible();
     expect(screen.getByText(/oude instellingen blijven behouden/)).toBeVisible();
+    expect(screen.queryByRole("button", {
+      name: "Bestaande templates omzetten",
+    })).not.toBeInTheDocument();
   });
 
   it("locks snapshot actions while semantic roles are being saved", async () => {

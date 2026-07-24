@@ -15,6 +15,7 @@ from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 from app.domains.page_blueprints.service import (
+    SNAPSHOT_MIGRATION_JOB_TYPE,
     SnapshotMigrationResult,
     create_blueprint_version,
     legacy_blueprint_candidates,
@@ -347,8 +348,35 @@ def list_blueprints(
         .where(PageBlueprint.project_id == project_id)
         .order_by(PageBlueprint.created_at, PageBlueprint.id)
     ).all()
+    migration_results = []
+    migration_jobs = session.scalars(
+        select(Job).where(
+            Job.project_id == project_id,
+            Job.job_type == SNAPSHOT_MIGRATION_JOB_TYPE,
+        )
+    ).all()
+    for job in migration_jobs:
+        blueprint_id = job.checkpoint.get("blueprint_id")
+        state = "pending" if job.state == "migrating" else job.state
+        action = job.checkpoint.get("action", "none")
+        if (
+            isinstance(blueprint_id, str)
+            and state in {"pending", "migrated", "incompatible", "failed"}
+            and action in {"none", "new_proposal", "recapture", "cleanup", "wait"}
+        ):
+            migration_results.append(
+                _migration_payload(
+                    SnapshotMigrationResult(
+                        blueprint_id=blueprint_id,
+                        state=state,
+                        action=action,
+                    )
+                )
+            )
+    migration_results.sort(key=lambda item: item["blueprint_id"])
     return {
         "items": [_payload(item) for item in items],
+        "migration_results": migration_results,
         "legacy_candidates": [
             {
                 "source_wordpress_page_id": candidate.source_wordpress_page_id,
