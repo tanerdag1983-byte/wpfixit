@@ -687,6 +687,130 @@ def test_attention_snapshot_accepts_manual_correction_without_rerunning_provider
     )
 
 
+def test_validation_retry_uses_the_latest_saved_partial_corrections(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    make_native_snapshot(session)
+    package = proposal_snapshot_text_package()
+    del package["text_replacements"]["document:title"]
+    del package["text_replacements"]["document:slug"]
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    before = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    ).json()
+    corrected = {
+        "text_replacements": {
+            field_id: {"value": value}
+            for field_id, value in before["package"]["text_replacements"].items()
+        }
+    }
+    corrected["text_replacements"]["document:title"] = {
+        "value": "Bewaarde handmatige titel"
+    }
+
+    saved = client.put(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}",
+        json={"package": corrected},
+    )
+    retried = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}/"
+        "stages/validation/retry"
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["state"] == "needs_attention"
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["package"]["text_replacements"]["document:title"] == (
+        "Bewaarde handmatige titel"
+    )
+
+
+def test_optional_snapshot_error_is_editable_and_does_not_block_approval(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    auth_as(projects.member)
+    opportunity = prepare_project(session, projects)
+    snapshot = make_native_snapshot(session)
+    schema = valid_snapshot_schema()
+    schema["blocks"][0]["fields"].append(
+        {
+            "id": "acf-optional",
+            "path": "page_blocks/0/optional",
+            "label": "Optionele tekst",
+            "value_type": "plain_text",
+            "current_value": "",
+            "required": False,
+            "max_length": 180,
+        }
+    )
+    snapshot.content_schema = schema
+    session.commit()
+    bridge = BlueprintBridge()
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_client",
+        lambda current_session, project_id: bridge,
+    )
+    package = proposal_snapshot_text_package()
+    package["text_replacements"]["acf-optional"] = {
+        "value": "<script>Niet toegestaan</script>"
+    }
+
+    class Generator:
+        provider = "openrouter"
+        model = "model-1"
+
+        def generate_page_package(self, context):
+            return {"package": package}
+
+    monkeypatch.setattr(
+        "app.api.routes.page_packages._page_package_generator",
+        lambda current_session, project: Generator(),
+    )
+    queued = client.post(
+        f"/projects/{projects.member_project.id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+    proposal_id = queued.json()["id"]
+    loaded = client.get(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}"
+    )
+    approved = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/{proposal_id}/approve"
+    )
+
+    assert loaded.json()["state"] == "needs_attention"
+    assert loaded.json()["field_errors"] == {"acf-optional": "unsafe_html"}
+    assert approved.status_code == 200, approved.text
+
+
 def test_snapshot_worker_reclaims_only_a_stale_running_text_stage(
     client: TestClient,
     session: Session,

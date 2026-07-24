@@ -144,8 +144,14 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       });
       setProposal(result.base_version);
       setDraft(result.base_version.package);
-      setCandidate(result.candidate);
-      setMessage("Er staat nu een nieuwe gegenereerde versie klaar om te vergelijken.");
+      setCandidate(
+        result.candidate.status === "ready" ? result.candidate : null,
+      );
+      setMessage(
+        result.candidate.status === "ready"
+          ? "Er staat nu een nieuwe gegenereerde versie klaar om te vergelijken."
+          : "Nieuwe versie wordt gegenereerd.",
+      );
     } catch (error) {
       setMessage(actionError(error, "Nieuwe versie genereren mislukt."));
     } finally {
@@ -469,7 +475,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 <button
                   className="primary-button"
                   disabled={
-                    proposal.state !== "proposed"
+                    !["proposed", "needs_attention"].includes(proposal.state)
                     || fieldErrors.some((error) => error.required)
                     || busy
                   }
@@ -550,7 +556,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
 
 function readActiveCandidate(proposal: Proposal) {
   if (!proposal.active_candidate) return null;
-  return ["generating", "ready"].includes(proposal.active_candidate.status)
+  return proposal.active_candidate.status === "ready"
     ? proposal.active_candidate
     : null;
 }

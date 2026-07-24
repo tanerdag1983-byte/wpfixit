@@ -700,7 +700,7 @@ def _apply_snapshot_validation(
         "ignored_field_ids": validation.ignored_field_ids,
         "missing_required_field_ids": validation.missing_required_field_ids,
     }
-    if validation.ready:
+    if validation.ready and not validation.field_errors:
         complete_stage(
             session,
             proposal.id,
@@ -858,12 +858,20 @@ def retry_page_proposal_stage(
     session.commit()
     try:
         context = _generation_context(session, project, opportunity, blueprint)
+        stored_replacements = proposal.package.get("text_replacements", {})
+        if not isinstance(stored_replacements, dict):
+            raise ValueError("Stored snapshot package is invalid")
         _apply_snapshot_validation(
             session,
             proposal,
             job,
             context,
-            text.result,
+            {
+                "text_replacements": {
+                    field_id: {"value": value}
+                    for field_id, value in stored_replacements.items()
+                }
+            },
             validation.attempt_token,
         )
         session.commit()
@@ -976,7 +984,12 @@ def approve_page_package_proposal(
             status_code=409,
             detail="Only the current snapshot proposal version can be approved",
         )
-    if proposal.state != "proposed":
+    snapshot_schema = _is_snapshot_schema(
+        proposal.config_snapshot.get("content_schema")
+    )
+    if proposal.state != "proposed" and not (
+        snapshot_schema and proposal.state == "needs_attention"
+    ):
         raise HTTPException(
             status_code=409, detail="Only proposed pages can be approved"
         )
@@ -985,7 +998,7 @@ def approve_page_package_proposal(
     opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
     if project_context is None or opportunity is None:
         raise HTTPException(status_code=409, detail="Proposal context is unavailable")
-    if _is_snapshot_schema(proposal.config_snapshot.get("content_schema")):
+    if snapshot_schema:
         validation = session.scalar(
             select(PageProposalStage)
             .where(
@@ -1055,6 +1068,14 @@ def approve_page_package_proposal(
             proposal.package = {
                 "text_replacements": migrated_validation.replacements
             }
+        elif validation.state == "attention":
+            if validation.result.get("blocking_field_ids") or validation.result.get(
+                "missing_required_field_ids"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Proposal validation requires field correction",
+                )
         elif validation.state != "ready":
             raise HTTPException(
                 status_code=409,

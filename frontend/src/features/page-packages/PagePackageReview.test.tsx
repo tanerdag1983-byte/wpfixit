@@ -487,7 +487,7 @@ describe("PagePackageReview", () => {
   it("allows approval when only an optional snapshot field is invalid", async () => {
     const optionalError = {
       ...attentionProposal,
-      state: "proposed",
+      state: "needs_attention",
       field_errors: {
         "acf:hero:optional": "unsafe_html",
       },
@@ -518,6 +518,9 @@ describe("PagePackageReview", () => {
 
     expect(await screen.findByText("Extra label bevat niet-toegestane opmaak")).toBeVisible();
     expect(screen.getByRole("button", { name: "Voorstel goedkeuren" })).toBeEnabled();
+    expect(screen.getByLabelText("Extra label")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Waarde aanpassen" }));
+    expect(screen.getByLabelText("Extra label")).toHaveFocus();
   });
 
   it("replaces raw API validation details with a bounded action error", async () => {
@@ -613,6 +616,27 @@ describe("PagePackageReview", () => {
     render(<PagePackageReview projectId="project-1" />);
 
     expect(await screen.findByText("Nieuwe versie genereren mislukt.")).toBeVisible();
+    expect(screen.queryByText("Vergelijk gegenereerde versie")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Deze versie gebruiken",
+    })).not.toBeInTheDocument();
+  });
+
+  it("does not offer comparison actions while a candidate is generating", async () => {
+    apiRequest.mockResolvedValue({
+      ...attentionProposal,
+      state: "approved",
+      field_errors: {},
+      active_candidate: {
+        ...activeCandidate,
+        status: "generating",
+        candidate_package: undefined,
+      },
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Paginapakket beoordelen")).toBeVisible();
     expect(screen.queryByText("Vergelijk gegenereerde versie")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", {
       name: "Deze versie gebruiken",
