@@ -19,6 +19,12 @@ export function ProposalVersionCompare({
   const candidateTitle = candidate.candidate_package
     ? packageTitle(candidate.candidate_package)
     : currentTitle;
+  const snapshotChanges = candidate.candidate_package
+    ? changedSnapshotFields(
+        current,
+        candidate.candidate_package,
+      )
+    : [];
   return (
     <section className="proposal-compare-shell">
       <div className="proposal-compare-heading">
@@ -56,13 +62,17 @@ export function ProposalVersionCompare({
             <span className="publish-state proposed">Huidige versie</span>
             <strong>{currentTitle}</strong>
           </header>
-          <div
-            aria-label="Huidige versie"
-            className="proposal-preview page-package-preview"
-            dangerouslySetInnerHTML={{
-              __html: sanitizeHtml(current.rendered_html || `<p>${currentTitle}</p>`),
-            }}
-          />
+          {snapshotChanges.length > 0 ? (
+            <SnapshotChanges changes={snapshotChanges} side="current" />
+          ) : (
+            <div
+              aria-label="Huidige versie"
+              className="proposal-preview page-package-preview"
+              dangerouslySetInnerHTML={{
+                __html: sanitizeHtml(current.rendered_html || `<p>${currentTitle}</p>`),
+              }}
+            />
+          )}
         </article>
 
         <article className="proposal-compare-column">
@@ -70,20 +80,86 @@ export function ProposalVersionCompare({
             <span className="publish-state approved">Gegenereerd</span>
             <strong>{candidateTitle}</strong>
           </header>
-          <div
-            aria-label="Gegenereerde versie"
-            className="proposal-preview page-package-preview"
-            dangerouslySetInnerHTML={{
-              __html: sanitizeHtml(
-                candidate.candidate_rendered_html ||
-                  `<p>${candidateTitle}</p>`,
-              ),
-            }}
-          />
+          {snapshotChanges.length > 0 ? (
+            <SnapshotChanges changes={snapshotChanges} side="candidate" />
+          ) : (
+            <div
+              aria-label="Gegenereerde versie"
+              className="proposal-preview page-package-preview"
+              dangerouslySetInnerHTML={{
+                __html: sanitizeHtml(
+                  candidate.candidate_rendered_html ||
+                    `<p>${candidateTitle}</p>`,
+                ),
+              }}
+            />
+          )}
         </article>
       </div>
     </section>
   );
+}
+
+type SnapshotChange = {
+  id: string;
+  label: string;
+  current: string;
+  candidate: string;
+};
+
+function SnapshotChanges({
+  changes,
+  side,
+}: {
+  changes: SnapshotChange[];
+  side: "current" | "candidate";
+}) {
+  return (
+    <div
+      aria-label={side === "current" ? "Huidige versie" : "Gegenereerde versie"}
+      className="proposal-preview page-package-preview"
+    >
+      {changes.map((change) => (
+        <div key={change.id}>
+          <strong>{change.label}</strong>
+          <p>{change[side] || "Leeg"}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function changedSnapshotFields(
+  current: Proposal,
+  candidatePackage: Proposal["package"],
+): SnapshotChange[] {
+  if (
+    !("text_replacements" in current.package)
+    || !("text_replacements" in candidatePackage)
+  ) {
+    return [];
+  }
+  const currentReplacements = current.package.text_replacements;
+  const candidateReplacements = candidatePackage.text_replacements;
+  const labels = new Map(
+    [
+      ...(current.config_snapshot.content_schema?.document_fields ?? []),
+      ...(current.config_snapshot.content_schema?.blocks.flatMap(
+        (block) => block.fields,
+      ) ?? []),
+    ].map((field) => [field.id, field.label]),
+  );
+  return Object.keys(candidateReplacements)
+    .filter(
+      (fieldId) =>
+        currentReplacements[fieldId] !== candidateReplacements[fieldId],
+    )
+    .map((fieldId) => ({
+      id: fieldId,
+      label: labels.get(fieldId) ?? fieldId,
+      current: currentReplacements[fieldId] ?? "",
+      candidate: candidateReplacements[fieldId] ?? "",
+    }));
 }
 
 function proposalTitle(proposal: Proposal) {

@@ -393,7 +393,12 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
     candidate = session.get(PagePackageRegenerationCandidate, candidate_id)
     assert candidate is not None
     assert candidate.status == "ready", candidate.candidate_package
-    assert set(candidate.candidate_package) == {"text_replacements"}
+    assert set(candidate.candidate_package) == {
+        "text_replacements",
+        "approved_urls",
+    }
+    candidate_approved_urls = candidate.candidate_package["approved_urls"]
+    assert candidate_approved_urls
 
     accepted = client.post(
         f"/projects/{projects.member_project.id}/page-proposals/"
@@ -407,6 +412,8 @@ def test_snapshot_regeneration_candidate_can_be_accepted_and_approved(
         "ready",
         "ready",
     ]
+    assert set(current["package"]) == {"text_replacements"}
+    assert current["stages"][2]["result"]["approved_urls"] == candidate_approved_urls
 
     reapproved = client.post(
         f"/projects/{projects.member_project.id}/page-proposals/"

@@ -353,6 +353,48 @@ describe("PagePackageReview", () => {
     expect(screen.getByRole("button", { name: "Voorstel goedkeuren" })).toBeEnabled();
   });
 
+  it("saves a local correction before retrying validation", async () => {
+    const correctedPackage = {
+      text_replacements: {
+        ...attentionProposal.package.text_replacements,
+        "acf:hero:label": "DSG-specialist",
+      },
+    };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({
+          ...attentionProposal,
+          package: correctedPackage,
+        });
+      }
+      if (path.endsWith("/stages/validation/retry") && init?.method === "POST") {
+        return Promise.resolve({
+          ...attentionProposal,
+          state: "proposed",
+          package: correctedPackage,
+          field_errors: {},
+        });
+      }
+      return Promise.resolve(attentionProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Hero-label"), {
+      target: { value: "DSG-specialist" },
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Validatie opnieuw uitvoeren",
+    }));
+
+    await waitFor(() => {
+      const methods = apiRequest.mock.calls
+        .map(([, init]) => init?.method)
+        .filter(Boolean);
+      expect(methods).toEqual(["PUT", "POST"]);
+    });
+    expect(screen.getByLabelText("Hero-label")).toHaveValue("DSG-specialist");
+  });
+
   it("follows the new proposal version after retrying failed text", async () => {
     const failedText = {
       ...attentionProposal,
@@ -491,6 +533,25 @@ describe("PagePackageReview", () => {
     expect(screen.queryByText(/validation errors for/i)).not.toBeInTheDocument();
   });
 
+  it("replaces short raw provider details with the action fallback", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/stages/validation/retry") && init?.method === "POST") {
+        return Promise.reject(new Error(
+          "Value error, HTML is not allowed in plain text fields",
+        ));
+      }
+      return Promise.resolve(attentionProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Validatie opnieuw uitvoeren",
+    }));
+
+    expect(await screen.findByText("Opnieuw uitvoeren mislukt.")).toBeVisible();
+    expect(screen.queryByText(/HTML is not allowed/i)).not.toBeInTheDocument();
+  });
+
   it("does not mark manual approval complete while attention is required", async () => {
     apiRequest.mockResolvedValue(attentionProposal);
 
@@ -505,12 +566,19 @@ describe("PagePackageReview", () => {
       ...attentionProposal,
       state: "approved",
       field_errors: {},
+      package: {
+        text_replacements: {
+          ...attentionProposal.package.text_replacements,
+          "acf:hero:label": "Huidige hero-inhoud",
+        },
+      },
       active_candidate: {
         ...activeCandidate,
         candidate_package: {
           text_replacements: {
             ...attentionProposal.package.text_replacements,
             "document:title": "Nieuwe DSG snapshotversie",
+            "acf:hero:label": "Nieuwe hero-inhoud",
           },
         },
       },
@@ -520,7 +588,30 @@ describe("PagePackageReview", () => {
 
     expect(await screen.findByText("Vergelijk gegenereerde versie")).toBeVisible();
     expect(screen.getAllByText("DSG revisie Schiedam").length).toBeGreaterThan(0);
-    expect(screen.getByText("Nieuwe DSG snapshotversie")).toBeVisible();
+    expect(screen.getAllByText("Nieuwe DSG snapshotversie").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Hero-label")).toHaveLength(2);
+    expect(screen.getByText("Huidige hero-inhoud")).toBeVisible();
+    expect(screen.getByText("Nieuwe hero-inhoud")).toBeVisible();
+  });
+
+  it("does not offer comparison actions for a failed candidate", async () => {
+    apiRequest.mockResolvedValue({
+      ...attentionProposal,
+      state: "approved",
+      field_errors: {},
+      active_candidate: {
+        ...activeCandidate,
+        status: "failed",
+      },
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Nieuwe versie genereren mislukt.")).toBeVisible();
+    expect(screen.queryByText("Vergelijk gegenereerde versie")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Deze versie gebruiken",
+    })).not.toBeInTheDocument();
   });
 
   it("saves, approves, and queues a WordPress draft without opening a window", async () => {

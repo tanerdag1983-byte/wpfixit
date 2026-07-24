@@ -126,14 +126,7 @@ def accept_regeneration_candidate(
         and content_schema.get("schema_version") == "snapshot-text-v1"
     ):
         replacements = candidate.candidate_package.get("text_replacements")
-        validation = session.scalar(
-            select(PageProposalStage).where(
-                PageProposalStage.proposal_version_id == current.id,
-                PageProposalStage.name == "validation",
-                PageProposalStage.state == "ready",
-            )
-        )
-        approved_urls = validation.result.get("approved_urls") if validation else None
+        approved_urls = candidate.candidate_package.get("approved_urls")
         if (
             not isinstance(replacements, dict)
             or not all(
@@ -174,7 +167,11 @@ def accept_regeneration_candidate(
         blueprint_id=current.blueprint_id,
         blueprint_version=current.blueprint_version,
         blueprint_structure_hash=current.blueprint_structure_hash,
-        package=candidate.candidate_package,
+        package=(
+            {"text_replacements": snapshot_replacements}
+            if snapshot_replacements is not None
+            else candidate.candidate_package
+        ),
         rendered_html=candidate.candidate_rendered_html,
         config_snapshot=current.config_snapshot,
         provider=candidate.provider,

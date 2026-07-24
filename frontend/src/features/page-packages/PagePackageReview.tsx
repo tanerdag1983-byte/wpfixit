@@ -73,22 +73,26 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     };
   }, [projectId, refreshKey]);
 
+  function writeDraft(activeProposal: Proposal, packageDraft: ProposalPackage) {
+    return apiRequest<Proposal>(
+      `/projects/${projectId}/page-proposals/${activeProposal.id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          package: isSnapshotTextPackage(packageDraft)
+            ? snapshotWritePackage(packageDraft)
+            : packageDraft,
+        }),
+      },
+    );
+  }
+
   async function save() {
     if (!proposal || !draft) return;
     setBusy(true);
     setMessage("");
     try {
-      const result = await apiRequest<Proposal>(
-        `/projects/${projectId}/page-proposals/${proposal.id}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            package: isSnapshotTextPackage(draft)
-              ? snapshotWritePackage(draft)
-              : draft,
-          }),
-        },
-      );
+      const result = await writeDraft(proposal, draft);
       setProposal(result);
       setCandidate(readActiveCandidate(result));
       setDraft(result.package);
@@ -154,13 +158,23 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     setBusy(true);
     setMessage("");
     try {
+      let activeProposal = proposal;
+      if (
+        stageName === "validation"
+        && draft
+        && JSON.stringify(draft) !== JSON.stringify(proposal.package)
+      ) {
+        activeProposal = await writeDraft(proposal, draft);
+        setProposal(activeProposal);
+        setDraft(activeProposal.package);
+      }
       const result = await apiRequest<Proposal>(
-        `/projects/${projectId}/page-proposals/${proposal.id}/stages/${stageName}/retry`,
+        `/projects/${projectId}/page-proposals/${activeProposal.id}/stages/${stageName}/retry`,
         { method: "POST" },
       );
       setProposal(result);
       if (isProposalPackage(result.package)) setDraft(result.package);
-      if (stageName === "text" && result.id !== proposal.id) {
+      if (stageName === "text" && result.id !== activeProposal.id) {
         window.sessionStorage.setItem(`page-proposal-id:${projectId}`, result.id);
         setRefreshKey((current) => current + 1);
       }
@@ -527,9 +541,9 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
 
 function readActiveCandidate(proposal: Proposal) {
   if (!proposal.active_candidate) return null;
-  if (proposal.active_candidate.status === "discarded") return null;
-  if (proposal.active_candidate.status === "accepted") return null;
-  return proposal.active_candidate;
+  return ["generating", "ready"].includes(proposal.active_candidate.status)
+    ? proposal.active_candidate
+    : null;
 }
 
 function draftJobLabel(job: DraftJob): string {
@@ -902,13 +916,11 @@ function fieldErrorMessage(code: string) {
 function actionError(error: unknown, fallback: string) {
   if (!(error instanceof Error)) return fallback;
   const message = error.message.trim();
-  if (
-    message.length > 240
-    || /validation errors?|extra_forbidden|field required|pydantic|traceback|openai-compatible/i.test(
-      message,
-    )
-  ) {
-    return fallback;
-  }
-  return message || fallback;
+  return {
+    "Authentication required": "Je sessie is verlopen. Log opnieuw in.",
+    "Blueprint changed; generate a new proposal":
+      "De blueprint is gewijzigd. Genereer een nieuw voorstel.",
+    "AI changed the focus keyword":
+      "De AI wijzigde het focuszoekwoord. Genereer een nieuw voorstel.",
+  }[message] ?? fallback;
 }

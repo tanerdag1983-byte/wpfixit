@@ -13,6 +13,7 @@ export type PagePackage = {
 
 export type SnapshotTextPackage = {
   text_replacements: Record<string, string>;
+  approved_urls?: string[];
 };
 
 export type ProposalPackage = PagePackage | SnapshotTextPackage;

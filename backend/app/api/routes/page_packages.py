@@ -1175,7 +1175,11 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
                 if not validation.ready:
                     raise ValueError("Snapshot candidate requires correction")
                 candidate.candidate_package = {
-                    "text_replacements": validation.replacements
+                    "text_replacements": validation.replacements,
+                    "approved_urls": _snapshot_validation_result(
+                        validation.replacements,
+                        context,
+                    )["approved_urls"],
                 }
             else:
                 package = normalize_blueprint_package(raw_package, context)
