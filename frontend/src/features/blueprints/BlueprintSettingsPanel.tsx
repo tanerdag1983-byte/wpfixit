@@ -137,6 +137,11 @@ export function BlueprintSettingsPanel({
   const selectedSource = pages.find(
     (page) => page.id === selected?.source_wordpress_page_id,
   );
+  const hasMigratableBlueprint = legacyCandidates.length > 0 || blueprints.some(
+    (item) =>
+      item.wordpress_snapshot_id === null
+      && !blueprints.some((candidate) => candidate.supersedes_id === item.id),
+  );
 
   function replaceBlueprint(updated: Blueprint, requestProjectId = projectId) {
     if (projectIdRef.current !== requestProjectId) return;
@@ -237,16 +242,21 @@ export function BlueprintSettingsPanel({
     }
   }
 
-  async function migrateTemplates() {
+  async function migrateTemplates(blueprintId?: string) {
     const requestProjectId = projectId;
     setBusy(true);
     setMessage("");
     try {
       const response = await apiRequest<{
         items: Array<Omit<MigrationResult, "name">>;
-      }>(`/projects/${requestProjectId}/page-blueprints/migrate`, {
-        method: "POST",
-      });
+      }>(
+        `/projects/${requestProjectId}/page-blueprints/migrate${
+          blueprintId ? `?blueprint_id=${encodeURIComponent(blueprintId)}` : ""
+        }`,
+        {
+          method: "POST",
+        },
+      );
       if (projectIdRef.current !== requestProjectId) return;
       setMigrationResults(response.items.map((result) => ({
         ...result,
@@ -342,11 +352,11 @@ export function BlueprintSettingsPanel({
 
       {message && <p aria-live="polite" className="form-message" role="status">{message}</p>}
 
-      {(legacyCandidates.length > 0 || blueprints.some((item) => item.wordpress_snapshot_id === null)) && (
+      {hasMigratableBlueprint && (
         <button
           className="secondary-button"
           disabled={busy}
-          onClick={migrateTemplates}
+          onClick={() => migrateTemplates()}
           type="button"
         >
           Bestaande templates omzetten
@@ -355,18 +365,33 @@ export function BlueprintSettingsPanel({
 
       {migrationResults.length > 0 && (
         <div aria-live="polite" className="blueprint-migration-note">
-          <p>{migrationSummary(migrationResults, "migrated", "omgezet")}</p>
+          {migrationResults.some((item) => item.state === "migrated") && (
+            <p>{migrationSummary(migrationResults, "migrated", "omgezet")}</p>
+          )}
           {migrationResults.some((item) => item.state === "failed") && (
             <p>{migrationSummary(migrationResults, "failed", "opnieuw opnemen")}</p>
           )}
+          {migrationResults.some((item) => item.state === "pending") && (
+            <p>{migrationSummary(
+              migrationResults,
+              "pending",
+              "wacht op een actieve generatie",
+            )}</p>
+          )}
+          {migrationResults.filter((item) => item.state === "incompatible").map((item) => (
+            <div key={item.blueprint_id}>
+              <p>Nieuw voorstel nodig: {item.name}</p>
+              <p>Maak dit template opnieuw via Kansen.</p>
+            </div>
+          ))}
           {migrationResults.filter((item) => item.state === "failed").map((item) => (
             <button
               disabled={busy}
               key={item.blueprint_id}
-              onClick={migrateTemplates}
+              onClick={() => migrateTemplates(item.blueprint_id)}
               type="button"
             >
-              Opnieuw opnemen: {item.name}
+              {item.action === "cleanup" ? "Opschonen en opnieuw proberen" : "Opnieuw opnemen"}: {item.name}
             </button>
           ))}
         </div>

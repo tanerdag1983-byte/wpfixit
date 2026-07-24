@@ -219,6 +219,48 @@ def test_invalid_legacy_settings_do_not_create_candidate(
     assert legacy_blueprint_candidates(session, projects.member_project.id) == []
 
 
+def test_migration_can_retry_one_legacy_blueprint(
+    client,
+    auth_as,
+    projects,
+    session,
+    snapshot_capture,
+    monkeypatch,
+):
+    project_id = projects.member_project.id
+    selected = legacy_blueprint(
+        blueprint_id="legacy-selected",
+        project_id=project_id,
+        wordpress_id=701,
+    )
+    untouched = legacy_blueprint(
+        blueprint_id="legacy-untouched",
+        project_id=project_id,
+        wordpress_id=702,
+    )
+    session.add_all([selected, untouched])
+    session.commit()
+    bridge = MigrationBridge([snapshot_capture(wordpress_id=801, version=2)])
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    auth_as(projects.owner)
+
+    response = client.post(
+        f"/projects/{project_id}/page-blueprints/migrate",
+        params={"blueprint_id": selected.id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {"blueprint_id": selected.id, "state": "migrated"}
+    ]
+    assert session.scalar(
+        select(PageBlueprint).where(PageBlueprint.supersedes_id == selected.id)
+    )
+    assert session.scalar(
+        select(PageBlueprint).where(PageBlueprint.supersedes_id == untouched.id)
+    ) is None
+
+
 def test_migration_is_per_blueprint_and_preserves_failed_legacy_registration(
     client,
     auth_as,

@@ -475,6 +475,7 @@ def migrate_blueprints(
     project_id: str,
     session: SessionDependency,
     user: UserDependency,
+    blueprint_id: str | None = None,
 ) -> dict:
     _manager_project(session, user, project_id)
     bridge = _bridge(session, project_id)
@@ -482,15 +483,21 @@ def migrate_blueprints(
         PageBlueprint.project_id == project_id,
         PageBlueprint.supersedes_id.is_not(None),
     )
+    legacy_query = select(PageBlueprint.id).where(
+        PageBlueprint.project_id == project_id,
+        PageBlueprint.wordpress_snapshot_id.is_(None),
+        PageBlueprint.id.not_in(successor_ids),
+    )
+    if blueprint_id is not None:
+        legacy_query = legacy_query.where(PageBlueprint.id == blueprint_id)
     legacy_ids = session.scalars(
-        select(PageBlueprint.id)
-        .where(
-            PageBlueprint.project_id == project_id,
-            PageBlueprint.wordpress_snapshot_id.is_(None),
-            PageBlueprint.id.not_in(successor_ids),
-        )
-        .order_by(PageBlueprint.created_at, PageBlueprint.id)
+        legacy_query.order_by(PageBlueprint.created_at, PageBlueprint.id)
     ).all()
+    if blueprint_id is not None and not legacy_ids:
+        raise HTTPException(
+            status_code=404,
+            detail="Legacy template is not available for migration",
+        )
     for legacy_id in legacy_ids:
         legacy = session.get(PageBlueprint, legacy_id)
         if legacy is not None:

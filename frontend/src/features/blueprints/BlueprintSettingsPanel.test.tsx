@@ -195,7 +195,7 @@ describe("BlueprintSettingsPanel", () => {
   });
 
   it("migrates existing templates and keeps per-item recovery visible", async () => {
-    const legacyItems = Array.from({ length: 5 }, (_, index) => ({
+    const legacyItems = Array.from({ length: 7 }, (_, index) => ({
       ...blueprint,
       id: `legacy-${index + 1}`,
       name: `Template ${index + 1}`,
@@ -207,14 +207,37 @@ describe("BlueprintSettingsPanel", () => {
       migration_state: "legacy",
       verified_at: null,
     }));
+    let registryReads = 0;
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
       if (!init && path.endsWith("/page-blueprints")) {
-        return Promise.resolve({ items: legacyItems });
+        registryReads += 1;
+        return Promise.resolve({
+          items: registryReads === 1
+            ? legacyItems
+            : [
+                ...legacyItems,
+                ...[...legacyItems.slice(0, 4), legacyItems[6]].map((item, index) => ({
+                  ...blueprint,
+                  id: `snapshot-${index + 1}`,
+                  name: item.name,
+                  supersedes_id: item.id,
+                })),
+              ],
+        });
       }
       if (!init && path.endsWith("/wordpress-pages")) {
         return Promise.resolve({ items: [] });
       }
-      if (init?.method === "POST" && path.endsWith("/page-blueprints/migrate")) {
+      if (init?.method === "POST" && path.includes("/page-blueprints/migrate")) {
+        if (path.includes("?blueprint_id=")) {
+          return Promise.resolve({
+            items: [{
+              blueprint_id: legacyItems[4].id,
+              state: "failed",
+              action: "recapture",
+            }],
+          });
+        }
         return Promise.resolve({
           items: [
             ...legacyItems.slice(0, 4).map((item) => ({
@@ -225,6 +248,16 @@ describe("BlueprintSettingsPanel", () => {
               blueprint_id: legacyItems[4].id,
               state: "failed",
               action: "recapture",
+            },
+            {
+              blueprint_id: legacyItems[5].id,
+              state: "pending",
+              action: "wait",
+            },
+            {
+              blueprint_id: legacyItems[6].id,
+              state: "incompatible",
+              action: "new_proposal",
             },
           ],
         });
@@ -242,6 +275,48 @@ describe("BlueprintSettingsPanel", () => {
     expect(screen.getByRole("button", {
       name: "Opnieuw opnemen: Template 5",
     })).toBeVisible();
+    expect(screen.getByText("1 template wacht op een actieve generatie")).toBeVisible();
+    expect(screen.getByText("Nieuw voorstel nodig: Template 7")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Opnieuw opnemen: Template 5",
+    }));
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/page-blueprints/migrate?blueprint_id=legacy-5",
+      { method: "POST" },
+    ));
+  });
+
+  it("hides migration after every legacy template has a successor", async () => {
+    const legacy = {
+      ...blueprint,
+      id: "legacy-1",
+      wordpress_snapshot_id: null,
+      snapshot_version: null,
+      schema_version: null,
+      adapter_version: null,
+      capture_state: null,
+      migration_state: null,
+      verified_at: null,
+    };
+    const successor = {
+      ...blueprint,
+      id: "snapshot-1",
+      supersedes_id: legacy.id,
+    };
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [legacy, successor] });
+      }
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findAllByRole("button", { name: /Dienstpagina/ })).toHaveLength(2);
+    expect(screen.queryByRole("button", {
+      name: "Bestaande templates omzetten",
+    })).not.toBeInTheDocument();
   });
 
   it("reports managed-blueprint availability to hide legacy mappings", async () => {
