@@ -62,3 +62,5 @@ the strict `wordpress-snapshot-draft-job-v1` outbound contract. Keep legacy
   lint passed.
 - Re-review replaced the initial option-based stale-lock recovery with a
   connection-scoped database named lock, removing its delete/add takeover race.
+- Final independent re-review: approved with no remaining Critical or Important
+  findings.
