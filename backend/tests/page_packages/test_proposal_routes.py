@@ -873,6 +873,76 @@ def test_reclaimed_validation_attempt_fences_late_proposal_and_job_writes(
     assert session.get(PageProposalStage, stage.id).state == "ready"
 
 
+def test_late_worker_refreshes_fencing_token_from_database(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    from app.api.routes.page_packages import _fail_snapshot_generation
+
+    opportunity = prepare_project(session, projects)
+    proposal = PagePackageProposal(
+        id="proposal-stale-identity-map",
+        project_id=projects.member_project.id,
+        opportunity_id=opportunity.id,
+        job_id="job-stale-identity-map",
+        state="generating",
+        proposal_group_id="proposal-stale-identity-map",
+        current_version_id="proposal-stale-identity-map",
+        package={},
+        rendered_html="",
+        config_snapshot={},
+        proposed_by=projects.member.id,
+    )
+    job = Job(
+        id=proposal.job_id,
+        project_id=proposal.project_id,
+        job_type="page_package_generation",
+        state="running",
+        progress=80,
+    )
+    stage = PageProposalStage(
+        proposal_version_id=proposal.id,
+        name="validation",
+        state="running",
+        result={},
+        errors={},
+        started_at=datetime.now(UTC),
+    )
+    session.add_all([job, proposal, stage])
+    session.commit()
+    previous_token = stage.attempt_token
+
+    with Session(session.get_bind(), expire_on_commit=False) as replacement:
+        replacement_stage = replacement.get(PageProposalStage, stage.id)
+        replacement_proposal = replacement.get(PagePackageProposal, proposal.id)
+        replacement_job = replacement.get(Job, job.id)
+        replacement_stage.attempt_token = "replacement-attempt"
+        replacement_stage.state = "ready"
+        replacement_stage.result = {"winner": "replacement"}
+        replacement_proposal.state = "proposed"
+        replacement_job.state = "completed"
+        replacement_job.progress = 100
+        replacement.commit()
+
+    assert stage.attempt_token == previous_token
+    _fail_snapshot_generation(
+        session,
+        proposal,
+        job,
+        "validation",
+        RuntimeError("late stale-session failure"),
+        previous_token,
+    )
+
+    session.expire_all()
+    assert session.get(PageProposalStage, stage.id).attempt_token == (
+        "replacement-attempt"
+    )
+    assert session.get(PageProposalStage, stage.id).state == "ready"
+    assert session.get(PagePackageProposal, proposal.id).state == "proposed"
+    assert session.get(Job, job.id).state == "completed"
+
+
 def test_stage_response_field_errors_are_ordered(
     client: TestClient,
     session: Session,

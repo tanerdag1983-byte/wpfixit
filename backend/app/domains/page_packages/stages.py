@@ -69,6 +69,7 @@ def locked_stage(
             PageProposalStage.name == stage_name,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise ValueError("stage_not_found")

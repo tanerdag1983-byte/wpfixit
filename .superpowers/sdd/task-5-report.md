@@ -109,4 +109,11 @@ legacy page-package flow. Snapshot proposals execute `template`, `text`, and
   `_fail_snapshot_generation` now compares the locked stage token before
   inspecting its state, so late workers cannot change a completed proposal or
   job. The route regression covers both a running replacement and a completed
-  replacement; focused and full-backend counts remain unchanged.
+  replacement.
+- Final rereview identified SQLAlchemy identity-map staleness with
+  `expire_on_commit=False`: `SELECT FOR UPDATE` alone could return the old
+  worker's cached token. `locked_stage` now uses `populate_existing=True`, and
+  a separate-session regression proves the late worker observes the committed
+  replacement token and terminal state. Final verification passed `52`
+  focused tests with `2` optional skips and `376` backend tests with `6`
+  optional PostgreSQL concurrency skips; Ruff remained clean.
