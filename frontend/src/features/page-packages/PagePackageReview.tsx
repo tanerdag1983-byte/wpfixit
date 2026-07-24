@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
 import { ProposalRegenerationPanel } from "./ProposalRegenerationPanel";
+import { ProposalStageList } from "./ProposalStageList";
 import { ProposalVersionCompare } from "./ProposalVersionCompare";
 import type {
   BlueprintSchema,
@@ -11,16 +12,19 @@ import type {
   Proposal,
   ProposalCandidate,
   ProposalHandoffIssueResponse,
+  ProposalPackage,
+  SnapshotTextPackage,
 } from "./proposalTypes";
 
 export function PagePackageReview({ projectId }: { projectId: string }) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [candidate, setCandidate] = useState<ProposalCandidate | null>(null);
-  const [draft, setDraft] = useState<PagePackage | null>(null);
+  const [draft, setDraft] = useState<ProposalPackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [importUrl, setImportUrl] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const proposalId = window.sessionStorage.getItem(
@@ -42,16 +46,9 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         if (!active) return;
         setProposal(result);
         setCandidate(readActiveCandidate(result));
-        if (result.package?.title) setDraft(result.package);
+        if (isProposalPackage(result.package)) setDraft(result.package);
         if (result.active_candidate?.status === "failed") {
-          const details = result.active_candidate.candidate_package as
-            | { _generation_error?: unknown }
-            | undefined;
-          setMessage(
-            typeof details?._generation_error === "string"
-              ? details._generation_error
-              : "Nieuwe versie genereren mislukt.",
-          );
+          setMessage("Nieuwe versie genereren mislukt.");
         }
         setImportUrl(null);
         setLoading(false);
@@ -76,7 +73,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       active = false;
       if (pollTimer) window.clearTimeout(pollTimer);
     };
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   async function save() {
     if (!proposal || !draft) return;
@@ -85,7 +82,14 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     try {
       const result = await apiRequest<Proposal>(
         `/projects/${projectId}/page-proposals/${proposal.id}`,
-        { method: "PUT", body: JSON.stringify({ package: draft }) },
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            package: isSnapshotTextPackage(draft)
+              ? snapshotWritePackage(draft)
+              : draft,
+          }),
+        },
       );
       setProposal(result);
       setCandidate(readActiveCandidate(result));
@@ -143,6 +147,35 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Nieuwe versie genereren mislukt.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryStage(stageName: "text" | "validation") {
+    if (!proposal) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await apiRequest<Proposal>(
+        `/projects/${projectId}/page-proposals/${proposal.id}/stages/${stageName}/retry`,
+        { method: "POST" },
+      );
+      setProposal(result);
+      if (isProposalPackage(result.package)) setDraft(result.package);
+      if (stageName === "text" && result.id !== proposal.id) {
+        window.sessionStorage.setItem(`page-proposal-id:${projectId}`, result.id);
+        setRefreshKey((current) => current + 1);
+      }
+      setMessage(
+        stageName === "text"
+          ? "Tekst wordt opnieuw gegenereerd."
+          : "Validatie is opnieuw uitgevoerd.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Opnieuw uitvoeren mislukt.",
       );
     } finally {
       setBusy(false);
@@ -251,7 +284,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     );
   }
 
-  if (proposal?.state === "generating") {
+  if (proposal?.state === "generating" && !draft) {
     return (
       <section className="page-package-review">
         <a className="back-link" href="#opportunities">
@@ -275,12 +308,16 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           Terug naar kansen
         </a>
         <h1>Nieuw paginaconcept beoordelen</h1>
-        <p className="settings-message">{proposal?.job?.error_message || message}</p>
+        <p className="settings-message">
+          {message || "Het paginavoorstel kon niet worden geladen."}
+        </p>
       </section>
     );
   }
 
-  const editable = proposal.state === "proposed";
+  const fieldErrors = proposalFieldErrors(proposal);
+  const editable = proposal.state === "needs_attention"
+    || (proposal.state === "proposed" && !isSnapshotTextPackage(draft));
   return (
     <section className="page-package-review">
       <a className="back-link" href="#opportunities">
@@ -327,6 +364,18 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       <p className="blueprint-preserved-note">
         Afbeeldingen en vormgeving blijven uit de blueprint behouden.
       </p>
+      {proposal.stages && proposal.stages.length > 0 && (
+        <ProposalStageList
+          busy={busy}
+          fieldErrors={fieldErrors}
+          onEditField={(fieldId) => {
+            document.getElementById(fieldInputId(fieldId))?.focus();
+          }}
+          onRetryText={() => void retryStage("text")}
+          onRetryValidation={() => void retryStage("validation")}
+          stages={proposal.stages}
+        />
+      )}
 
       {candidate ? (
         <ProposalVersionCompare
@@ -348,7 +397,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
               className="proposal-preview page-package-preview full-width"
               dangerouslySetInnerHTML={{
                 __html: sanitizeHtml(
-                  proposal.rendered_html || `<p>${proposal.package.title}</p>`,
+                  proposal.rendered_html || `<p>${packageTitle(proposal.package)}</p>`,
                 ),
               }}
             />
@@ -404,7 +453,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 </button>
                 <button
                   className="primary-button"
-                  disabled={!editable || busy}
+                  disabled={proposal.state !== "proposed" || fieldErrors.length > 0 || busy}
                   onClick={approve}
                   type="button"
                 >
@@ -501,11 +550,21 @@ function PackageFields({
   onChange,
   schema,
 }: {
-  draft: PagePackage;
+  draft: ProposalPackage;
   disabled: boolean;
-  onChange: (draft: PagePackage) => void;
+  onChange: (draft: ProposalPackage) => void;
   schema?: BlueprintSchema;
 }) {
+  if (isSnapshotTextPackage(draft)) {
+    return (
+      <SnapshotPackageFields
+        disabled={disabled}
+        draft={draft}
+        onChange={onChange}
+        schema={schema}
+      />
+    );
+  }
   const field = (key: keyof PagePackage, value: string) =>
     onChange({ ...draft, [key]: value });
   return (
@@ -630,7 +689,91 @@ function PackageFields({
   );
 }
 
+function SnapshotPackageFields({
+  disabled,
+  draft,
+  onChange,
+  schema,
+}: {
+  disabled: boolean;
+  draft: SnapshotTextPackage;
+  onChange: (draft: ProposalPackage) => void;
+  schema?: BlueprintSchema;
+}) {
+  const sections = [
+    {
+      id: "document",
+      label: "Basis en SEO",
+      fields: schema?.document_fields ?? [],
+    },
+    ...(schema?.blocks ?? []).map((block) => ({
+      id: block.id,
+      label: block.label,
+      fields: block.fields,
+    })),
+  ];
+  return (
+    <>
+      {sections.map((section, index) => (
+        <section className="package-section blueprint-review-block" key={section.id}>
+          <div className="blueprint-review-block-heading">
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <div><h2>{section.label}</h2></div>
+          </div>
+          <div className="settings-field-grid">
+            {section.fields.map((field) => {
+              const value = draft.text_replacements[field.id] ?? "";
+              const change = (nextValue: string) => onChange({
+                text_replacements: {
+                  ...draft.text_replacements,
+                  [field.id]: nextValue,
+                },
+              });
+              if (field.value_type === "url") {
+                const options = Array.from(
+                  new Set(["", value, field.current_value]),
+                );
+                return (
+                  <label key={field.id}>
+                    {field.label}
+                    <select
+                      aria-label={field.label}
+                      disabled={disabled}
+                      id={fieldInputId(field.id)}
+                      onChange={(event) => change(event.target.value)}
+                      value={value}
+                    >
+                      {options.map((option) => (
+                        <option key={option || "empty"} value={option}>
+                          {option || "Kies een goedgekeurde URL"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              return (
+                <TextField
+                  disabled={disabled}
+                  id={fieldInputId(field.id)}
+                  key={field.id}
+                  label={field.label}
+                  multiline={field.value_type === "rich_text"}
+                  onChange={change}
+                  value={value}
+                  wide={field.value_type === "rich_text"}
+                />
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
 function TextField({
+  id,
   label,
   value,
   disabled,
@@ -638,6 +781,7 @@ function TextField({
   wide = false,
   onChange,
 }: {
+  id?: string;
   label: string;
   value: string;
   disabled: boolean;
@@ -652,6 +796,7 @@ function TextField({
         <textarea
           aria-label={label}
           disabled={disabled}
+          id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -659,6 +804,7 @@ function TextField({
         <input
           aria-label={label}
           disabled={disabled}
+          id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -688,10 +834,70 @@ function sanitizeHtml(value: string) {
 function stateLabel(state: Proposal["state"]) {
   return {
     generating: "Wordt gemaakt",
+    needs_attention: "Aanpassing nodig",
     proposed: "Te beoordelen",
     approved: "Goedgekeurd",
     draft_in_progress: "Concept wordt aangemaakt",
     draft_created: "Concept aangemaakt",
     failed: "Mislukt",
   }[state];
+}
+
+function isSnapshotTextPackage(
+  value: ProposalPackage,
+): value is SnapshotTextPackage {
+  return "text_replacements" in value;
+}
+
+function isProposalPackage(value: unknown): value is ProposalPackage {
+  return !!value
+    && typeof value === "object"
+    && ("title" in value || "text_replacements" in value);
+}
+
+function snapshotWritePackage(draft: SnapshotTextPackage) {
+  return {
+    text_replacements: Object.fromEntries(
+      Object.entries(draft.text_replacements).map(([fieldId, value]) => [
+        fieldId,
+        { value },
+      ]),
+    ),
+  };
+}
+
+function packageTitle(value: ProposalPackage) {
+  return isSnapshotTextPackage(value)
+    ? value.text_replacements["document:title"] || "Gegenereerde pagina"
+    : value.title;
+}
+
+function fieldInputId(fieldId: string) {
+  return `proposal-field-${fieldId}`;
+}
+
+function proposalFieldErrors(proposal: Proposal) {
+  const schema = proposal.config_snapshot.content_schema;
+  const labels = new Map(
+    [
+      ...(schema?.document_fields ?? []),
+      ...(schema?.blocks.flatMap((block) => block.fields) ?? []),
+    ].map((field) => [field.id, field.label]),
+  );
+  return Object.entries(proposal.field_errors ?? {}).map(([fieldId, code]) => ({
+    fieldId,
+    label: labels.get(fieldId) ?? "Veld",
+    message: fieldErrorMessage(code),
+  }));
+}
+
+function fieldErrorMessage(code: string) {
+  return {
+    unsafe_html: "bevat niet-toegestane opmaak",
+    unapproved_url: "bevat een niet-goedgekeurde link",
+    invalid_slug: "heeft geen geldige slug",
+    max_length: "is te lang",
+    required: "is verplicht",
+    invalid_value: "heeft een ongeldige waarde",
+  }[code] ?? "heeft een ongeldige waarde";
 }

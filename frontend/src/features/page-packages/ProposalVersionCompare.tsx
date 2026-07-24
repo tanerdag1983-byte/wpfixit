@@ -15,6 +15,8 @@ export function ProposalVersionCompare({
   onAccept,
   onDiscard,
 }: ProposalVersionCompareProps) {
+  const currentTitle = proposalTitle(current);
+  const candidateTitle = candidate.candidate_package?.title || currentTitle;
   return (
     <section className="proposal-compare-shell">
       <div className="proposal-compare-heading">
@@ -50,13 +52,13 @@ export function ProposalVersionCompare({
         <article className="proposal-compare-column">
           <header>
             <span className="publish-state proposed">Huidige versie</span>
-            <strong>{current.package.title}</strong>
+            <strong>{currentTitle}</strong>
           </header>
           <div
             aria-label="Huidige versie"
             className="proposal-preview page-package-preview"
             dangerouslySetInnerHTML={{
-              __html: sanitizeHtml(current.rendered_html || `<p>${current.package.title}</p>`),
+              __html: sanitizeHtml(current.rendered_html || `<p>${currentTitle}</p>`),
             }}
           />
         </article>
@@ -64,7 +66,7 @@ export function ProposalVersionCompare({
         <article className="proposal-compare-column">
           <header>
             <span className="publish-state approved">Gegenereerd</span>
-            <strong>{candidate.candidate_package?.title || current.package.title}</strong>
+            <strong>{candidateTitle}</strong>
           </header>
           <div
             aria-label="Gegenereerde versie"
@@ -72,7 +74,7 @@ export function ProposalVersionCompare({
             dangerouslySetInnerHTML={{
               __html: sanitizeHtml(
                 candidate.candidate_rendered_html ||
-                  `<p>${candidate.candidate_package?.title || current.package.title}</p>`,
+                  `<p>${candidateTitle}</p>`,
               ),
             }}
           />
@@ -80,6 +82,12 @@ export function ProposalVersionCompare({
       </div>
     </section>
   );
+}
+
+function proposalTitle(proposal: Proposal) {
+  return "text_replacements" in proposal.package
+    ? proposal.package.text_replacements["document:title"] || "Gegenereerde pagina"
+    : proposal.package.title;
 }
 
 function sanitizeHtml(value: string) {

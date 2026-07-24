@@ -11,11 +11,25 @@ export type PagePackage = {
   internal_links: InternalLink[];
 };
 
+export type SnapshotTextPackage = {
+  text_replacements: Record<string, string>;
+};
+
+export type ProposalPackage = PagePackage | SnapshotTextPackage;
+
 export type BlueprintField = {
   id: string;
   path: string;
   label: string;
-  value_type: "plain_text" | "rich_text" | "heading" | "button_text" | "url";
+  value_type:
+    | "plain_text"
+    | "rich_text"
+    | "heading"
+    | "button_text"
+    | "url"
+    | "seo_title"
+    | "meta_description"
+    | "focus_keyword";
   current_value: string;
   required: boolean;
   max_length: number;
@@ -30,17 +44,25 @@ export type BlueprintBlock = {
 };
 
 export type BlueprintSchema = {
-  schema_version: "blueprint-v1";
+  schema_version: "blueprint-v1" | "snapshot-text-v1";
+  document_fields?: BlueprintField[];
   blocks: BlueprintBlock[];
 };
 
 export type ProposalState =
   | "generating"
+  | "needs_attention"
   | "proposed"
   | "approved"
   | "draft_in_progress"
   | "draft_created"
   | "failed";
+
+export type ProposalStage = {
+  name: "template" | "text" | "validation";
+  state: "pending" | "running" | "ready" | "attention" | "failed";
+  retry_count: number;
+};
 
 export type ProposalCandidate = {
   id: string;
@@ -96,7 +118,7 @@ export type Proposal = {
   proposal_group_id?: string;
   version_number?: number;
   is_current?: boolean;
-  package: PagePackage;
+  package: ProposalPackage;
   rendered_html: string;
   blueprint: {
     name: string;
@@ -112,6 +134,8 @@ export type Proposal = {
   approved_at?: string | null;
   wordpress_edit_url?: string | null;
   active_candidate?: ProposalCandidate | null;
+  stages?: ProposalStage[];
+  field_errors?: Record<string, string>;
   latest_handoff?: ProposalHandoff | null;
   draft_job?: DraftJob | null;
   job: { state: string; progress: number; error_message?: string | null } | null;

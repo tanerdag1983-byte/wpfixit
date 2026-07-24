@@ -99,6 +99,59 @@ const activeCandidate = {
     "<section><h2>Nieuwe versie</h2><p>Nog concretere diagnose en revisie.</p></section>",
 };
 
+const attentionProposal = {
+  ...proposal,
+  state: "needs_attention",
+  package: {
+    text_replacements: {
+      "document:title": "DSG revisie Schiedam",
+      "document:slug": "dsg-revisie-schiedam",
+      "seo:title": "DSG revisie Schiedam | Specialist",
+      "seo:meta_description": "Deskundige DSG revisie in Schiedam door een ervaren transmissiespecialist.",
+      "seo:focus_keyword": "dsg revisie schiedam",
+      "acf:hero:label": "",
+      "acf:hero:copy": "<p>Heldere diagnose en revisie.</p>",
+    },
+  },
+  config_snapshot: {
+    content_schema: {
+      schema_version: "snapshot-text-v1",
+      document_fields: [
+        { id: "document:title", path: "post_title", label: "Paginatitel", value_type: "heading", current_value: "", required: true, max_length: 180 },
+        { id: "document:slug", path: "post_name", label: "Slug", value_type: "plain_text", current_value: "", required: true, max_length: 160 },
+        { id: "seo:title", path: "seo.title", label: "SEO-title", value_type: "seo_title", current_value: "", required: true, max_length: 70 },
+        { id: "seo:meta_description", path: "seo.meta_description", label: "Meta description", value_type: "meta_description", current_value: "", required: true, max_length: 170 },
+        { id: "seo:focus_keyword", path: "seo.focus_keyword", label: "Focuszoekwoord", value_type: "focus_keyword", current_value: "", required: true, max_length: 160 },
+      ],
+      blocks: [
+        {
+          id: "hero",
+          layout: "hero_algemeen",
+          label: "Hero (algemeen)",
+          semantic_role: "hero",
+          fields: [
+            { id: "acf:hero:label", path: "page_blocks/0/label", label: "Hero-label", value_type: "plain_text", current_value: "", required: true, max_length: 80 },
+            { id: "acf:hero:copy", path: "page_blocks/0/copy", label: "Introductie", value_type: "rich_text", current_value: "", required: true, max_length: 5000 },
+          ],
+        },
+      ],
+    },
+  },
+  stages: [
+    { name: "template", state: "ready", retry_count: 0 },
+    { name: "text", state: "ready", retry_count: 0 },
+    { name: "validation", state: "attention", retry_count: 0 },
+  ],
+  field_errors: {
+    "acf:hero:label": "unsafe_html",
+  },
+  job: {
+    state: "completed",
+    progress: 100,
+    error_message: "7 validation errors for GeneratedBlueprintPackage",
+  },
+};
+
 describe("PagePackageReview", () => {
   beforeEach(() => {
     apiRequest.mockReset();
@@ -253,6 +306,134 @@ describe("PagePackageReview", () => {
     expect(
       screen.getByRole("heading", { name: "Paginapakket wordt gemaakt" }),
     ).toBeVisible();
+  });
+
+  it("keeps successful text and shows only the invalid field recovery", async () => {
+    apiRequest.mockResolvedValue(attentionProposal);
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByText("Tekst gereed")).toBeVisible();
+    expect(screen.getByText("Hero-label bevat niet-toegestane opmaak")).toBeVisible();
+    expect(screen.getByLabelText("Paginatitel")).toHaveValue("DSG revisie Schiedam");
+    expect(screen.getByRole("button", { name: "Waarde aanpassen" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Voorstel goedkeuren" })).toBeDisabled();
+    expect(screen.queryByText(/validation errors for/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Waarde aanpassen" }));
+    expect(screen.getByLabelText("Hero-label")).toHaveFocus();
+  });
+
+  it("retries validation without replacing the generated text", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/stages/validation/retry") && init?.method === "POST") {
+        return Promise.resolve({
+          ...attentionProposal,
+          state: "proposed",
+          stages: attentionProposal.stages.map((stage) => (
+            stage.name === "validation" ? { ...stage, state: "ready" } : stage
+          )),
+          field_errors: {},
+        });
+      }
+      return Promise.resolve(attentionProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Validatie opnieuw uitvoeren",
+    }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/page-proposals/proposal-1/stages/validation/retry",
+      { method: "POST" },
+    ));
+    expect(screen.getByLabelText("Paginatitel")).toHaveValue("DSG revisie Schiedam");
+    expect(screen.getByRole("button", { name: "Wijzigingen opslaan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Voorstel goedkeuren" })).toBeEnabled();
+  });
+
+  it("follows the new proposal version after retrying failed text", async () => {
+    const failedText = {
+      ...attentionProposal,
+      state: "failed",
+      stages: attentionProposal.stages.map((stage) => (
+        stage.name === "text" ? { ...stage, state: "failed" } : stage
+      )),
+    };
+    let activeProposal: Record<string, unknown> = failedText;
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/stages/text/retry") && init?.method === "POST") {
+        activeProposal = {
+          ...attentionProposal,
+          id: "proposal-2",
+          state: "proposed",
+          field_errors: {},
+          stages: attentionProposal.stages.map((stage) => ({
+            ...stage,
+            state: "ready",
+          })),
+        };
+        return Promise.resolve({
+          ...activeProposal,
+          state: "generating",
+          package: {},
+        });
+      }
+      return Promise.resolve(activeProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Tekst opnieuw genereren",
+    }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/page-proposals/proposal-1/stages/text/retry",
+      { method: "POST" },
+    ));
+    expect(window.sessionStorage.getItem("page-proposal-id:project-1")).toBe(
+      "proposal-2",
+    );
+    expect(await screen.findByText("Te beoordelen")).toBeVisible();
+  });
+
+  it("submits a corrected snapshot field without dropping successful text", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({
+          ...attentionProposal,
+          state: "proposed",
+          package: {
+            text_replacements: Object.fromEntries(
+              Object.entries(
+                JSON.parse(init.body as string).package.text_replacements,
+              ).map(([fieldId, value]) => [
+                fieldId,
+                (value as { value: string }).value,
+              ]),
+            ),
+          },
+          field_errors: {},
+        });
+      }
+      return Promise.resolve(attentionProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Hero-label"), {
+      target: { value: "DSG-specialist" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wijzigingen opslaan" }));
+
+    await waitFor(() => {
+      const update = apiRequest.mock.calls.find(([, init]) => init?.method === "PUT");
+      const replacements = JSON.parse(
+        update?.[1].body as string,
+      ).package.text_replacements;
+      expect(replacements["acf:hero:label"]).toEqual({ value: "DSG-specialist" });
+      expect(replacements["document:title"]).toEqual({ value: "DSG revisie Schiedam" });
+    });
   });
 
   it("saves, approves, and queues a WordPress draft without opening a window", async () => {
