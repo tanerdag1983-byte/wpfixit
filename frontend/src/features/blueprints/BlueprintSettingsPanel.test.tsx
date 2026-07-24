@@ -15,6 +15,14 @@ const blueprint = {
   page_type: "service",
   source_wordpress_page_id: "page-19",
   wordpress_blueprint_id: 901,
+  wordpress_snapshot_id: 901,
+  snapshot_version: 2,
+  schema_version: "snapshot-text-v1",
+  adapter_version: "acf-v1",
+  capture_state: "ready",
+  migration_state: "native",
+  verified_at: "2026-07-24T10:30:00Z",
+  created_at: "2026-07-23T09:15:00Z",
   builder: "acf",
   seo_plugin: "yoast",
   version: 1,
@@ -23,7 +31,54 @@ const blueprint = {
   is_default_for_page_type: false,
   supersedes_id: null,
   content_schema: {
-    schema_version: "blueprint-v1",
+    schema_version: "snapshot-text-v1",
+    document_fields: [
+      {
+        id: "document:title",
+        path: "post_title",
+        label: "Paginatitel",
+        value_type: "heading",
+        current_value: "Transmissie revisie",
+        required: true,
+        max_length: 180,
+      },
+      {
+        id: "document:slug",
+        path: "post_name",
+        label: "Slug",
+        value_type: "plain_text",
+        current_value: "transmissie-revisie",
+        required: true,
+        max_length: 160,
+      },
+      {
+        id: "seo:title",
+        path: "seo.title",
+        label: "SEO-titel",
+        value_type: "seo_title",
+        current_value: "",
+        required: true,
+        max_length: 70,
+      },
+      {
+        id: "seo:meta_description",
+        path: "seo.meta_description",
+        label: "Meta description",
+        value_type: "meta_description",
+        current_value: "",
+        required: true,
+        max_length: 170,
+      },
+      {
+        id: "seo:focus_keyword",
+        path: "seo.focus_keyword",
+        label: "Focuszoekwoord",
+        value_type: "focus_keyword",
+        current_value: "",
+        required: true,
+        max_length: 160,
+      },
+    ],
     blocks: [
       {
         id: "hero",
@@ -92,16 +147,16 @@ describe("BlueprintSettingsPanel", () => {
   it("creates a blueprint and shows its grouped blocks", async () => {
     render(<BlueprintSettingsPanel projectId="project-1" />);
 
-    fireEvent.change(await screen.findByLabelText("Blueprintnaam"), {
+    fireEvent.change(await screen.findByLabelText("Templatenaam"), {
       target: { value: "Dienstpagina" },
     });
     fireEvent.change(screen.getByLabelText("Paginatype"), {
       target: { value: "service" },
     });
-    fireEvent.change(screen.getByLabelText("Referentiepagina"), {
+    fireEvent.change(screen.getByLabelText("Bronpagina"), {
       target: { value: "page-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Blueprint maken" }));
+    fireEvent.click(screen.getByRole("button", { name: "Template opnemen" }));
 
     expect(await screen.findByText("Hero (algemeen)")).toBeVisible();
     expect(screen.getByText("Symptomen")).toBeVisible();
@@ -117,6 +172,76 @@ describe("BlueprintSettingsPanel", () => {
         }),
       }),
     );
+  });
+
+  it("shows immutable snapshot identity instead of a mutable blueprint page", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [blueprint] });
+      }
+      return Promise.resolve({ items: [] });
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+
+    expect(await screen.findByText("Snapshotversie 2")).toBeVisible();
+    expect(screen.getByText("Verborgen WordPress-template")).toBeVisible();
+    expect(screen.getByText("Adapter acf-v1")).toBeVisible();
+    expect(screen.getByText("Schema snapshot-text-v1")).toBeVisible();
+    expect(screen.getByText("7 tekstvelden")).toBeVisible();
+    expect(screen.getByText(/Laatst gecontroleerd/)).toBeVisible();
+    expect(screen.queryByText("Blueprintpagina")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verwijderen" })).not.toBeInTheDocument();
+  });
+
+  it("migrates existing templates and keeps per-item recovery visible", async () => {
+    const legacyItems = Array.from({ length: 5 }, (_, index) => ({
+      ...blueprint,
+      id: `legacy-${index + 1}`,
+      name: `Template ${index + 1}`,
+      wordpress_snapshot_id: null,
+      snapshot_version: null,
+      schema_version: null,
+      adapter_version: null,
+      capture_state: null,
+      migration_state: "legacy",
+      verified_at: null,
+    }));
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (!init && path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: legacyItems });
+      }
+      if (!init && path.endsWith("/wordpress-pages")) {
+        return Promise.resolve({ items: [] });
+      }
+      if (init?.method === "POST" && path.endsWith("/page-blueprints/migrate")) {
+        return Promise.resolve({
+          items: [
+            ...legacyItems.slice(0, 4).map((item) => ({
+              blueprint_id: item.id,
+              state: "migrated",
+            })),
+            {
+              blueprint_id: legacyItems[4].id,
+              state: "failed",
+              action: "recapture",
+            },
+          ],
+        });
+      }
+      return Promise.resolve(blueprint);
+    });
+
+    render(<BlueprintSettingsPanel projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Bestaande templates omzetten",
+    }));
+
+    expect(await screen.findByText("4 templates omgezet")).toBeVisible();
+    expect(screen.getByText("1 template opnieuw opnemen")).toBeVisible();
+    expect(screen.getByRole("button", {
+      name: "Opnieuw opnemen: Template 5",
+    })).toBeVisible();
   });
 
   it("reports managed-blueprint availability to hide legacy mappings", async () => {
@@ -169,7 +294,7 @@ describe("BlueprintSettingsPanel", () => {
       if (!init && path.endsWith("/wordpress-pages")) {
         return Promise.resolve({ items: [] });
       }
-      if (init?.method === "POST" && path.endsWith("/validate")) {
+      if (init?.method === "POST" && path.endsWith("/verify")) {
         return Promise.reject(new Error("Blueprint structure has changed"));
       }
       if (!init && path.endsWith("/page-blueprints/blueprint-1")) {
@@ -179,7 +304,7 @@ describe("BlueprintSettingsPanel", () => {
     });
 
     render(<BlueprintSettingsPanel projectId="project-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Valideren" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Controleren" }));
 
     expect(await screen.findAllByText("Nieuwe versie nodig")).toHaveLength(2);
     expect(screen.getByText("Blueprint structure has changed")).toBeVisible();
@@ -221,18 +346,18 @@ describe("BlueprintSettingsPanel", () => {
       return Promise.resolve({ items: [] });
     });
     const { rerender } = render(<BlueprintSettingsPanel projectId="project-1" />);
-    fireEvent.change(await screen.findByLabelText("Blueprintnaam"), {
+    fireEvent.change(await screen.findByLabelText("Templatenaam"), {
       target: { value: "Dienstpagina" },
     });
-    fireEvent.change(screen.getByLabelText("Referentiepagina"), {
+    fireEvent.change(screen.getByLabelText("Bronpagina"), {
       target: { value: "page-19" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Blueprint maken" }));
+    fireEvent.click(screen.getByRole("button", { name: "Template opnemen" }));
 
     rerender(<BlueprintSettingsPanel projectId="project-2" />);
     finishCreate?.(blueprint);
 
-    await waitFor(() => expect(screen.getByLabelText("Blueprintnaam")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("Templatenaam")).toHaveValue(""));
     expect(screen.queryByText("Hero (algemeen)")).not.toBeInTheDocument();
   });
 
@@ -245,9 +370,9 @@ describe("BlueprintSettingsPanel", () => {
     render(<BlueprintSettingsPanel projectId="project-1" />);
 
     expect(await screen.findByRole("status")).toHaveTextContent("Register offline");
-    expect(screen.getByText("Blueprintregister kon niet worden geladen.")).toBeVisible();
+    expect(screen.getByText("Templateregister kon niet worden geladen.")).toBeVisible();
     expect(screen.queryByText(/oude paginapakket/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Blueprintregister laden...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Templateregister laden...")).not.toBeInTheDocument();
   });
 
   it("marks the selected registry item accessibly", async () => {
@@ -286,7 +411,7 @@ describe("BlueprintSettingsPanel", () => {
     expect(screen.getByText(/oude instellingen blijven behouden/)).toBeVisible();
   });
 
-  it("locks destructive actions while semantic roles are being saved", async () => {
+  it("locks snapshot actions while semantic roles are being saved", async () => {
     let finishSave: ((value: typeof blueprint) => void) | undefined;
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
       if (!init && path.endsWith("/page-blueprints")) return Promise.resolve({ items: [blueprint] });
@@ -303,8 +428,8 @@ describe("BlueprintSettingsPanel", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Rollen opslaan" }));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Verwijderen" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Controleren" })).toBeDisabled());
     finishSave?.(blueprint);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Verwijderen" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Controleren" })).toBeEnabled());
   });
 });

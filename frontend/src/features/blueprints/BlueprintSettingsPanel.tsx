@@ -15,6 +15,14 @@ type Blueprint = {
   page_type: string;
   source_wordpress_page_id: string;
   wordpress_blueprint_id: number;
+  wordpress_snapshot_id: number | null;
+  snapshot_version: number | null;
+  schema_version: string | null;
+  adapter_version: string | null;
+  capture_state: string | null;
+  migration_state: string | null;
+  verified_at: string | null;
+  created_at: string;
   builder: string;
   seo_plugin: string;
   version: number;
@@ -36,6 +44,12 @@ type LegacyCandidate = {
   builder: string;
   seo_plugin: string;
   state: "capture_required";
+};
+type MigrationResult = {
+  blueprint_id: string;
+  name: string;
+  state: string;
+  action?: string;
 };
 
 const stateLabels: Record<BlueprintState, string> = {
@@ -71,6 +85,7 @@ export function BlueprintSettingsPanel({
   const [message, setMessage] = useState("");
   const [registryStatus, setRegistryStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [legacyCandidates, setLegacyCandidates] = useState<LegacyCandidate[]>([]);
+  const [migrationResults, setMigrationResults] = useState<MigrationResult[]>([]);
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
 
@@ -86,6 +101,7 @@ export function BlueprintSettingsPanel({
     setMessage("");
     setRegistryStatus("loading");
     setLegacyCandidates([]);
+    setMigrationResults([]);
     onAvailabilityChange?.(null);
 
     apiRequest<{ items: Blueprint[]; legacy_candidates?: LegacyCandidate[] }>(`/projects/${projectId}/page-blueprints`)
@@ -158,10 +174,10 @@ export function BlueprintSettingsPanel({
       if (projectIdRef.current !== requestProjectId) return;
       replaceBlueprint(created, requestProjectId);
       setName("");
-      setMessage("Blueprint is vastgelegd vanuit WordPress.");
+      setMessage("Templatesnapshot is opgenomen vanuit WordPress.");
     } catch (error) {
       if (projectIdRef.current === requestProjectId) {
-        setMessage(error instanceof Error ? error.message : "Blueprint maken mislukt.");
+        setMessage(error instanceof Error ? error.message : "Template opnemen mislukt.");
       }
     } finally {
       if (projectIdRef.current === requestProjectId) setBusy(false);
@@ -221,6 +237,45 @@ export function BlueprintSettingsPanel({
     }
   }
 
+  async function migrateTemplates() {
+    const requestProjectId = projectId;
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<{
+        items: Array<Omit<MigrationResult, "name">>;
+      }>(`/projects/${requestProjectId}/page-blueprints/migrate`, {
+        method: "POST",
+      });
+      if (projectIdRef.current !== requestProjectId) return;
+      setMigrationResults(response.items.map((result) => ({
+        ...result,
+        name: blueprints.find((item) => item.id === result.blueprint_id)?.name
+          ?? result.blueprint_id,
+      })));
+      const registry = await apiRequest<{
+        items: Blueprint[];
+        legacy_candidates?: LegacyCandidate[];
+      }>(`/projects/${requestProjectId}/page-blueprints`);
+      if (projectIdRef.current !== requestProjectId) return;
+      const items = registry.items ?? [];
+      setBlueprints(items);
+      setLegacyCandidates(registry.legacy_candidates ?? []);
+      setSelectedId((current) =>
+        items.some((item) => item.id === current)
+          ? current
+          : items[0]?.id ?? "",
+      );
+      onAvailabilityChange?.(items.length > 0);
+    } catch (error) {
+      if (projectIdRef.current === requestProjectId) {
+        setMessage(error instanceof Error ? error.message : "Templates omzetten mislukt.");
+      }
+    } finally {
+      if (projectIdRef.current === requestProjectId) setBusy(false);
+    }
+  }
+
   async function removeBlueprint() {
     if (!selected) return;
     const requestProjectId = projectId;
@@ -246,12 +301,12 @@ export function BlueprintSettingsPanel({
 
   return (
     <section className="blueprint-settings">
-      <p className="eyebrow">Managed page blueprints</p>
+      <p className="eyebrow">Versiebeheerde templates</p>
       <div className="blueprint-section-heading">
         <div>
-          <h2>WordPress-paginastructuren</h2>
+          <h2>WordPress-templatesnapshots</h2>
           <p className="settings-intro">
-            Kies een bestaande pagina. WP FixPilot bewaart de volledige builderstructuur
+            Kies een bronpagina. WP FixPilot maakt een verborgen, onveranderlijke kopie
             en stelt alleen goedgekeurde tekstvelden open voor AI.
           </p>
         </div>
@@ -259,7 +314,7 @@ export function BlueprintSettingsPanel({
 
       <div className="blueprint-create-row">
         <label>
-          Blueprintnaam
+          Templatenaam
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <label>
@@ -269,7 +324,7 @@ export function BlueprintSettingsPanel({
           </select>
         </label>
         <label>
-          Referentiepagina
+          Bronpagina
           <select value={sourcePageId} onChange={(event) => setSourcePageId(event.target.value)}>
             <option value="">Kies een WordPress-pagina</option>
             {pages.map((page) => <option key={page.id} value={page.id}>{page.title || page.url}</option>)}
@@ -281,25 +336,55 @@ export function BlueprintSettingsPanel({
           onClick={createBlueprint}
           type="button"
         >
-          {busy ? "Vastleggen..." : "Blueprint maken"}
+          {busy ? "Opnemen..." : "Template opnemen"}
         </button>
       </div>
 
       {message && <p aria-live="polite" className="form-message" role="status">{message}</p>}
 
+      {(legacyCandidates.length > 0 || blueprints.some((item) => item.wordpress_snapshot_id === null)) && (
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={migrateTemplates}
+          type="button"
+        >
+          Bestaande templates omzetten
+        </button>
+      )}
+
+      {migrationResults.length > 0 && (
+        <div aria-live="polite" className="blueprint-migration-note">
+          <p>{migrationSummary(migrationResults, "migrated", "omgezet")}</p>
+          {migrationResults.some((item) => item.state === "failed") && (
+            <p>{migrationSummary(migrationResults, "failed", "opnieuw opnemen")}</p>
+          )}
+          {migrationResults.filter((item) => item.state === "failed").map((item) => (
+            <button
+              disabled={busy}
+              key={item.blueprint_id}
+              onClick={migrateTemplates}
+              type="button"
+            >
+              Opnieuw opnemen: {item.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {registryStatus === "loading" ? (
-        <p className="blueprint-migration-note">Blueprintregister laden...</p>
+        <p className="blueprint-migration-note">Templateregister laden...</p>
       ) : registryStatus === "error" ? (
-        <p className="blueprint-migration-note">Blueprintregister kon niet worden geladen.</p>
+        <p className="blueprint-migration-note">Templateregister kon niet worden geladen.</p>
       ) : blueprints.length === 0 ? (
         <p className="blueprint-migration-note">
           {legacyCandidates.length > 0
             ? "Geldige oude paginapakketinstellingen gevonden. Kies de bijbehorende referentiepagina hierboven om veilig een managed blueprint vast te leggen. De oude instellingen blijven behouden."
-            : "Nog geen managed blueprint. Het oude paginapakket blijft hieronder beschikbaar totdat de eerste blueprint klaarstaat."}
+            : "Nog geen templatesnapshot. Het oude paginapakket blijft hieronder beschikbaar totdat de eerste snapshot klaarstaat."}
         </p>
       ) : (
         <div className="blueprint-workspace">
-          <nav aria-label="Projectblueprints" className="blueprint-registry">
+          <nav aria-label="Projecttemplates" className="blueprint-registry">
             {blueprints.map((blueprint) => (
               <button
                 className={blueprint.id === selectedId ? "active" : ""}
@@ -321,18 +406,50 @@ export function BlueprintSettingsPanel({
                 <div>
                   <span className={`blueprint-state ${selected.state}`}>{stateLabels[selected.state]}</span>
                   <h3>{selected.name}</h3>
+                  {selected.wordpress_snapshot_id !== null ? (
+                    <>
+                      <p>Snapshotversie {selected.snapshot_version}</p>
+                      <p>Verborgen WordPress-template</p>
+                      <p>Opgenomen {formatTimestamp(selected.created_at)}</p>
+                      <p>Laatst gecontroleerd {formatTimestamp(selected.verified_at)}</p>
+                      <p>Builder {selected.builder.toUpperCase()}</p>
+                      <p>Adapter {selected.adapter_version}</p>
+                      <p>Schema {selected.schema_version}</p>
+                      <p>{fieldCount(selected.content_schema)} tekstvelden</p>
+                      <p>
+                        Vastlegging {snapshotStateLabel(selected.capture_state)}
+                        {" · "}
+                        Migratie {migrationStateLabel(selected.migration_state)}
+                      </p>
+                    </>
+                  ) : (
+                    <p>Oude templateregistratie · omzetting nodig</p>
+                  )}
                   <p>
-                    {selected.builder} · {selected.seo_plugin} · WordPress #{selected.wordpress_blueprint_id}
+                    Bron (alleen herkomst): {selectedSource?.title || selectedSource?.url || selected.source_wordpress_page_id}
                   </p>
-                  <p>Bron: {selectedSource?.title || selectedSource?.url || selected.source_wordpress_page_id}</p>
                 </div>
                 <div className="blueprint-actions">
                   {!selected.is_default_for_page_type && selected.state === "ready" && (
                     <button disabled={busy} onClick={() => action("/set-default")} type="button">Als standaard</button>
                   )}
-                  <button disabled={busy} onClick={() => action("/validate")} type="button">Valideren</button>
-                  <button disabled={busy} onClick={() => action("/new-version")} type="button">Nieuwe versie</button>
-                  <button className="danger-link" disabled={busy} onClick={removeBlueprint} type="button">Verwijderen</button>
+                  <button
+                    disabled={busy}
+                    onClick={() => action(selected.wordpress_snapshot_id === null ? "/validate" : "/verify")}
+                    type="button"
+                  >
+                    Controleren
+                  </button>
+                  {selected.wordpress_snapshot_id !== null && (
+                    <button disabled={busy} onClick={() => action("/new-version")} type="button">
+                      Nieuwe versie opnemen
+                    </button>
+                  )}
+                  {selected.wordpress_snapshot_id === null && (
+                    <button className="danger-link" disabled={busy} onClick={removeBlueprint} type="button">
+                      Verwijderen
+                    </button>
+                  )}
                 </div>
               </header>
               {selected.is_default_for_page_type && <p className="blueprint-default">Standaard voor {selected.page_type}</p>}
@@ -343,4 +460,34 @@ export function BlueprintSettingsPanel({
       )}
     </section>
   );
+}
+
+function fieldCount(schema: BlueprintSchema) {
+  return (schema.document_fields?.length ?? 0)
+    + schema.blocks.reduce((total, block) => total + block.fields.length, 0);
+}
+
+function formatTimestamp(value: string | null) {
+  if (!value) return "nog niet gecontroleerd";
+  return new Intl.DateTimeFormat("nl-NL", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function migrationSummary(
+  results: MigrationResult[],
+  state: string,
+  action: string,
+) {
+  const count = results.filter((item) => item.state === state).length;
+  return `${count} template${count === 1 ? "" : "s"} ${action}`;
+}
+
+function snapshotStateLabel(state: string | null) {
+  return state === "ready" ? "gereed" : state ?? "onbekend";
+}
+
+function migrationStateLabel(state: string | null) {
+  return state === "native" ? "rechtstreeks opgenomen" : state ?? "onbekend";
 }

@@ -13,14 +13,23 @@ export type BlueprintField = {
   id: string;
   path: string;
   label: string;
-  value_type: "plain_text" | "rich_text" | "heading" | "button_text" | "url";
+  value_type:
+    | "plain_text"
+    | "rich_text"
+    | "heading"
+    | "button_text"
+    | "url"
+    | "seo_title"
+    | "meta_description"
+    | "focus_keyword";
   current_value: string;
   required: boolean;
   max_length: number;
 };
 
 export type BlueprintSchema = {
-  schema_version: "blueprint-v1";
+  schema_version: "blueprint-v1" | "snapshot-text-v1";
+  document_fields?: BlueprintField[];
   blocks: Array<{
     id: string;
     layout: string;
