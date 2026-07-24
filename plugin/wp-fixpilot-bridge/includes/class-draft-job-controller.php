@@ -5,6 +5,7 @@ declare(strict_types=1);
 final class WPFixPilot_Draft_Job_Controller
 {
     private const CONTRACT_VERSION = 'wordpress-draft-job-v1';
+    private const SNAPSHOT_CONTRACT_VERSION = 'wordpress-snapshot-draft-job-v1';
 
     private object $client;
     private object $blueprintController;
@@ -78,17 +79,36 @@ final class WPFixPilot_Draft_Job_Controller
     /** @param array<string, mixed> $job */
     public function process_payload(array $job): array|WP_Error
     {
-        if (($job['contract_version'] ?? '') !== self::CONTRACT_VERSION) {
+        $contractVersion = $job['contract_version'] ?? '';
+        if (
+            $contractVersion !== self::CONTRACT_VERSION
+            && $contractVersion !== self::SNAPSHOT_CONTRACT_VERSION
+        ) {
             return new WP_Error(
                 'wp_fixpilot_unsupported_contract',
                 'Deze concepttaak gebruikt een onbekende contractversie.'
             );
         }
         $payload = $job['payload'] ?? null;
-        if (!is_array($payload) || !$this->valid_payload($payload)) {
+        if (!is_array($payload)) {
             return new WP_Error(
                 'wp_fixpilot_job_invalid',
                 'De ontvangen concepttaak is niet compleet.'
+            );
+        }
+        $validPayload = $contractVersion === self::SNAPSHOT_CONTRACT_VERSION
+            ? $this->valid_snapshot_payload($payload)
+            : $this->valid_payload($payload);
+        if (!$validPayload) {
+            return new WP_Error(
+                'wp_fixpilot_job_invalid',
+                'De ontvangen concepttaak is niet compleet.'
+            );
+        }
+        if ($contractVersion === self::SNAPSHOT_CONTRACT_VERSION) {
+            return $this->blueprintController->create_snapshot_draft(
+                (int) $payload['snapshot_id'],
+                $payload
             );
         }
         return $this->blueprintController->create_draft(
@@ -133,6 +153,45 @@ final class WPFixPilot_Draft_Job_Controller
             && is_array($payload['replacements'])
             && is_array($payload['approved_urls'])
             && is_array($payload['seo']);
+    }
+
+    private function valid_snapshot_payload(mixed $payload): bool
+    {
+        if (!is_array($payload)) {
+            return false;
+        }
+        $required = [
+            'proposal_version_id',
+            'snapshot_id',
+            'snapshot_version',
+            'snapshot_structure_hash',
+            'schema_version',
+            'idempotency_key',
+            'text_replacements',
+            'approved_urls',
+        ];
+        if (
+            array_diff(array_keys($payload), $required) !== []
+            || array_diff($required, array_keys($payload)) !== []
+        ) {
+            return false;
+        }
+        return is_int($payload['snapshot_id'])
+            && $payload['snapshot_id'] > 0
+            && is_int($payload['snapshot_version'])
+            && $payload['snapshot_version'] > 0
+            && is_string($payload['snapshot_structure_hash'])
+            && $payload['snapshot_structure_hash'] !== ''
+            && $payload['schema_version'] === 'snapshot-text-v1'
+            && is_string($payload['proposal_version_id'])
+            && $payload['proposal_version_id'] !== ''
+            && is_string($payload['idempotency_key'])
+            && hash_equals(
+                $payload['proposal_version_id'],
+                $payload['idempotency_key']
+            )
+            && is_array($payload['text_replacements'])
+            && is_array($payload['approved_urls']);
     }
 
     private function backend_error_code(WP_Error $error): string

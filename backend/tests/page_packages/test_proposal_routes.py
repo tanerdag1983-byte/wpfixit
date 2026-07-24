@@ -548,6 +548,10 @@ def test_snapshot_proposal_persists_ordered_template_text_validation_stages(
         "structure_hash": "hash-v2",
     }
     assert body["stages"][1]["result"] == proposal_snapshot_text_package()
+    assert body["stages"][2]["result"]["approved_urls"] == [
+        "/contact/",
+        "https://member.example/dienst-template/",
+    ]
     assert body["package"]["text_replacements"]["document:title"] == "Nieuwe titel"
     assert body["package"]["text_replacements"]["seo:focus_keyword"] == (
         opportunity.keyword

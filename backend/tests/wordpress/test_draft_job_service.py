@@ -5,7 +5,11 @@ import pytest
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
-from app.domains.page_packages.models import PagePackageHandoff, PagePackageProposal
+from app.domains.page_packages.models import (
+    PagePackageHandoff,
+    PagePackageProposal,
+    PageProposalStage,
+)
 from app.domains.wordpress.draft_jobs import (
     cancel_ineligible_draft_jobs,
     claim_next_draft_job,
@@ -72,6 +76,115 @@ def _package() -> dict:
         ],
         "internal_links": [],
     }
+
+
+def _snapshot_schema() -> dict:
+    return {
+        "schema_version": "snapshot-text-v1",
+        "document_fields": [
+            {
+                "id": "document:title",
+                "path": "post_title",
+                "label": "Paginatitel",
+                "value_type": "heading",
+                "current_value": "Diensttemplate",
+                "required": True,
+                "max_length": 180,
+            },
+            {
+                "id": "document:slug",
+                "path": "post_name",
+                "label": "Slug",
+                "value_type": "plain_text",
+                "current_value": "diensttemplate",
+                "required": True,
+                "max_length": 160,
+            },
+            {
+                "id": "seo:title",
+                "path": "seo.title",
+                "label": "SEO-titel",
+                "value_type": "seo_title",
+                "current_value": "",
+                "required": True,
+                "max_length": 70,
+            },
+            {
+                "id": "seo:meta_description",
+                "path": "seo.meta_description",
+                "label": "Meta description",
+                "value_type": "meta_description",
+                "current_value": "",
+                "required": True,
+                "max_length": 170,
+            },
+            {
+                "id": "seo:focus_keyword",
+                "path": "seo.focus_keyword",
+                "label": "Focuszoekwoord",
+                "value_type": "focus_keyword",
+                "current_value": "",
+                "required": True,
+                "max_length": 160,
+            },
+        ],
+        "blocks": _schema()["blocks"],
+    }
+
+
+def make_native_snapshot_proposal(
+    session, proposal: PagePackageProposal
+) -> PagePackageProposal:
+    blueprint = session.get(PageBlueprint, proposal.blueprint_id)
+    assert blueprint is not None
+    schema = _snapshot_schema()
+    blueprint.wordpress_snapshot_id = 903
+    blueprint.snapshot_version = 3
+    blueprint.schema_version = "snapshot-text-v1"
+    blueprint.adapter_version = "acf-v1"
+    blueprint.capture_state = "ready"
+    blueprint.migration_state = "native"
+    blueprint.verified_at = datetime.now(UTC)
+    blueprint.content_schema = schema
+    proposal.config_snapshot = {
+        "wordpress_snapshot_id": 903,
+        "snapshot_version": 3,
+        "schema_version": "snapshot-text-v1",
+        "structure_hash": blueprint.structure_hash,
+        "content_schema": schema,
+    }
+    proposal.package = {
+        "text_replacements": {
+            "document:title": "DSG revisie specialist Schiedam",
+            "document:slug": "dsg-revisie-schiedam",
+            "seo:title": "DSG revisie Schiedam door een specialist",
+            "seo:meta_description": (
+                "Laat uw DSG onderzoeken en gericht reviseren door SHM Transmissie "
+                "in Schiedam met een duidelijk advies vooraf."
+            ),
+            "seo:focus_keyword": "dsg revisie schiedam",
+            "acf-title": "DSG revisie Schiedam",
+            "acf-cta-url": "/contact/",
+        }
+    }
+    session.add(
+        PageProposalStage(
+            proposal_version_id=proposal.id,
+            name="validation",
+            state="ready",
+            result={
+                "text_replacements": proposal.package["text_replacements"],
+                "approved_urls": ["/contact/"],
+                "field_errors": {},
+                "blocking_field_ids": [],
+                "ignored_field_ids": [],
+                "missing_required_field_ids": [],
+            },
+            errors={},
+        )
+    )
+    session.commit()
+    return proposal
 
 
 @pytest.fixture
@@ -149,6 +262,44 @@ def approved_blueprint_proposal(session, projects) -> PagePackageProposal:
     )
     session.commit()
     return proposal
+
+
+def test_snapshot_job_contains_only_snapshot_contract_fields(
+    session, approved_blueprint_proposal
+) -> None:
+    proposal = make_native_snapshot_proposal(session, approved_blueprint_proposal)
+
+    job = create_or_get_draft_job(session, proposal)
+
+    assert job.contract_version == "wordpress-snapshot-draft-job-v1"
+    assert set(job.payload) == {
+        "proposal_version_id",
+        "snapshot_id",
+        "snapshot_version",
+        "snapshot_structure_hash",
+        "schema_version",
+        "idempotency_key",
+        "text_replacements",
+        "approved_urls",
+    }
+    assert job.payload["snapshot_id"] == 903
+    assert job.payload["text_replacements"]["document:title"] == (
+        "DSG revisie specialist Schiedam"
+    )
+
+
+def test_snapshot_job_rejects_changed_snapshot_identity(
+    session, approved_blueprint_proposal
+) -> None:
+    proposal = make_native_snapshot_proposal(session, approved_blueprint_proposal)
+    proposal.config_snapshot = {
+        **proposal.config_snapshot,
+        "snapshot_version": 99,
+    }
+    session.commit()
+
+    with pytest.raises(ValueError, match="snapshot is stale"):
+        create_or_get_draft_job(session, proposal)
 
 
 def test_create_or_get_job_is_idempotent(session, approved_blueprint_proposal) -> None:

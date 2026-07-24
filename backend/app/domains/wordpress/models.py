@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.domains.wordpress.draft_jobs import (
-    JOB_CONTRACT_VERSION,
+    JOB_CONTRACT_VERSIONS,
     hash_draft_job_payload,
     normalize_site_url,
 )
@@ -98,7 +98,8 @@ class WordPressDraftJob(Base):
             name="ck_wordpress_draft_jobs_claim_fields",
         ),
         CheckConstraint(
-            f"contract_version = '{JOB_CONTRACT_VERSION}'",
+            "contract_version IN "
+            f"({', '.join(repr(version) for version in JOB_CONTRACT_VERSIONS)})",
             name="ck_wordpress_draft_jobs_contract_version",
         ),
         CheckConstraint(

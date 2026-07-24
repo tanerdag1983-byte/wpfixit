@@ -7,6 +7,9 @@ from tests.recommendations.conftest import ProjectFixtures
 from tests.wordpress.test_draft_job_service import (
     approved_blueprint_proposal as _approved_blueprint_proposal,
 )
+from tests.wordpress.test_draft_job_service import (
+    make_native_snapshot_proposal,
+)
 
 
 @pytest.fixture
@@ -207,6 +210,36 @@ def test_dashboard_creates_job_and_plugin_claims_completes_it(
     stored = session.get(WordPressDraftJob, created.json()["id"])
     assert stored is not None
     assert stored.wordpress_object_id == 987
+
+
+def test_plugin_claim_receives_snapshot_contract(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    approved_blueprint_proposal,
+) -> None:
+    proposal = make_native_snapshot_proposal(session, approved_blueprint_proposal)
+    auth_as(projects.member)
+    created = client.post(
+        f"/projects/{projects.member_project.id}/page-proposals/"
+        f"{proposal.id}/draft-job"
+    )
+
+    claimed = client.post(
+        f"/projects/{projects.member_project.id}/wordpress-draft-jobs/claim",
+        headers={
+            "Authorization": "Bearer wpfx_test",
+            "X-WP-FixPilot-Site": "https://member.example",
+        },
+    )
+
+    assert created.status_code == 201
+    assert claimed.status_code == 200
+    assert claimed.json()["job"]["contract_version"] == (
+        "wordpress-snapshot-draft-job-v1"
+    )
+    assert claimed.json()["job"]["payload"]["snapshot_id"] == 903
 
 
 def test_plugin_auth_is_project_and_site_scoped(

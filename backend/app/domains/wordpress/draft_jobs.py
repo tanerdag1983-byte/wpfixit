@@ -13,10 +13,13 @@ from sqlalchemy.exc import IntegrityError
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from app.domains.page_blueprints.models import PageBlueprint
     from app.domains.page_packages.models import PagePackageProposal
     from app.domains.wordpress.models import WordPressDraftJob
 
 JOB_CONTRACT_VERSION = "wordpress-draft-job-v1"
+SNAPSHOT_JOB_CONTRACT_VERSION = "wordpress-snapshot-draft-job-v1"
+JOB_CONTRACT_VERSIONS = (JOB_CONTRACT_VERSION, SNAPSHOT_JOB_CONTRACT_VERSION)
 CLAIM_TTL = timedelta(minutes=5)
 
 
@@ -121,12 +124,12 @@ def create_or_get_draft_job(
         existing.cancelled_at = None
         return existing
 
-    payload = _draft_job_payload(session, proposal)
+    contract_version, payload = _draft_job_contract(session, proposal)
     job = WordPressDraftJob(
         id=f"wjob_{uuid4().hex}",
         project_id=proposal.project_id,
         proposal_version_id=proposal.id,
-        contract_version=JOB_CONTRACT_VERSION,
+        contract_version=contract_version,
         state="queued",
         payload=payload,
         payload_hash=hash_draft_job_payload(payload),
@@ -382,17 +385,11 @@ def cancel_ineligible_draft_jobs(
     return len(jobs)
 
 
-def _draft_job_payload(
+def _draft_job_contract(
     session: "Session", proposal: "PagePackageProposal"
-) -> dict:
+) -> tuple[str, dict]:
     from app.domains.page_blueprints.models import PageBlueprint
-    from app.domains.page_blueprints.schemas import BlueprintSchema
-    from app.domains.page_packages.generation import validate_blueprint_replacements
-    from app.domains.page_packages.schemas import (
-        GeneratedBlueprintPackage,
-        PagePackageContext,
-    )
-    from app.domains.wordpress.models import WordPressPage
+    from app.domains.page_packages.models import PageProposalStage
 
     if (
         proposal.blueprint_id is None
@@ -415,6 +412,68 @@ def _draft_job_payload(
         != proposal.config_snapshot.get("content_schema")
     ):
         raise ValueError("draft job blueprint snapshot is stale")
+    if blueprint.wordpress_snapshot_id is not None:
+        expected_identity = {
+            "wordpress_snapshot_id": blueprint.wordpress_snapshot_id,
+            "snapshot_version": blueprint.snapshot_version,
+            "schema_version": blueprint.schema_version,
+            "structure_hash": blueprint.structure_hash,
+        }
+        if any(
+            proposal.config_snapshot.get(key) != value
+            for key, value in expected_identity.items()
+        ):
+            raise ValueError("draft job blueprint snapshot is stale")
+        validation = session.scalar(
+            select(PageProposalStage).where(
+                PageProposalStage.proposal_version_id == proposal.id,
+                PageProposalStage.name == "validation",
+                PageProposalStage.state == "ready",
+            )
+        )
+        if validation is None:
+            raise ValueError("draft job requires ready snapshot validation")
+        replacements = validation.result.get("text_replacements")
+        approved_urls = validation.result.get("approved_urls")
+        if (
+            blueprint.snapshot_version is None
+            or blueprint.schema_version is None
+            or not isinstance(replacements, dict)
+            or not isinstance(approved_urls, list)
+            or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in replacements.items()
+            )
+            or not all(isinstance(url, str) for url in approved_urls)
+        ):
+            raise ValueError("draft job snapshot validation result is incomplete")
+        return SNAPSHOT_JOB_CONTRACT_VERSION, {
+            "proposal_version_id": proposal.id,
+            "snapshot_id": blueprint.wordpress_snapshot_id,
+            "snapshot_version": blueprint.snapshot_version,
+            "snapshot_structure_hash": blueprint.structure_hash,
+            "schema_version": blueprint.schema_version,
+            "idempotency_key": proposal.id,
+            "text_replacements": replacements,
+            "approved_urls": approved_urls,
+        }
+    return JOB_CONTRACT_VERSION, _legacy_draft_job_payload(
+        session, proposal, blueprint
+    )
+
+
+def _legacy_draft_job_payload(
+    session: "Session",
+    proposal: "PagePackageProposal",
+    blueprint: "PageBlueprint",
+) -> dict:
+    from app.domains.page_blueprints.schemas import BlueprintSchema
+    from app.domains.page_packages.generation import validate_blueprint_replacements
+    from app.domains.page_packages.schemas import (
+        GeneratedBlueprintPackage,
+        PagePackageContext,
+    )
+    from app.domains.wordpress.models import WordPressPage
 
     package = GeneratedBlueprintPackage.model_validate(proposal.package)
     schema = BlueprintSchema.model_validate(blueprint.content_schema)

@@ -695,6 +695,13 @@ def _apply_snapshot_validation(
         field_errors.setdefault(field_id, "required")
     result = {
         "text_replacements": validation.replacements,
+        "approved_urls": sorted(
+            {
+                link.url
+                for link in getattr(context, "internal_link_candidates", [])
+            }
+            | set(getattr(context, "approved_cta_urls", []))
+        ),
         "field_errors": validation.field_errors,
         "blocking_field_ids": validation.blocking_field_ids,
         "ignored_field_ids": validation.ignored_field_ids,

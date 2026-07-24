@@ -226,6 +226,61 @@ final class WPFixPilot_Blueprint_Controller
     }
 
     /** @return array<string, mixed>|WP_Error */
+    public function create_snapshot_draft(
+        int $snapshotId,
+        array $payload
+    ): array|WP_Error {
+        $snapshot = (new WPFixPilot_Template_Snapshot_Store())->assert_snapshot(
+            $snapshotId
+        );
+        if (is_wp_error($snapshot)) {
+            return $snapshot;
+        }
+        if (
+            (int) get_post_meta(
+                $snapshotId,
+                '_wp_fixpilot_snapshot_version',
+                true
+            ) !== (int) ($payload['snapshot_version'] ?? 0)
+            || !hash_equals(
+                (string) get_post_meta(
+                    $snapshotId,
+                    '_wp_fixpilot_snapshot_schema_version',
+                    true
+                ),
+                (string) ($payload['schema_version'] ?? '')
+            )
+        ) {
+            return new WP_Error(
+                'wp_fixpilot_blueprint_conflict',
+                'De snapshotversie is gewijzigd. Vernieuw eerst de gegevens.',
+                ['status' => 409]
+            );
+        }
+        $replacements = $payload['text_replacements'] ?? null;
+        foreach ([
+            'document:title',
+            'document:slug',
+            'seo:title',
+            'seo:meta_description',
+            'seo:focus_keyword',
+        ] as $fieldId) {
+            if (!is_array($replacements) || !array_key_exists($fieldId, $replacements)) {
+                return $this->invalid_request_error();
+            }
+        }
+
+        return $this->create_draft($snapshotId, [
+            'expected_version' => $payload['snapshot_version'] ?? null,
+            'expected_structure_hash' => $payload['snapshot_structure_hash'] ?? null,
+            'idempotency_key' => $payload['idempotency_key'] ?? null,
+            'replacements' => $replacements,
+            'approved_urls' => $payload['approved_urls'] ?? null,
+            'seo' => ['title' => '', 'description' => '', 'keyword' => ''],
+        ]);
+    }
+
+    /** @return array<string, mixed>|WP_Error */
     public function create_draft(int $blueprintId, array $payload): array|WP_Error
     {
         $validatedPayload = $this->validate_create_draft_payload($payload);
