@@ -55,6 +55,17 @@ final class Test_Blueprint_Controller
     }
 }
 
+final class Busy_Blueprint_Controller
+{
+    public function create_draft(int $blueprintId, array $payload): WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_draft_in_progress',
+            'Een andere worker maakt dit concept al aan.'
+        );
+    }
+}
+
 final class WPFixPilot_ACF_Blueprint_Adapter {}
 final class WPFixPilot_Elementor_Adapter {}
 final class WPFixPilot_WPBakery_Adapter {}
@@ -166,6 +177,22 @@ $job = [
         ],
     ],
 ];
+$requestsBeforeBusyClaim = count($GLOBALS['wpfixpilot_http_requests']);
+$GLOBALS['wpfixpilot_http_responses'][] = response(200, [
+    'job' => $job,
+    'claim_token' => 'busy-claim-token-with-sufficient-length',
+]);
+$busyController = new WPFixPilot_Draft_Job_Controller(
+    $client,
+    new Busy_Blueprint_Controller()
+);
+$busy = $busyController->process_next();
+assert(is_wp_error($busy));
+assert($busy->get_error_code() === 'wp_fixpilot_draft_in_progress');
+assert(
+    count($GLOBALS['wpfixpilot_http_requests']) === $requestsBeforeBusyClaim + 1
+);
+
 $GLOBALS['wpfixpilot_http_responses'][] = response(200, [
     'job' => $job,
     'claim_token' => 'claim-token-with-sufficient-length',
@@ -186,7 +213,9 @@ assert($GLOBALS['wpfixpilot_created_drafts'][0]['blueprint_id'] === 321);
 assert(
     $GLOBALS['wpfixpilot_created_drafts'][0]['payload']['expected_version'] === 4
 );
-$completeRequest = $GLOBALS['wpfixpilot_http_requests'][5];
+$completeRequest = $GLOBALS['wpfixpilot_http_requests'][
+    array_key_last($GLOBALS['wpfixpilot_http_requests'])
+];
 assert(str_ends_with($completeRequest['url'], '/wordpress-draft-jobs/job-1/complete'));
 $completeBody = json_decode($completeRequest['args']['body'], true);
 assert($completeBody['wordpress_object_id'] === 987);

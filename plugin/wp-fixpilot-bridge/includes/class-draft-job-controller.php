@@ -43,6 +43,9 @@ final class WPFixPilot_Draft_Job_Controller
 
         $result = $this->process_payload($job);
         if (is_wp_error($result)) {
+            if ($result->get_error_code() === 'wp_fixpilot_draft_in_progress') {
+                return $result;
+            }
             $failure = $this->client->fail(
                 (string) ($job['id'] ?? ''),
                 $claimToken,

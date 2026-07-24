@@ -694,14 +694,7 @@ def _apply_snapshot_validation(
     for field_id in validation.missing_required_field_ids:
         field_errors.setdefault(field_id, "required")
     result = {
-        "text_replacements": validation.replacements,
-        "approved_urls": sorted(
-            {
-                link.url
-                for link in getattr(context, "internal_link_candidates", [])
-            }
-            | set(getattr(context, "approved_cta_urls", []))
-        ),
+        **_snapshot_validation_result(validation.replacements, context),
         "field_errors": validation.field_errors,
         "blocking_field_ids": validation.blocking_field_ids,
         "ignored_field_ids": validation.ignored_field_ids,
@@ -735,6 +728,22 @@ def _apply_snapshot_validation(
     job.error_message = None
     job.checkpoint = {**job.checkpoint, "proposal_id": proposal.id}
     job.completed_at = datetime.now(UTC)
+
+
+def _snapshot_validation_result(
+    replacements: dict[str, str],
+    context: PagePackageContext,
+) -> dict:
+    return {
+        "text_replacements": replacements,
+        "approved_urls": sorted(
+            {
+                link.url
+                for link in getattr(context, "internal_link_candidates", [])
+            }
+            | set(getattr(context, "approved_cta_urls", []))
+        ),
+    }
 
 
 def _fail_snapshot_generation(
@@ -993,15 +1002,59 @@ def approve_page_package_proposal(
                     detail="Proposal validation stages are unavailable",
                 )
             package = GeneratedBlueprintPackage.model_validate(proposal.package)
-            validate_blueprint_replacements(
-                package,
-                _generation_context(
-                    session,
-                    project_context,
-                    opportunity,
-                    blueprint,
-                ),
+            context = _generation_context(
+                session,
+                project_context,
+                opportunity,
+                blueprint,
             )
+            generated = {
+                "text_replacements": {
+                    **{
+                        replacement.field_id: {"value": replacement.value}
+                        for replacement in package.replacements
+                    },
+                    "document:title": {"value": package.title},
+                    "document:slug": {"value": package.slug},
+                    "seo:title": {"value": package.seo_title},
+                    "seo:meta_description": {
+                        "value": package.meta_description
+                    },
+                    "seo:focus_keyword": {"value": package.focus_keyword},
+                }
+            }
+            migrated_validation = normalize_snapshot_text_package(
+                generated,
+                context,
+            )
+            if not migrated_validation.ready:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Migrated proposal requires regeneration",
+                )
+            validation = PageProposalStage(
+                proposal_version_id=proposal.id,
+                name="validation",
+                state="ready",
+                result={
+                    **_snapshot_validation_result(
+                        migrated_validation.replacements,
+                        context,
+                    ),
+                    "field_errors": migrated_validation.field_errors,
+                    "blocking_field_ids": migrated_validation.blocking_field_ids,
+                    "ignored_field_ids": migrated_validation.ignored_field_ids,
+                    "missing_required_field_ids": (
+                        migrated_validation.missing_required_field_ids
+                    ),
+                },
+                errors={},
+                completed_at=datetime.now(UTC),
+            )
+            session.add(validation)
+            proposal.package = {
+                "text_replacements": migrated_validation.replacements
+            }
         elif validation.state != "ready":
             raise HTTPException(
                 status_code=409,

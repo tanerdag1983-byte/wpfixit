@@ -135,6 +135,7 @@ $GLOBALS['wpfixpilot_insert_post_mutations'] = [];
 $GLOBALS['wpfixpilot_wp_update_post_results'] = [];
 $GLOBALS['wpfixpilot_wp_update_post_mutations'] = [];
 $GLOBALS['wpfixpilot_post_types'] = [];
+$GLOBALS['wpfixpilot_options'] = [];
 
 function sanitize_text_field(string $value): string { return trim(strip_tags($value)); }
 function sanitize_key(string $value): string { return preg_replace('/[^a-z0-9_\-]/', '', strtolower($value)); }
@@ -160,7 +161,26 @@ function get_the_title(WP_Post $post): string { return $post->post_title; }
 function get_permalink(WP_Post $post): string { return 'https://example.test/?p=' . $post->ID; }
 function get_post_modified_time(string $format, bool $gmt, WP_Post $post): string { return '2026-06-28T10:00:00+00:00'; }
 function get_edit_post_link(int $postId, string $context): string { return 'https://example.test/wp-admin/post.php?post=' . $postId; }
-function get_option(string $key, mixed $default = false): mixed { return $key === 'wp_fixpilot_secret' ? 'test-secret' : $default; }
+function get_option(string $key, mixed $default = false): mixed
+{
+    if ($key === 'wp_fixpilot_secret') {
+        return 'test-secret';
+    }
+    return $GLOBALS['wpfixpilot_options'][$key] ?? $default;
+}
+function add_option(string $key, mixed $value, string $deprecated = '', bool $autoload = true): bool
+{
+    if (array_key_exists($key, $GLOBALS['wpfixpilot_options'])) {
+        return false;
+    }
+    $GLOBALS['wpfixpilot_options'][$key] = $value;
+    return true;
+}
+function delete_option(string $key): bool
+{
+    unset($GLOBALS['wpfixpilot_options'][$key]);
+    return true;
+}
 function set_transient(string $key, mixed $value, int $expiration): void {}
 function get_transient(string $key): mixed { return false; }
 function clean_post_cache(int $postId): void {}
@@ -898,6 +918,29 @@ assert($read['content_schema']['schema_version'] === 'snapshot-text-v1');
 assert($read['post_type'] === 'wpfixpilot_snapshot');
 assert($read['adapter_version'] === '0.3.4');
 assert($read['structure_hash'] === $captured['structure_hash']);
+
+$lockedProposalKey = 'proposal-active-draft-lock';
+$lockedOptionKey = 'wp_fixpilot_draft_lock_' . hash('sha256', $lockedProposalKey);
+$GLOBALS['wpfixpilot_options'][$lockedOptionKey] = [
+    'owner' => 'other-worker',
+    'created_at' => time(),
+];
+$nextPostBeforeLock = $GLOBALS['wpfixpilot_next_post_id'];
+$lockedDraft = $controller->create_draft(200, [
+    'expected_version' => 1,
+    'expected_structure_hash' => $captured['structure_hash'],
+    'idempotency_key' => $lockedProposalKey,
+    'replacements' => valid_replacements(),
+    'seo' => [
+        'title' => 'SEO titel',
+        'description' => 'SEO omschrijving',
+        'keyword' => 'dsg revisie',
+    ],
+]);
+assert(is_wp_error($lockedDraft));
+assert($lockedDraft->code === 'wp_fixpilot_draft_in_progress');
+assert($GLOBALS['wpfixpilot_next_post_id'] === $nextPostBeforeLock);
+unset($GLOBALS['wpfixpilot_options'][$lockedOptionKey]);
 
 $documentFieldDraft = $controller->create_draft(200, [
     'expected_version' => 1,
@@ -2529,6 +2572,38 @@ assert($draftStatusMutationFailure->code === 'wp_fixpilot_draft_failed');
 assert(($draftStatusMutationFailure->data['status'] ?? null) === 500);
 assert(get_post($draftStatusMutationDraftId) === null);
 unset($GLOBALS['wpfixpilot_wp_update_post_mutations'][$draftStatusMutationDraftId]);
+
+$documentMutationCases = [
+    'post_title' => 'Door hook gewijzigde titel',
+    'post_name' => 'door-hook-gewijzigde-slug',
+];
+foreach ($documentMutationCases as $field => $mutatedValue) {
+    $draftId = $GLOBALS['wpfixpilot_next_post_id'];
+    $GLOBALS['wpfixpilot_wp_update_post_mutations'][$draftId] = [
+        $field => $mutatedValue,
+    ];
+    $documentMutation = $controller->create_draft(200, [
+        'expected_version' => 1,
+        'expected_structure_hash' => $staleRead['structure_hash'],
+        'idempotency_key' => 'proposal-document-mutation-' . $field,
+        'replacements' => array_merge(valid_replacements(), [
+            'document:title' => 'Verwachte titel',
+            'document:slug' => 'verwachte-slug',
+            'seo:title' => 'SEO titel',
+            'seo:meta_description' => 'SEO omschrijving',
+            'seo:focus_keyword' => 'dsg revisie',
+        ]),
+        'seo' => [
+            'title' => '',
+            'description' => '',
+            'keyword' => '',
+        ],
+    ]);
+    assert(is_wp_error($documentMutation), $field);
+    assert($documentMutation->code === 'wp_fixpilot_draft_failed', $field);
+    assert(get_post($draftId) === null, $field);
+    unset($GLOBALS['wpfixpilot_wp_update_post_mutations'][$draftId]);
+}
 
 $clonerCleanupFailureCloneId = $GLOBALS['wpfixpilot_next_post_id'];
 $GLOBALS['wpfixpilot_add_post_meta_results'][$clonerCleanupFailureCloneId] = [

@@ -365,86 +365,146 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         $idempotencyKey = $validatedPayload['idempotency_key'];
-        $existing = get_posts([
-            'post_type' => 'page',
-            'post_status' => 'any',
-            'meta_key' => '_wp_fixpilot_idempotency_key',
-            'meta_value' => $idempotencyKey,
-            'posts_per_page' => 1,
-            'fields' => 'ids',
-        ]);
-        if ($existing !== []) {
-            $existingDraftId = (int) $existing[0];
-            $existingBlueprintId = (int) get_post_meta(
-                $existingDraftId,
-                '_wp_fixpilot_source_blueprint_id',
-                true
-            );
-            $existingVersion = (int) get_post_meta(
-                $existingDraftId,
-                '_wp_fixpilot_blueprint_version',
-                true
-            );
-            $existingStructureHash = (string) get_post_meta(
-                $existingDraftId,
-                '_wp_fixpilot_blueprint_structure_hash',
-                true
-            );
-            $existingRequestHash = (string) get_post_meta(
-                $existingDraftId,
-                '_wp_fixpilot_request_hash',
-                true
-            );
-            if (
-                $existingBlueprintId !== $blueprintId
-                || $existingVersion !== $storedVersion
-                || $existingStructureHash === ''
-                || !hash_equals($currentHash, $existingStructureHash)
-                || $existingRequestHash === ''
-                || !hash_equals($requestHash, $existingRequestHash)
-            ) {
-                return new WP_Error(
-                    'wp_fixpilot_blueprint_conflict',
-                    'De idempotency-sleutel hoort bij een andere blueprint- of payload-snapshot.',
-                    ['status' => 409]
-                );
-            }
-
-            if (!$this->is_content_draft(get_post($existingDraftId))) {
-                return new WP_Error(
-                    'wp_fixpilot_blueprint_conflict',
-                    'Het bestaande WordPress-concept is geen concept meer.',
-                    ['status' => 409]
-                );
-            }
-
-            return $this->draft_response($existingDraftId, $currentHash, false);
+        $draftLock = $this->acquire_draft_lock($idempotencyKey);
+        if (is_wp_error($draftLock)) {
+            return $draftLock;
         }
-
-        $adapter = $snapshot['adapter'];
-
-        $draftId = $this->cloner()->clone_page(
-            $blueprintId,
-            (string) $blueprint->post_title,
-            false,
-            $adapter->clone_meta_keys($blueprintId),
-            $this->is_snapshot($blueprintId) ? 'page' : null
-        );
-        if (is_wp_error($draftId)) {
-            return $draftId;
-        }
-        $draftId = (int) $draftId;
-
         try {
-            $draftMeta = [
-                '_wp_fixpilot_idempotency_key' => $idempotencyKey,
-                '_wp_fixpilot_request_hash' => $requestHash,
-                '_wp_fixpilot_source_blueprint_id' => $blueprintId,
-                '_wp_fixpilot_blueprint_version' => $storedVersion,
-                '_wp_fixpilot_blueprint_structure_hash' => $currentHash,
-            ];
-            foreach ($draftMeta as $key => $value) {
-                if (!$this->verified_update_post_meta($draftId, $key, $value)) {
+            $existing = get_posts([
+                'post_type' => 'page',
+                'post_status' => 'any',
+                'meta_key' => '_wp_fixpilot_idempotency_key',
+                'meta_value' => $idempotencyKey,
+                'posts_per_page' => 1,
+                'fields' => 'ids',
+            ]);
+            if ($existing !== []) {
+                $existingDraftId = (int) $existing[0];
+                $existingBlueprintId = (int) get_post_meta(
+                    $existingDraftId,
+                    '_wp_fixpilot_source_blueprint_id',
+                    true
+                );
+                $existingVersion = (int) get_post_meta(
+                    $existingDraftId,
+                    '_wp_fixpilot_blueprint_version',
+                    true
+                );
+                $existingStructureHash = (string) get_post_meta(
+                    $existingDraftId,
+                    '_wp_fixpilot_blueprint_structure_hash',
+                    true
+                );
+                $existingRequestHash = (string) get_post_meta(
+                    $existingDraftId,
+                    '_wp_fixpilot_request_hash',
+                    true
+                );
+                if (
+                    $existingBlueprintId !== $blueprintId
+                    || $existingVersion !== $storedVersion
+                    || $existingStructureHash === ''
+                    || !hash_equals($currentHash, $existingStructureHash)
+                    || $existingRequestHash === ''
+                    || !hash_equals($requestHash, $existingRequestHash)
+                ) {
+                    return new WP_Error(
+                        'wp_fixpilot_blueprint_conflict',
+                        'De idempotency-sleutel hoort bij een andere blueprint- of payload-snapshot.',
+                        ['status' => 409]
+                    );
+                }
+
+                if (!$this->is_content_draft(get_post($existingDraftId))) {
+                    return new WP_Error(
+                        'wp_fixpilot_blueprint_conflict',
+                        'Het bestaande WordPress-concept is geen concept meer.',
+                        ['status' => 409]
+                    );
+                }
+
+                return $this->draft_response($existingDraftId, $currentHash, false);
+            }
+
+            $adapter = $snapshot['adapter'];
+
+            $draftId = $this->cloner()->clone_page(
+                $blueprintId,
+                (string) $blueprint->post_title,
+                false,
+                $adapter->clone_meta_keys($blueprintId),
+                $this->is_snapshot($blueprintId) ? 'page' : null
+            );
+            if (is_wp_error($draftId)) {
+                return $draftId;
+            }
+            $draftId = (int) $draftId;
+
+            try {
+                $draftMeta = [
+                    '_wp_fixpilot_idempotency_key' => $idempotencyKey,
+                    '_wp_fixpilot_request_hash' => $requestHash,
+                    '_wp_fixpilot_source_blueprint_id' => $blueprintId,
+                    '_wp_fixpilot_blueprint_version' => $storedVersion,
+                    '_wp_fixpilot_blueprint_structure_hash' => $currentHash,
+                ];
+                foreach ($draftMeta as $key => $value) {
+                    if (!$this->verified_update_post_meta($draftId, $key, $value)) {
+                        $cleanup = $this->cleanup_draft($draftId);
+                        if (is_wp_error($cleanup)) {
+                            return $cleanup;
+                        }
+
+                        return $this->draft_failed_error();
+                    }
+                }
+
+                $write = $adapter->apply_replacements(
+                    $draftId,
+                    $schema,
+                    $builderReplacements
+                );
+                if (is_wp_error($write)) {
+                    $cleanup = $this->cleanup_draft($draftId);
+                    if (is_wp_error($cleanup)) {
+                        return $cleanup;
+                    }
+                    return $write;
+                }
+
+                $seoWrite = $this->write_seo(
+                    $draftId,
+                    $seo,
+                    $capturedSeoPlugin
+                );
+                if (is_wp_error($seoWrite)) {
+                    $cleanup = $this->cleanup_draft($draftId);
+                    if (is_wp_error($cleanup)) {
+                        return $cleanup;
+                    }
+                    return $seoWrite;
+                }
+
+                $draftStatusResult = wp_update_post(
+                    array_filter(
+                        [
+                            'ID' => $draftId,
+                            'post_status' => 'draft',
+                            'post_title' => $title,
+                            'post_name' => $slug,
+                        ],
+                        static fn (mixed $value): bool => $value !== ''
+                    ),
+                    true
+                );
+                $persistedDraft = get_post($draftId);
+                if (
+                    is_wp_error($draftStatusResult)
+                    || $draftStatusResult === 0
+                    || !$this->is_content_draft($persistedDraft)
+                    || ($title !== '' && $persistedDraft->post_title !== $title)
+                    || ($slug !== '' && $persistedDraft->post_name !== $slug)
+                ) {
                     $cleanup = $this->cleanup_draft($draftId);
                     if (is_wp_error($cleanup)) {
                         return $cleanup;
@@ -452,51 +512,9 @@ final class WPFixPilot_Blueprint_Controller
 
                     return $this->draft_failed_error();
                 }
-            }
 
-            $write = $adapter->apply_replacements(
-                $draftId,
-                $schema,
-                $builderReplacements
-            );
-            if (is_wp_error($write)) {
-                $cleanup = $this->cleanup_draft($draftId);
-                if (is_wp_error($cleanup)) {
-                    return $cleanup;
-                }
-                return $write;
-            }
-
-            $seoWrite = $this->write_seo(
-                $draftId,
-                $seo,
-                $capturedSeoPlugin
-            );
-            if (is_wp_error($seoWrite)) {
-                $cleanup = $this->cleanup_draft($draftId);
-                if (is_wp_error($cleanup)) {
-                    return $cleanup;
-                }
-                return $seoWrite;
-            }
-
-            $draftStatusResult = wp_update_post(
-                array_filter(
-                    [
-                        'ID' => $draftId,
-                        'post_status' => 'draft',
-                        'post_title' => $title,
-                        'post_name' => $slug,
-                    ],
-                    static fn (mixed $value): bool => $value !== ''
-                ),
-                true
-            );
-            if (
-                is_wp_error($draftStatusResult)
-                || $draftStatusResult === 0
-                || !$this->is_content_draft(get_post($draftId))
-            ) {
+                return $this->draft_response($draftId, $currentHash, true);
+            } catch (Throwable $error) {
                 $cleanup = $this->cleanup_draft($draftId);
                 if (is_wp_error($cleanup)) {
                     return $cleanup;
@@ -504,15 +522,8 @@ final class WPFixPilot_Blueprint_Controller
 
                 return $this->draft_failed_error();
             }
-
-            return $this->draft_response($draftId, $currentHash, true);
-        } catch (Throwable $error) {
-            $cleanup = $this->cleanup_draft($draftId);
-            if (is_wp_error($cleanup)) {
-                return $cleanup;
-            }
-
-            return $this->draft_failed_error();
+        } finally {
+            $this->release_draft_lock($draftLock);
         }
     }
 
@@ -1216,6 +1227,49 @@ final class WPFixPilot_Blueprint_Controller
             get_post_meta($postId, $key, true),
             $value
         );
+    }
+
+    /** @return array{key: string, owner: string}|WP_Error */
+    private function acquire_draft_lock(string $idempotencyKey): array|WP_Error
+    {
+        $key = 'wp_fixpilot_draft_lock_' . hash('sha256', $idempotencyKey);
+        $owner = bin2hex(random_bytes(16));
+        $value = ['owner' => $owner, 'created_at' => time()];
+        if (!add_option($key, $value, '', false)) {
+            $existing = get_option($key);
+            if (
+                !is_array($existing)
+                || (int) ($existing['created_at'] ?? 0) > time() - 900
+            ) {
+                return new WP_Error(
+                    'wp_fixpilot_draft_in_progress',
+                    'Een andere worker maakt dit concept al aan.',
+                    ['status' => 409]
+                );
+            }
+            delete_option($key);
+            if (!add_option($key, $value, '', false)) {
+                return new WP_Error(
+                    'wp_fixpilot_draft_in_progress',
+                    'Een andere worker maakt dit concept al aan.',
+                    ['status' => 409]
+                );
+            }
+        }
+
+        return ['key' => $key, 'owner' => $owner];
+    }
+
+    /** @param array{key: string, owner: string} $lock */
+    private function release_draft_lock(array $lock): void
+    {
+        $current = get_option($lock['key']);
+        if (
+            is_array($current)
+            && hash_equals((string) ($current['owner'] ?? ''), $lock['owner'])
+        ) {
+            delete_option($lock['key']);
+        }
     }
 
     private function meta_value_matches(mixed $actual, mixed $expected): bool

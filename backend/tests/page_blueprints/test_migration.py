@@ -13,8 +13,10 @@ from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_blueprints.service import legacy_blueprint_candidates
 from app.domains.page_packages.models import (
     PagePackageProposal,
+    PageProposalStage,
     ProjectPagePackageSettings,
 )
+from app.domains.wordpress.draft_jobs import create_or_get_draft_job
 
 
 def legacy_blueprint(
@@ -398,6 +400,20 @@ def test_migration_versions_compatible_proposal_for_approval_and_preserves_appro
     )
     assert approval.status_code == 200, approval.text
     assert approval.json()["state"] == "approved"
+    session.expire_all()
+    validation = session.scalar(
+        select(PageProposalStage).where(
+            PageProposalStage.proposal_version_id == migrated_proposal.id,
+            PageProposalStage.name == "validation",
+        )
+    )
+    assert validation is not None
+    assert validation.state == "ready"
+    assert validation.result["text_replacements"]["document:title"]
+    assert "approved_urls" in validation.result
+
+    draft_job = create_or_get_draft_job(session, migrated_proposal)
+    assert draft_job.contract_version == "wordpress-snapshot-draft-job-v1"
 
 
 def test_incompatible_unapproved_proposal_requires_generation(

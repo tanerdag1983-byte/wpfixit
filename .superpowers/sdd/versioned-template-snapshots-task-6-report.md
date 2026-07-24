@@ -45,3 +45,18 @@ the strict `wordpress-snapshot-draft-job-v1` outbound contract. Keep legacy
 - Source pages and private snapshots are never modified or published.
 - Failed writes use the existing cleanup path; successful writes are verified as
   persisted WordPress drafts.
+
+## Independent Review Fix
+
+- A compatible migrated proposal now runs through the same snapshot normalizer
+  during approval, persists a ready validation stage and approved URLs, and can
+  immediately create a v2 draft job.
+- Draft creation uses an atomic WordPress option lock per idempotency key. A
+  concurrent worker leaves the backend claim retryable instead of reporting a
+  terminal failure; stale locks can be reclaimed after fifteen minutes.
+- Persisted document title and slug are reloaded and compared after
+  `wp_update_post`. Hook mutations or slug suffixing trigger cleanup and a
+  failed draft result.
+- Review-fix verification: 57 focused backend tests passed; full backend
+  remained 379 passed with 6 optional PostgreSQL skips; all plugin tests and PHP
+  lint passed.
