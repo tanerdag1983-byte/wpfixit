@@ -742,4 +742,50 @@ describe("PagePackageReview", () => {
       { method: "POST" },
     );
   });
+
+  it("rechecks a completed draft job without changing its WordPress URL", async () => {
+    const wordpressEditUrl = "https://example.com/wp-admin/post.php?post=12323&action=edit";
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/draft-job") && init?.method === "POST") {
+        return Promise.resolve({
+          id: "draft-job-1",
+          state: "completed",
+          wordpress_edit_url: wordpressEditUrl,
+          attempt_count: 1,
+        });
+      }
+      return Promise.resolve({
+        ...proposal,
+        state: "draft_created",
+        wordpress_edit_url: wordpressEditUrl,
+        draft_job: {
+          id: "draft-job-1",
+          state: "completed",
+          wordpress_edit_url: wordpressEditUrl,
+          attempt_count: 1,
+        },
+      });
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+    const editLink = await screen.findByRole("link", {
+      name: "Concept openen in WordPress",
+    });
+    expect(editLink).toHaveAttribute("href", wordpressEditUrl);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Conceptstatus opnieuw controleren" }),
+    );
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/page-proposals/proposal-1/draft-job",
+        { method: "POST" },
+      ),
+    );
+    expect(await screen.findByText("WordPress-concept gecontroleerd.")).toBeVisible();
+    expect(screen.getByRole("link", {
+      name: "Concept openen in WordPress",
+    })).toHaveAttribute("href", wordpressEditUrl);
+  });
 });

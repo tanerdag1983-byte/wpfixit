@@ -258,8 +258,16 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         `/projects/${projectId}/page-proposals/${proposal.id}/draft-job`,
         { method: "POST" },
       );
-      setProposal({ ...proposal, state: "draft_in_progress", draft_job: draftJob });
-      setMessage("De concepttaak wacht op WordPress.");
+      setProposal({
+        ...proposal,
+        state: draftJob.state === "completed" ? "draft_created" : "draft_in_progress",
+        draft_job: draftJob,
+      });
+      setMessage(
+        draftJob.state === "completed"
+          ? "WordPress-concept gecontroleerd."
+          : "De concepttaak wacht op WordPress.",
+      );
     } catch (error) {
       setMessage(actionError(error, "WordPress-concept starten mislukt."));
     } finally {
@@ -497,6 +505,16 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
                 <p className={`settings-message draft-job-${proposal.draft_job.state}`}>
                   {draftJobLabel(proposal.draft_job)}
                 </p>
+              )}
+              {proposal.draft_job?.state === "completed" && (
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={createOutboundDraft}
+                  type="button"
+                >
+                  Conceptstatus opnieuw controleren
+                </button>
               )}
               {(proposal.draft_job?.state === "failed"
                 || proposal.draft_job?.state === "cancelled") && (
