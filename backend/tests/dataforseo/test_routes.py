@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.crypto import decrypt_text
-from app.domains.dataforseo.models import DataForSeoConnection, KeywordOpportunity
+from app.domains.dataforseo.models import (
+    DataForSeoConnection,
+    KeywordOpportunity,
+    KeywordOpportunitySyncRun,
+)
+from app.domains.projects.models import OrganizationMember
 from app.domains.recommendations.models import CompanyProfile
 from app.domains.wordpress.models import WordPressPage
 from tests.page_packages.test_proposal_versions import page_proposal_factory
@@ -169,8 +174,16 @@ def test_project_syncs_keyword_opportunities_idempotently(
         def __init__(self, login: str, password: str) -> None:
             pass
 
-        def keyword_ideas(self, seeds: list[str]) -> list[dict]:
+        def keyword_ideas(
+            self,
+            seeds: list[str],
+            *,
+            limit: int,
+            offset: int,
+        ) -> list[dict]:
             assert "koppeling vervangen" in seeds
+            assert limit == 50
+            assert offset == 0
             return [
                 {
                     "keyword": "koppeling vervangen kosten",
@@ -219,13 +232,35 @@ def test_project_syncs_keyword_opportunities_idempotently(
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert first.json()["synced"] == 2
+    assert first.json() == {
+        "run_id": first.json()["run_id"],
+        "offset": 0,
+        "next_offset": 50,
+        "exhausted": True,
+        "provider_count": 4,
+        "accepted_count": 2,
+        "new_count": 2,
+        "updated_count": 0,
+        "rejected_count": 2,
+    }
+    assert second.json() == {
+        "run_id": second.json()["run_id"],
+        "offset": 0,
+        "next_offset": 50,
+        "exhausted": True,
+        "provider_count": 4,
+        "accepted_count": 2,
+        "new_count": 0,
+        "updated_count": 2,
+        "rejected_count": 2,
+    }
     opportunities = session.scalars(select(KeywordOpportunity)).all()
-    assert len(opportunities) == 2
+    assert len(opportunities) == 3
     by_keyword = {item.keyword: item for item in opportunities}
     assert set(by_keyword) == {
         "koppeling vervangen kosten",
         "dsg automaat reviseren",
+        "krassen auto verwijderen kosten",
     }
     assert by_keyword["koppeling vervangen kosten"].cpc == Decimal("4.2500")
     assert by_keyword["koppeling vervangen kosten"].target_url.endswith(
@@ -244,12 +279,16 @@ def test_project_syncs_keyword_opportunities_idempotently(
         f"/projects/{projects.member_project.id}/keyword-opportunities"
     )
     assert list_response.status_code == 200
-    assert len(list_response.json()["items"]) == 2
-    assert list_response.json()["items"][0]["recommended_action"]
-    assert list_response.json()["items"][0]["target_classification"] == (
-        "existing_page"
+    assert len(list_response.json()["items"]) == 3
+    listed = {
+        item["keyword"]: item for item in list_response.json()["items"]
+    }
+    assert listed["koppeling vervangen kosten"]["recommended_action"]
+    assert (
+        listed["koppeling vervangen kosten"]["target_classification"]
+        == "existing_page"
     )
-    assert list_response.json()["items"][0]["target_evidence"]
+    assert listed["koppeling vervangen kosten"]["target_evidence"]
 
 
 def test_outsider_cannot_read_project_keyword_opportunities(
@@ -325,8 +364,16 @@ def test_failed_provider_sync_keeps_existing_opportunities(
         def __init__(self, login: str, password: str) -> None:
             pass
 
-        def keyword_ideas(self, seeds: list[str]) -> list[dict]:
-            raise RuntimeError("Provider temporarily unavailable")
+        def keyword_ideas(
+            self,
+            seeds: list[str],
+            *,
+            limit: int,
+            offset: int,
+        ) -> list[dict]:
+            raise RuntimeError(
+                "Provider temporarily unavailable for data-password"
+            )
 
     monkeypatch.setattr(
         "app.api.routes.dataforseo.DataForSeoProvider",
@@ -338,4 +385,42 @@ def test_failed_provider_sync_keeps_existing_opportunities(
     )
 
     assert response.status_code == 400
+    assert response.json() == {
+        "detail": "DataForSEO synchronization failed"
+    }
     assert session.get(KeywordOpportunity, "existing-opportunity") is not None
+    failed_run = session.scalar(
+        select(KeywordOpportunitySyncRun).where(
+            KeywordOpportunitySyncRun.project_id
+            == projects.member_project.id
+        )
+    )
+    assert failed_run is not None
+    assert failed_run.state == "failed"
+    assert failed_run.error_message == "DataForSEO synchronization failed"
+    assert "data-password" not in response.text
+    assert "data-password" not in failed_run.error_message
+
+
+def test_member_cannot_sync_keyword_opportunities(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "encryption_key", ENCRYPTION_KEY)
+    membership = session.get(
+        OrganizationMember,
+        (projects.organization.id, projects.member.id),
+    )
+    assert membership is not None
+    membership.role = "member"
+    session.commit()
+    auth_as(projects.member)
+
+    response = client.post(
+        f"/projects/{projects.member_project.id}/sync-keyword-opportunities"
+    )
+
+    assert response.status_code == 404

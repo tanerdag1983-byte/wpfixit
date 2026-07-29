@@ -12,9 +12,9 @@ from app.core.security import CurrentUser, get_current_user
 from app.domains.dataforseo.models import DataForSeoConnection, KeywordOpportunity
 from app.domains.dataforseo.provider import DataForSeoProvider
 from app.domains.dataforseo.service import (
+    SAFE_SYNC_ERROR,
     opportunity_payload,
-    project_seed_terms,
-    upsert_keyword_opportunities,
+    sync_keyword_opportunity_window,
 )
 from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.service import get_membership, get_project
@@ -111,14 +111,27 @@ def sync_keyword_opportunities(
     password = decrypt_text(connection.encrypted_password)
     provider = DataForSeoProvider(connection.login, password)
     try:
-        rows = provider.keyword_ideas(project_seed_terms(session, project))
+        result = sync_keyword_opportunity_window(
+            session,
+            project,
+            provider,
+        )
     except Exception as error:
         raise HTTPException(
             status_code=400,
-            detail=_safe_failure_message(error, password),
+            detail=SAFE_SYNC_ERROR,
         ) from error
-    opportunities = upsert_keyword_opportunities(session, project, rows)
-    return {"synced": len(opportunities)}
+    return {
+        "run_id": result.run_id,
+        "offset": result.offset,
+        "next_offset": result.next_offset,
+        "exhausted": result.exhausted,
+        "provider_count": result.provider_count,
+        "accepted_count": result.accepted_count,
+        "new_count": result.created_count,
+        "updated_count": result.updated_count,
+        "rejected_count": result.rejected_count,
+    }
 
 
 @router.get("/projects/{project_id}/keyword-opportunities")

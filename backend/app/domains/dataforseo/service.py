@@ -1,3 +1,6 @@
+import hashlib
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -5,13 +8,32 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domains.dataforseo.models import KeywordOpportunity
+from app.domains.dataforseo.models import (
+    KeywordOpportunity,
+    KeywordOpportunitySyncRun,
+    KeywordOpportunitySyncState,
+)
 from app.domains.dataforseo.relevance import (
     build_keyword_context,
     classify_target,
     is_relevant,
 )
 from app.domains.projects.models import Project
+
+SAFE_SYNC_ERROR = "DataForSEO synchronization failed"
+
+
+@dataclass(frozen=True)
+class OpportunitySyncResult:
+    run_id: str
+    offset: int
+    next_offset: int
+    exhausted: bool
+    provider_count: int
+    accepted_count: int
+    created_count: int
+    updated_count: int
+    rejected_count: int
 
 
 def project_seed_terms(
@@ -23,11 +45,139 @@ def project_seed_terms(
     return list(build_keyword_context(session, project, limit=limit).seeds)
 
 
+def seed_fingerprint(seeds: list[str]) -> str:
+    normalized = sorted(" ".join(str(seed).casefold().split()) for seed in seeds)
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def sync_keyword_opportunity_window(
+    session: Session,
+    project: Project,
+    provider,
+    *,
+    limit: int = 50,
+) -> OpportunitySyncResult:
+    project_id = project.id
+    seeds = project_seed_terms(session, project)
+    fingerprint = seed_fingerprint(seeds)
+    state = _locked_sync_state(session, project_id)
+    if state is None:
+        state = KeywordOpportunitySyncState(
+            project_id=project_id,
+            seed_fingerprint=fingerprint,
+            next_offset=0,
+            exhausted=False,
+        )
+        session.add(state)
+    offset = (
+        0
+        if state.seed_fingerprint != fingerprint or state.exhausted
+        else state.next_offset
+    )
+    previous_successful_run_id = state.last_successful_run_id
+    run = KeywordOpportunitySyncRun.started(
+        project_id,
+        fingerprint,
+        offset,
+        limit,
+    )
+    run_id = run.id
+    session.add(run)
+
+    try:
+        session.flush()
+        rows = provider.keyword_ideas(seeds, limit=limit, offset=offset)
+        _, accepted_count, created_count, updated_count = (
+            _upsert_keyword_opportunities(
+                session,
+                project,
+                rows,
+                run_id=run_id,
+            )
+        )
+        provider_count = len(rows)
+        rejected_count = provider_count - accepted_count
+        exhausted = provider_count < limit
+        completed_at = datetime.now(UTC)
+        next_offset = offset + limit
+
+        run.state = "completed"
+        run.provider_count = provider_count
+        run.accepted_count = accepted_count
+        run.created_count = created_count
+        run.updated_count = updated_count
+        run.rejected_count = rejected_count
+        run.completed_at = completed_at
+        state.seed_fingerprint = fingerprint
+        state.next_offset = next_offset
+        state.exhausted = exhausted
+        state.last_successful_run_id = run_id
+        state.last_synced_at = completed_at
+        state.last_error = None
+        session.commit()
+    except Exception:
+        session.rollback()
+        persisted_state = _locked_sync_state(session, project_id)
+        failed_run = KeywordOpportunitySyncRun(
+            id=run_id,
+            project_id=project_id,
+            seed_fingerprint=fingerprint,
+            offset=offset,
+            limit=limit,
+            state="failed",
+            completed_at=datetime.now(UTC),
+            error_message=SAFE_SYNC_ERROR,
+        )
+        session.add(failed_run)
+        if (
+            persisted_state is not None
+            and persisted_state.last_successful_run_id
+            == previous_successful_run_id
+        ):
+            persisted_state.last_error = SAFE_SYNC_ERROR
+        session.commit()
+        raise
+
+    return OpportunitySyncResult(
+        run_id=run_id,
+        offset=offset,
+        next_offset=next_offset,
+        exhausted=exhausted,
+        provider_count=provider_count,
+        accepted_count=accepted_count,
+        created_count=created_count,
+        updated_count=updated_count,
+        rejected_count=rejected_count,
+    )
+
+
 def upsert_keyword_opportunities(
     session: Session,
     project: Project,
     rows: list[dict],
 ) -> list[KeywordOpportunity]:
+    synced, _, _, _ = _upsert_keyword_opportunities(
+        session,
+        project,
+        rows,
+        run_id=None,
+    )
+    session.commit()
+    return synced
+
+
+def _upsert_keyword_opportunities(
+    session: Session,
+    project: Project,
+    rows: list[dict],
+    *,
+    run_id: str | None,
+) -> tuple[list[KeywordOpportunity], int, int, int]:
     context = build_keyword_context(session, project)
     existing = {
         (item.keyword, item.location_code, item.language_code): item
@@ -39,16 +189,18 @@ def upsert_keyword_opportunities(
         ).all()
     }
     synced: list[KeywordOpportunity] = []
-    accepted: set[tuple[str, int, str]] = set()
+    created: set[tuple[str, int, str]] = set()
+    updated: set[tuple[str, int, str]] = set()
+    accepted_count = 0
     now = datetime.now(UTC)
     for row in rows:
         keyword = str(row.get("keyword") or "").strip()
         if not keyword or not is_relevant(keyword, context):
             continue
+        accepted_count += 1
         location_code = int(row.get("location_code") or 2528)
         language_code = str(row.get("language_code") or "nl")
         identity = (keyword, location_code, language_code)
-        accepted.add(identity)
         opportunity = existing.get(identity)
         if opportunity is None:
             opportunity = KeywordOpportunity(
@@ -58,8 +210,14 @@ def upsert_keyword_opportunities(
                 location_code=location_code,
                 language_code=language_code,
                 raw_payload={},
+                discovered_at=now,
+                first_seen_run_id=run_id,
             )
             session.add(opportunity)
+            existing[identity] = opportunity
+            created.add(identity)
+        elif identity not in created:
+            updated.add(identity)
 
         match = classify_target(keyword, context)
         matched_url = match.url
@@ -89,13 +247,28 @@ def upsert_keyword_opportunities(
             )
         opportunity.source = "dataforseo"
         opportunity.raw_payload = row.get("raw_payload") or row
-        opportunity.discovered_at = now
+        if run_id is not None:
+            opportunity.last_seen_run_id = run_id
+        opportunity.last_seen_at = now
         synced.append(opportunity)
-    for identity, opportunity in existing.items():
-        if identity not in accepted:
-            session.delete(opportunity)
-    session.commit()
-    return synced
+    return synced, accepted_count, len(created), len(updated)
+
+
+def _locked_sync_state(
+    session: Session,
+    project_id: str,
+) -> KeywordOpportunitySyncState | None:
+    statement = select(KeywordOpportunitySyncState).where(
+        KeywordOpportunitySyncState.project_id == project_id
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            select(Project.id)
+            .where(Project.id == project_id)
+            .with_for_update()
+        ).scalar_one()
+        statement = statement.with_for_update()
+    return session.scalar(statement)
 
 
 def opportunity_payload(opportunity: KeywordOpportunity) -> dict:
