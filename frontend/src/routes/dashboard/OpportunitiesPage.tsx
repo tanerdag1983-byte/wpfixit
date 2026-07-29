@@ -17,6 +17,9 @@ type KeywordOpportunity = {
   target_evidence: string[];
   recommended_action: string | null;
   source: string;
+  is_new: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
   proposal_summary?: {
     state: string;
     current_version_id: string;
@@ -25,6 +28,17 @@ type KeywordOpportunity = {
 
 type OpportunityResponse = {
   items: KeywordOpportunity[];
+};
+type OpportunitySyncResponse = {
+  run_id: string;
+  offset: number;
+  next_offset: number;
+  exhausted: boolean;
+  provider_count: number;
+  accepted_count: number;
+  new_count: number;
+  updated_count: number;
+  rejected_count: number;
 };
 type Blueprint = {
   id: string;
@@ -105,13 +119,13 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     setSyncing(true);
     setMessage("DataForSEO onderzoekt nieuwe zoekwoordkansen. Dit kan even duren.");
     try {
-      const response = await apiRequest<{ synced: number }>(
+      const response = await apiRequest<OpportunitySyncResponse>(
         `/projects/${projectId}/sync-keyword-opportunities`,
         { method: "POST" },
       );
       await loadItems();
       setMessage(
-        `${response.synced} zoekwoordkans${response.synced === 1 ? "" : "en"} bijgewerkt.`,
+        `${response.new_count} nieuw, ${response.updated_count} bijgewerkt, ${response.rejected_count} niet relevant`,
       );
     } catch (error) {
       setMessage(
@@ -229,6 +243,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 <span className="priority-tag high">
                   {intentLabel(item.intent)}
                 </span>
+                {item.is_new && <span className="priority-tag">Nieuw</span>}
                 <small>DataForSEO</small>
                 <span className={`target-tag ${item.target_classification}`}>
                   {targetLabel(item.target_classification)}

@@ -9,10 +9,15 @@ from sqlalchemy.orm import Session
 from app.core.crypto import decrypt_text, encrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
-from app.domains.dataforseo.models import DataForSeoConnection, KeywordOpportunity
+from app.domains.dataforseo.models import (
+    DataForSeoConnection,
+    KeywordOpportunity,
+    KeywordOpportunitySyncRun,
+)
 from app.domains.dataforseo.provider import DataForSeoProvider
 from app.domains.dataforseo.service import (
     SAFE_SYNC_ERROR,
+    opportunity_impact_score,
     opportunity_payload,
     sync_keyword_opportunity_window,
 )
@@ -142,14 +147,34 @@ def get_keyword_opportunities(
 ) -> dict:
     if get_project(session, user.id, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    latest_successful_run_id = session.scalar(
+        select(KeywordOpportunitySyncRun.id)
+        .where(
+            KeywordOpportunitySyncRun.project_id == project_id,
+            KeywordOpportunitySyncRun.state == "completed",
+        )
+        .order_by(
+            KeywordOpportunitySyncRun.completed_at.desc().nullslast(),
+            KeywordOpportunitySyncRun.started_at.desc(),
+            KeywordOpportunitySyncRun.id.desc(),
+        )
+        .limit(1)
+    )
     opportunities = session.scalars(
         select(KeywordOpportunity)
         .where(KeywordOpportunity.project_id == project_id)
-        .order_by(
-            KeywordOpportunity.search_volume.desc().nullslast(),
-            KeywordOpportunity.keyword,
-        )
     ).all()
+    opportunities.sort(
+        key=lambda item: (
+            not (
+                latest_successful_run_id is not None
+                and item.first_seen_run_id == latest_successful_run_id
+            ),
+            -opportunity_impact_score(item),
+            -(item.search_volume or 0),
+            item.keyword,
+        )
+    )
     current_proposals = {
         proposal.opportunity_id: proposal
         for proposal in session.scalars(
@@ -161,7 +186,13 @@ def get_keyword_opportunities(
     }
     items = []
     for item in opportunities:
-        payload = opportunity_payload(item)
+        payload = opportunity_payload(
+            item,
+            is_new=(
+                latest_successful_run_id is not None
+                and item.first_seen_run_id == latest_successful_run_id
+            ),
+        )
         proposal = current_proposals.get(item.id)
         payload["proposal_summary"] = (
             {

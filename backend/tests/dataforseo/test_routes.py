@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -305,6 +306,120 @@ def test_outsider_cannot_read_project_keyword_opportunities(
     assert response.status_code == 404
 
 
+def test_latest_run_rows_are_first_and_marked_new(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    first_run = KeywordOpportunitySyncRun(
+        id="first-run",
+        project_id=projects.member_project.id,
+        seed_fingerprint="first-seed",
+        offset=0,
+        limit=50,
+        state="completed",
+        completed_at=datetime(2026, 7, 29, tzinfo=UTC),
+    )
+    latest_run = KeywordOpportunitySyncRun(
+        id="latest-run",
+        project_id=projects.member_project.id,
+        seed_fingerprint="latest-seed",
+        offset=50,
+        limit=50,
+        state="completed",
+        completed_at=datetime(2026, 7, 30, tzinfo=UTC),
+    )
+    observed_at = datetime(2026, 7, 30, 10, tzinfo=UTC)
+    session.add_all(
+        [
+            first_run,
+            latest_run,
+            KeywordOpportunity(
+                id="latest-low-impact",
+                project_id=projects.member_project.id,
+                keyword="latest opportunity",
+                location_code=2528,
+                language_code="nl",
+                search_volume=1,
+                keyword_difficulty=100,
+                intent="informational",
+                source="dataforseo",
+                raw_payload={},
+                discovered_at=observed_at,
+                first_seen_run_id=latest_run.id,
+                last_seen_run_id=latest_run.id,
+                last_seen_at=observed_at,
+            ),
+            KeywordOpportunity(
+                id="old-easier-keyword",
+                project_id=projects.member_project.id,
+                keyword="old easier keyword",
+                location_code=2528,
+                language_code="nl",
+                search_volume=100,
+                keyword_difficulty=0,
+                intent="commercial",
+                source="dataforseo",
+                raw_payload={},
+                first_seen_run_id=first_run.id,
+                last_seen_run_id=first_run.id,
+            ),
+            KeywordOpportunity(
+                id="old-higher-volume",
+                project_id=projects.member_project.id,
+                keyword="old higher volume",
+                location_code=2528,
+                language_code="nl",
+                search_volume=200,
+                keyword_difficulty=50,
+                intent="commercial",
+                source="dataforseo",
+                raw_payload={},
+                first_seen_run_id=first_run.id,
+                last_seen_run_id=first_run.id,
+            ),
+            KeywordOpportunity(
+                id="old-lower-volume",
+                project_id=projects.member_project.id,
+                keyword="old lower volume",
+                location_code=2528,
+                language_code="nl",
+                search_volume=190,
+                keyword_difficulty=50,
+                intent="commercial",
+                source="dataforseo",
+                raw_payload={},
+                first_seen_run_id=first_run.id,
+                last_seen_run_id=first_run.id,
+            ),
+        ]
+    )
+    session.commit()
+
+    response = client.get(
+        f"/projects/{projects.member_project.id}/keyword-opportunities"
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["id"] for item in items] == [
+        "latest-low-impact",
+        "old-easier-keyword",
+        "old-higher-volume",
+        "old-lower-volume",
+    ]
+    assert items[0]["is_new"] is True
+    assert items[-1]["is_new"] is False
+    assert datetime.fromisoformat(items[0]["first_seen_at"]).replace(
+        tzinfo=UTC
+    ) == observed_at
+    assert datetime.fromisoformat(items[0]["last_seen_at"]).replace(
+        tzinfo=UTC
+    ) == observed_at
+
+
 def test_keyword_opportunities_include_generated_proposal_summary(
     client: TestClient,
     session: Session,
@@ -332,6 +447,7 @@ def test_keyword_opportunities_include_generated_proposal_summary(
         "state": "proposed",
         "current_version_id": "proposal-2",
     }
+    assert by_id[proposal.opportunity_id]["is_new"] is False
 
 
 def test_failed_provider_sync_keeps_existing_opportunities(

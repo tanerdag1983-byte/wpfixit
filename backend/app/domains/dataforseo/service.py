@@ -271,7 +271,26 @@ def _locked_sync_state(
     return session.scalar(statement)
 
 
-def opportunity_payload(opportunity: KeywordOpportunity) -> dict:
+def opportunity_impact_score(opportunity: KeywordOpportunity) -> int:
+    volume_score = min(70, ((opportunity.search_volume or 0) + 10) // 20)
+    difficulty = (
+        opportunity.keyword_difficulty
+        if opportunity.keyword_difficulty is not None
+        else 50
+    )
+    difficulty_bonus = max(
+        0,
+        20 - (difficulty + 2) // 5,
+    )
+    intent_bonus = 10 if opportunity.intent == "commercial" else 5
+    return min(100, volume_score + difficulty_bonus + intent_bonus)
+
+
+def opportunity_payload(
+    opportunity: KeywordOpportunity,
+    *,
+    is_new: bool = False,
+) -> dict:
     return {
         "id": opportunity.id,
         "keyword": opportunity.keyword,
@@ -290,6 +309,9 @@ def opportunity_payload(opportunity: KeywordOpportunity) -> dict:
         "recommended_action": opportunity.recommended_action,
         "source": opportunity.source,
         "discovered_at": opportunity.discovered_at,
+        "is_new": is_new,
+        "first_seen_at": opportunity.discovered_at,
+        "last_seen_at": opportunity.last_seen_at,
     }
 
 

@@ -176,15 +176,77 @@ describe("OpportunitiesPage", () => {
     expect(window.location.hash).toBe("#page-proposal");
   });
 
-  it("syncs and reloads keyword opportunities", async () => {
+  it("keeps old rows and reports the new sync counts", async () => {
+    let opportunityLoads = 0;
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) {
+        return Promise.resolve({ items: [] });
+      }
+      if (path.endsWith("/keyword-opportunities")) {
+        opportunityLoads += 1;
+        return Promise.resolve({
+          items: [
+            ...(opportunityLoads === 1
+              ? []
+              : [{
+                  id: "new-keyword",
+                  keyword: "nieuwe transmissiekans",
+                  search_volume: 320,
+                  cpc: 4.25,
+                  competition_level: "medium",
+                  keyword_difficulty: 38,
+                  intent: "commercial",
+                  target_url: null,
+                  target_classification: "new_page",
+                  target_score: 0,
+                  target_evidence: ["no_distinctive_page_match"],
+                  recommended_action: "Maak een nieuwe landingspagina.",
+                  source: "dataforseo",
+                  is_new: true,
+                  first_seen_at: "2026-07-30T10:00:00+00:00",
+                  last_seen_at: "2026-07-30T10:00:00+00:00",
+                }]),
+            {
+              id: "old-keyword",
+              keyword: "bestaande transmissiekans",
+              search_volume: 120,
+              cpc: null,
+              competition_level: null,
+              keyword_difficulty: null,
+              intent: "informational",
+              target_url: null,
+              target_classification: "new_page",
+              target_score: 0,
+              target_evidence: [],
+              recommended_action: "Verbeter de bestaande pagina.",
+              source: "dataforseo",
+              is_new: false,
+              first_seen_at: "2026-07-29T10:00:00+00:00",
+              last_seen_at: "2026-07-30T10:00:00+00:00",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({
+        run_id: "run-2",
+        offset: 50,
+        next_offset: 100,
+        exhausted: false,
+        provider_count: 50,
+        accepted_count: 45,
+        new_count: 14,
+        updated_count: 31,
+        rejected_count: 5,
+      });
+    });
     render(<OpportunitiesPage projectId="project-1" />);
-    await screen.findByText("automatische transmissie revisie");
+    await screen.findByText("bestaande transmissiekans");
 
     fireEvent.click(screen.getByRole("button", { name: "Nieuwe kansen ophalen" }));
 
-    expect(
-      await screen.findByText("1 zoekwoordkans bijgewerkt."),
-    ).toBeVisible();
+    expect(await screen.findByText("14 nieuw, 31 bijgewerkt, 5 niet relevant")).toBeVisible();
+    expect(screen.getByText("Nieuw")).toBeVisible();
+    expect(screen.getByText("bestaande transmissiekans")).toBeVisible();
     expect(apiRequest).toHaveBeenCalledWith(
       "/projects/project-1/sync-keyword-opportunities",
       { method: "POST" },
@@ -238,7 +300,17 @@ describe("OpportunitiesPage", () => {
         });
       }
       if (path.endsWith("/sync-keyword-opportunities")) {
-        return Promise.resolve({ synced: 2 });
+        return Promise.resolve({
+          run_id: "run-2",
+          offset: 50,
+          next_offset: 100,
+          exhausted: false,
+          provider_count: 2,
+          accepted_count: 2,
+          new_count: 0,
+          updated_count: 2,
+          rejected_count: 0,
+        });
       }
       proposalAttempt += 1;
       return proposalAttempt === 1
@@ -250,7 +322,7 @@ describe("OpportunitiesPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Nieuwe kansen ophalen" }),
     );
-    expect(await screen.findByText("2 zoekwoordkansen bijgewerkt.")).toBeVisible();
+    expect(await screen.findByText("0 nieuw, 2 bijgewerkt, 0 niet relevant")).toBeVisible();
 
     const selectedCard = screen
       .getByText("7g dct automatische transmissie")
@@ -274,7 +346,7 @@ describe("OpportunitiesPage", () => {
       "Project AI model is not configured",
     );
     expect(within(otherCard!).queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("2 zoekwoordkansen bijgewerkt.")).toBeVisible();
+    expect(screen.getByText("0 nieuw, 2 bijgewerkt, 0 niet relevant")).toBeVisible();
 
     fireEvent.click(
       within(selectedCard!).getByRole("button", { name: "Pagina laten maken" }),
