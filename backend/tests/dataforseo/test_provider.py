@@ -122,3 +122,44 @@ def test_keyword_ideas_rejects_request_without_valid_seeds(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="valid keyword seeds"):
         DataForSeoProvider("login", "password").keyword_ideas(["", "ab"])
+
+
+def test_keyword_ideas_sends_offset(monkeypatch) -> None:
+    captured: dict = {}
+
+    def post(url: str, **kwargs):
+        captured.update(kwargs)
+        return Response(
+            {
+                "status_code": 20000,
+                "tasks": [
+                    {
+                        "status_code": 20000,
+                        "result": [{"items": []}],
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("app.domains.dataforseo.provider.requests.post", post)
+
+    DataForSeoProvider("login", "password").keyword_ideas(
+        ["versnellingsbak"], limit=50, offset=100
+    )
+
+    assert captured["json"][0]["offset"] == 100
+
+
+def test_keyword_ideas_rejects_negative_offset(monkeypatch) -> None:
+    def unexpected_post(*args, **kwargs):
+        raise AssertionError("DataForSEO should not be called")
+
+    monkeypatch.setattr(
+        "app.domains.dataforseo.provider.requests.post",
+        unexpected_post,
+    )
+
+    with pytest.raises(ValueError, match="non-negative"):
+        DataForSeoProvider("login", "password").keyword_ideas(
+            ["versnellingsbak"], offset=-1
+        )

@@ -30,10 +30,13 @@ class DataForSeoProvider:
         location_code: int = 2528,
         language_code: str = "nl",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         valid_seeds = self._valid_keyword_seeds(seeds)
         if not valid_seeds:
             raise ValueError("No valid keyword seeds are available")
+        if offset < 0:
+            raise ValueError("Offset must be non-negative")
         response = requests.post(
             f"{self.base_url}/dataforseo_labs/google/keyword_ideas/live",
             auth=self.auth,
@@ -43,6 +46,7 @@ class DataForSeoProvider:
                     "location_code": location_code,
                     "language_code": language_code,
                     "limit": limit,
+                    "offset": offset,
                     "closely_variants": True,
                     "include_serp_info": False,
                 }
