@@ -61,3 +61,10 @@ outbound WordPress pages verified as drafts with retained page-block structure;
 field-level validation recovery passed without provider reruns; authenticated
 completed-job replay returned the same edit URL for draft 12323; 107 frontend
 tests passed, lint/build clean).
+
+# Durable Keyword Opportunity Discovery
+
+Plan: .superpowers/sdd/2026-07-30-durable-keyword-opportunity-discovery/task-5-brief.md
+
+Local verification: complete (backend Ruff clean; 407 passed, 8 documented optional PostgreSQL skips; Alembic upgrade head clean; frontend 27 files/110 tests passed, lint and production build clean).
+Deployment and authenticated live acceptance: pending controller (push the verification commit, confirm Render migration/API and Vercel deployment, then run staging sync offsets 0, 50, and 100 and the provider-failure recovery check).

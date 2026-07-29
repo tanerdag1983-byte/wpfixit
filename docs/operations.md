@@ -98,6 +98,13 @@ Database migrations are reversible one revision at a time. WordPress publishes
 have immutable change events and an explicit rollback action. Reconnect Google,
 Firecrawl or AI providers after rotating credentials.
 
+## Durable Keyword Opportunity Discovery
+
+If a keyword opportunity sync fails, retry it manually with **Nieuwe kansen
+ophalen**. Existing opportunity rows remain visible; a failed run does not
+replace them or advance the cursor. Treat the cursor shown by the latest
+completed run as authoritative.
+
 ## AI Providers
 
 Manage provider credentials in **Instellingen > AI-verbindingen**. Supported
