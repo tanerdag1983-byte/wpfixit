@@ -1,9 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Self
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -107,3 +110,154 @@ class KeywordOpportunity(Base):
         server_default=func.now(),
         nullable=False,
     )
+    first_seen_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "keyword_opportunity_sync_runs.id",
+            ondelete="SET NULL",
+            deferrable=True,
+            initially="DEFERRED",
+        )
+    )
+    last_seen_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "keyword_opportunity_sync_runs.id",
+            ondelete="SET NULL",
+            deferrable=True,
+            initially="DEFERRED",
+        )
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class KeywordOpportunitySyncRun(Base):
+    __tablename__ = "keyword_opportunity_sync_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('running', 'completed', 'failed')",
+            name="ck_keyword_opportunity_sync_runs_state",
+        ),
+        CheckConstraint(
+            '"offset" >= 0',
+            name="ck_keyword_opportunity_sync_runs_offset",
+        ),
+        CheckConstraint(
+            '"limit" >= 0',
+            name="ck_keyword_opportunity_sync_runs_limit",
+        ),
+        CheckConstraint(
+            "provider_count >= 0 AND accepted_count >= 0 AND created_count >= 0 "
+            "AND updated_count >= 0 AND rejected_count >= 0",
+            name="ck_keyword_opportunity_sync_runs_counts",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seed_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(16),
+        default="running",
+        server_default="running",
+        nullable=False,
+    )
+    provider_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    accepted_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    created_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    updated_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    rejected_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    @classmethod
+    def started(
+        cls,
+        project_id: str,
+        seed_fingerprint: str,
+        offset: int,
+        limit: int,
+    ) -> Self:
+        return cls(
+            id=uuid4().hex,
+            project_id=project_id,
+            seed_fingerprint=seed_fingerprint,
+            offset=offset,
+            limit=limit,
+        )
+
+
+class KeywordOpportunitySyncState(Base):
+    __tablename__ = "keyword_opportunity_sync_states"
+    __table_args__ = (
+        CheckConstraint(
+            "next_offset >= 0",
+            name="ck_keyword_opportunity_sync_states_next_offset",
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    seed_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    next_offset: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    exhausted: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+    )
+    last_successful_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "keyword_opportunity_sync_runs.id",
+            ondelete="SET NULL",
+            deferrable=True,
+            initially="DEFERRED",
+        )
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
