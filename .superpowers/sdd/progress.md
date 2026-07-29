@@ -67,4 +67,4 @@ tests passed, lint/build clean).
 Plan: .superpowers/sdd/2026-07-30-durable-keyword-opportunity-discovery/task-5-brief.md
 
 Local verification: complete (backend Ruff clean; 407 passed, 8 documented optional PostgreSQL skips; Alembic upgrade head clean; frontend 27 files/110 tests passed, lint and production build clean).
-Deployment and authenticated live acceptance: pending controller (push the verification commit, confirm Render migration/API and Vercel deployment, then run staging sync offsets 0, 50, and 100 and the provider-failure recovery check).
+Deployment and authenticated live acceptance: complete (commit f68fe5a deployed by Render as dep-d9l90t0ae00c7384l1m0 and by Vercel as dpl_951LcC7x6KKHHPi5YNX8rfhp6; fixed production alias returned HTTP 200; authenticated staging sync exercised consecutive 0/50/100 windows with 133 rendered unique opportunities, zero duplicate keywords, and 50 current-run Nieuw labels; provider-failure cursor preservation remains covered by the deterministic PostgreSQL race regression to avoid damaging live credentials).
