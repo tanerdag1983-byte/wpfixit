@@ -55,4 +55,9 @@ Task 5: complete (commits 1202b2f..a8aff34, independent review approved after re
 Task 6: complete (commits cba9ac1..8650b06, independent review approved after migrated-proposal validation, atomic database locking, persisted document verification, and race-free clone serialization; 57 focused tests and 379 backend tests passed with 6 optional PostgreSQL skips, Ruff clean, all plugin tests and PHP lint passed, PostgreSQL and SQLite migration round-trips passed).
 Task 7: complete (commits d77cd8f..76066dd, independent review approved after persistent migration recovery, scoped retries, and immutable snapshot settings; 381 backend tests passed with 6 optional PostgreSQL skips, 92 frontend tests passed, Ruff/lint/build clean).
 Task 8: complete (commits 4b27c82..8818e8b, independent review approved after resumable-stage recovery, snapshot candidate comparison, current validation retry, optional-field editing, allowlist preservation, and draft-contract verification; 384 backend tests passed with 6 optional PostgreSQL skips, 106 frontend tests passed, Ruff/lint/build clean).
-Task 9: in progress.
+Task 9: complete (commits 569b81e plus release closure, independent review
+approved; plugin 0.3.29 installed once; five ACF v2 snapshots ready; ten
+outbound WordPress pages verified as drafts with retained page-block structure;
+field-level validation recovery passed without provider reruns; authenticated
+completed-job replay returned the same edit URL for draft 12323; 107 frontend
+tests passed, lint/build clean).
