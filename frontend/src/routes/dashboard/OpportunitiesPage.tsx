@@ -68,7 +68,8 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
   );
   const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
   const [proposalPageTypes, setProposalPageTypes] = useState<Record<string, PageType | "">>({});
-  const [message, setMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
 
   const loadItems = useCallback(async () => {
@@ -84,7 +85,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     loadItems()
       .catch((error) => {
         if (active) {
-          setMessage(
+          setErrorMessage(
             error instanceof Error
               ? error.message
               : "Zoekwoordkansen laden mislukt.",
@@ -109,7 +110,9 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
       })
       .catch((error) => {
         if (active) {
-          setMessage(error instanceof Error ? error.message : "Blueprints laden mislukt.");
+          setErrorMessage(
+            error instanceof Error ? error.message : "Blueprints laden mislukt.",
+          );
         }
       });
     return () => { active = false; };
@@ -117,18 +120,28 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
 
   async function syncOpportunities() {
     setSyncing(true);
-    setMessage("DataForSEO onderzoekt nieuwe zoekwoordkansen. Dit kan even duren.");
+    setErrorMessage("");
+    setStatusMessage("DataForSEO onderzoekt nieuwe zoekwoordkansen. Dit kan even duren.");
     try {
       const response = await apiRequest<OpportunitySyncResponse>(
         `/projects/${projectId}/sync-keyword-opportunities`,
         { method: "POST" },
       );
-      await loadItems();
-      setMessage(
+      setStatusMessage(
         `${response.new_count} nieuw, ${response.updated_count} bijgewerkt, ${response.rejected_count} niet relevant`,
       );
+      try {
+        await loadItems();
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Zoekwoordkansen vernieuwen mislukt.",
+        );
+      }
     } catch (error) {
-      setMessage(
+      setStatusMessage("");
+      setErrorMessage(
         error instanceof Error
           ? error.message
           : "Nieuwe zoekwoordkansen ophalen mislukt.",
@@ -222,8 +235,19 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
         </button>
       </div>
 
-      {message && <p className="settings-message">{message}</p>}
-      {loading && <p className="settings-empty">Zoekwoordkansen laden...</p>}
+      {statusMessage && (
+        <p aria-live="polite" className="settings-message" role="status">
+          {statusMessage}
+        </p>
+      )}
+      {errorMessage && (
+        <p className="settings-message" role="alert">{errorMessage}</p>
+      )}
+      {loading && (
+        <p aria-live="polite" className="settings-empty" role="status">
+          Zoekwoordkansen laden...
+        </p>
+      )}
       {!loading && items.length === 0 && (
         <p className="settings-empty">
           Nog geen live zoekwoordkansen. Koppel DataForSEO bij Instellingen en

@@ -244,12 +244,93 @@ describe("OpportunitiesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Nieuwe kansen ophalen" }));
 
-    expect(await screen.findByText("14 nieuw, 31 bijgewerkt, 5 niet relevant")).toBeVisible();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "14 nieuw, 31 bijgewerkt, 5 niet relevant",
+    );
     expect(screen.getByText("Nieuw")).toBeVisible();
     expect(screen.getByText("bestaande transmissiekans")).toBeVisible();
     expect(apiRequest).toHaveBeenCalledWith(
       "/projects/project-1/sync-keyword-opportunities",
       { method: "POST" },
+    );
+  });
+
+  it("keeps completed sync counts when the opportunity refresh fails", async () => {
+    let opportunityLoads = 0;
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) {
+        opportunityLoads += 1;
+        return opportunityLoads === 1
+          ? Promise.resolve({ items: [] })
+          : Promise.reject(new Error("Kansen vernieuwen mislukt"));
+      }
+      return Promise.resolve({
+        run_id: "run-3",
+        offset: 100,
+        next_offset: 150,
+        exhausted: false,
+        provider_count: 50,
+        accepted_count: 45,
+        new_count: 14,
+        updated_count: 31,
+        rejected_count: 5,
+      });
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+    await screen.findByText(/Nog geen live zoekwoordkansen/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Nieuwe kansen ophalen" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "14 nieuw, 31 bijgewerkt, 5 niet relevant",
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Kansen vernieuwen mislukt",
+    );
+  });
+
+  it("announces initial loading and load errors", async () => {
+    let rejectOpportunities!: (reason: Error) => void;
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) {
+        return new Promise((_, reject: (reason: Error) => void) => {
+          rejectOpportunities = reject;
+        });
+      }
+      return Promise.resolve({});
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Zoekwoordkansen laden...",
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/projects/project-1/keyword-opportunities",
+      ),
+    );
+    rejectOpportunities(new Error("Zoekwoordkansen laden mislukt"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Zoekwoordkansen laden mislukt",
+    );
+  });
+
+  it("announces sync errors as alerts", async () => {
+    apiRequest.mockImplementation((path: string) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) return Promise.resolve({ items: [] });
+      return Promise.reject(new Error("DataForSEO tijdelijk niet beschikbaar"));
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+    await screen.findByText(/Nog geen live zoekwoordkansen/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Nieuwe kansen ophalen" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "DataForSEO tijdelijk niet beschikbaar",
     );
   });
 

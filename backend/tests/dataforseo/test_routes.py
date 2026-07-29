@@ -394,22 +394,57 @@ def test_latest_run_rows_are_first_and_marked_new(
                 first_seen_run_id=first_run.id,
                 last_seen_run_id=first_run.id,
             ),
+            KeywordOpportunity(
+                id="locale-b",
+                project_id=projects.member_project.id,
+                keyword="gelijke locale kans",
+                location_code=2528,
+                language_code="en",
+                search_volume=180,
+                keyword_difficulty=50,
+                intent="commercial",
+                source="dataforseo",
+                raw_payload={},
+                first_seen_run_id=first_run.id,
+                last_seen_run_id=first_run.id,
+            ),
+            KeywordOpportunity(
+                id="locale-a",
+                project_id=projects.member_project.id,
+                keyword="gelijke locale kans",
+                location_code=2528,
+                language_code="nl",
+                search_volume=180,
+                keyword_difficulty=50,
+                intent="commercial",
+                source="dataforseo",
+                raw_payload={},
+                first_seen_run_id=first_run.id,
+                last_seen_run_id=first_run.id,
+            ),
         ]
     )
     session.commit()
 
-    response = client.get(
-        f"/projects/{projects.member_project.id}/keyword-opportunities"
-    )
-
-    assert response.status_code == 200
-    items = response.json()["items"]
-    assert [item["id"] for item in items] == [
+    expected_ids = [
         "latest-low-impact",
         "old-easier-keyword",
         "old-higher-volume",
         "old-lower-volume",
+        "locale-a",
+        "locale-b",
     ]
+    responses = [
+        client.get(f"/projects/{projects.member_project.id}/keyword-opportunities")
+        for _ in range(2)
+    ]
+
+    assert all(response.status_code == 200 for response in responses)
+    assert [
+        [item["id"] for item in response.json()["items"]]
+        for response in responses
+    ] == [expected_ids, expected_ids]
+    items = responses[0].json()["items"]
     assert items[0]["is_new"] is True
     assert items[-1]["is_new"] is False
     assert datetime.fromisoformat(items[0]["first_seen_at"]).replace(

@@ -173,6 +173,7 @@ def get_keyword_opportunities(
             -opportunity_impact_score(item),
             -(item.search_volume or 0),
             item.keyword,
+            item.id,
         )
     )
     current_proposals = {
