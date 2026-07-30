@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from app.domains.recommendations.models import CompanyProfile
@@ -40,16 +41,10 @@ def record_page_version(
     if not source or len(source) > 32:
         raise ValueError("page monitoring source invalid")
 
-    version = session.scalar(
-        select(PageObservedVersion).where(
-            PageObservedVersion.wordpress_page_id == page.id,
-            PageObservedVersion.content_hash == content_hash,
-        )
-    )
+    version = _page_version(session, page.id, content_hash)
     if version is not None:
         return version, False
 
-    page.content_hash = content_hash
     version = PageObservedVersion(
         id=f"pver_{uuid4().hex}",
         project_id=page.project_id,
@@ -60,8 +55,17 @@ def record_page_version(
         proposal_version_id=proposal_version_id,
         draft_job_id=draft_job_id,
     )
-    session.add(version)
-    session.flush()
+    try:
+        with session.begin_nested():
+            session.add(version)
+            session.flush()
+    except IntegrityError:
+        version = _page_version(session, page.id, content_hash)
+        if version is None:
+            raise
+        page.content_hash = content_hash
+        return version, False
+    page.content_hash = content_hash
     return version, True
 
 
@@ -137,10 +141,7 @@ def _score_for_version(
     if existing is not None:
         return existing, False
 
-    page = session.get(WordPressPage, version.wordpress_page_id)
-    if page is None:
-        raise ValueError("page version source page not found")
-    factors = _score_factors(page, version.snapshot_payload)
+    factors = _score_factors(version.snapshot_payload)
     maximum = sum(factor["max_points"] for factor in factors)
     overall_score = round(100 * sum(factor["points"] for factor in factors) / maximum)
     score = PageScoreSnapshot(
@@ -149,16 +150,30 @@ def _score_for_version(
         overall_score=overall_score,
         factors=factors,
     )
-    session.add(score)
-    session.flush()
+    try:
+        with session.begin_nested():
+            session.add(score)
+            session.flush()
+    except IntegrityError:
+        existing = session.scalar(
+            select(PageScoreSnapshot).where(
+                PageScoreSnapshot.page_version_id == version.id
+            )
+        )
+        if existing is None:
+            raise
+        return existing, False
     return score, True
 
 
-def _score_factors(page: WordPressPage, facts: dict) -> list[dict]:
+def _score_factors(facts: dict) -> list[dict]:
     values = facts.get("values") if isinstance(facts.get("values"), dict) else {}
+    content_available = isinstance(values.get("content"), str)
     content = _text(values.get("content"))
     plain_content = _plain_text(content)
-    title = _text(values.get("seo_title")) or page.title
+    title_value = values.get("title", values.get("seo_title"))
+    title_available = isinstance(title_value, str)
+    title = _text(title_value)
     meta_description = _text(values.get("meta_description"))
     keyword = _text(values.get("focus_keyword")).casefold()
     canonical = _text(values.get("canonical"))
@@ -184,9 +199,23 @@ def _score_factors(page: WordPressPage, facts: dict) -> list[dict]:
             if _text(term)
         ]
     profile_matches = any(term in plain_content.casefold() for term in profile_terms)
+    featured_image = bool(values.get("featured_image_id"))
+    featured_alt_available = isinstance(values.get("featured_image_alt"), str)
+    featured_alt = _text(values.get("featured_image_alt"))
+    image_evidence_available = featured_image or content_available
+    image_alt_passes = (
+        (not featured_image or not featured_alt_available or bool(featured_alt))
+        and (not images or alt_count == len(images))
+    )
 
     return [
-        _factor("title", title, bool(title), "Add a descriptive page title."),
+        _factor(
+            "title",
+            title,
+            bool(title),
+            "Add a descriptive page title.",
+            available=title_available,
+        ),
         _factor(
             "meta_description",
             meta_description,
@@ -217,13 +246,14 @@ def _score_factors(page: WordPressPage, facts: dict) -> list[dict]:
         _factor(
             "images",
             {
-                "featured": bool(values.get("featured_image_id")),
+                "featured": featured_image,
+                "featured_alt": featured_alt if featured_alt_available else None,
                 "in_page": len(images),
                 "with_alt": alt_count,
             },
-            (bool(values.get("featured_image_id")) or bool(images))
-            and alt_count == len(images),
+            (featured_image or bool(images)) and image_alt_passes,
             "Add a featured or in-page image with descriptive alt text.",
+            available=image_evidence_available,
         ),
         _factor(
             "company_profile",
@@ -242,7 +272,18 @@ def _factor(
     suggested_action: str,
     *,
     max_points: int = 10,
+    available: bool = True,
 ) -> dict:
+    if not available:
+        return {
+            "key": key,
+            "value": value,
+            "points": 0,
+            "max_points": 0,
+            "explanation": f"{key.replace('_', ' ').capitalize()} is unavailable.",
+            "suggested_action": "",
+            "evidence": {"value": value},
+        }
     return {
         "key": key,
         "value": value,
@@ -274,23 +315,39 @@ def _record_recommendations(
         )
         existing = session.scalar(
             select(PageRecommendation).where(
-                PageRecommendation.page_version_id == version.id,
+                PageRecommendation.wordpress_page_id == version.wordpress_page_id,
                 PageRecommendation.fingerprint == fingerprint,
             )
         )
         if existing is None:
-            session.add(
-                PageRecommendation(
-                    id=f"prec_{uuid4().hex}",
-                    page_version_id=version.id,
-                    fingerprint=fingerprint,
-                    state="open",
-                    evidence=factor["evidence"],
-                    suggested_action=factor["suggested_action"],
-                )
+            recommendation = PageRecommendation(
+                id=f"prec_{uuid4().hex}",
+                page_version_id=version.id,
+                wordpress_page_id=version.wordpress_page_id,
+                fingerprint=fingerprint,
+                state="open",
+                evidence=factor["evidence"],
+                suggested_action=factor["suggested_action"],
             )
+            try:
+                with session.begin_nested():
+                    session.add(recommendation)
+                    session.flush()
+            except IntegrityError:
+                continue
             created += 1
     return created
+
+
+def _page_version(
+    session: Session, wordpress_page_id: str, content_hash: str
+) -> PageObservedVersion | None:
+    return session.scalar(
+        select(PageObservedVersion).where(
+            PageObservedVersion.wordpress_page_id == wordpress_page_id,
+            PageObservedVersion.content_hash == content_hash,
+        )
+    )
 
 
 def _text(value: object) -> str:

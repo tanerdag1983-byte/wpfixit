@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domains.wordpress.models import (
     PageObservedVersion,
+    PageScoreSnapshot,
     WordPressPage,
     WordPressSnapshotCaptureJob,
 )
@@ -67,6 +68,33 @@ def test_same_page_hash_is_unique(session, wordpress_page) -> None:
         [
             observed_version(wordpress_page, "hash-a"),
             observed_version(wordpress_page, "hash-a"),
+        ]
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_one_score_snapshot_is_allowed_per_page_version(
+    session, wordpress_page
+) -> None:
+    version = observed_version(wordpress_page, "score-hash")
+    session.add(version)
+    session.flush()
+    session.add_all(
+        [
+            PageScoreSnapshot(
+                id="score-one",
+                page_version_id=version.id,
+                overall_score=50,
+                factors=[],
+            ),
+            PageScoreSnapshot(
+                id="score-two",
+                page_version_id=version.id,
+                overall_score=60,
+                factors=[],
+            ),
         ]
     )
 

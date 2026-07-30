@@ -304,11 +304,16 @@ class PageObservedVersion(Base):
 
 class PageScoreSnapshot(Base):
     __tablename__ = "page_score_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "page_version_id",
+            name="uq_page_score_snapshots_page_version",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     page_version_id: Mapped[str] = mapped_column(
         ForeignKey("page_observed_versions.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
     )
     overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -324,9 +329,9 @@ class PageRecommendation(Base):
     __tablename__ = "page_recommendations"
     __table_args__ = (
         UniqueConstraint(
-            "page_version_id",
+            "wordpress_page_id",
             "fingerprint",
-            name="uq_page_recommendations_version_fingerprint",
+            name="uq_page_recommendations_page_fingerprint",
         ),
     )
 
@@ -335,6 +340,9 @@ class PageRecommendation(Base):
         ForeignKey("page_observed_versions.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    wordpress_page_id: Mapped[str] = mapped_column(
+        ForeignKey("wordpress_pages.id", ondelete="CASCADE"), nullable=False
     )
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(24), nullable=False)

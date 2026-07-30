@@ -130,6 +130,9 @@ final class WPFixPilot_Change_Controller
             ['_wp_fixpilot_redirect_to']
         );
         $postId = (int) $post->ID;
+        $featuredImageId = function_exists('get_post_thumbnail_id')
+            ? (int) get_post_thumbnail_id($postId)
+            : (int) get_post_meta($postId, '_thumbnail_id', true);
         $values = [
             'title' => (string) $post->post_title,
             'slug' => (string) $post->post_name,
@@ -142,9 +145,14 @@ final class WPFixPilot_Change_Controller
                 '_wp_page_template',
                 true
             ),
-            'featured_image_id' => function_exists('get_post_thumbnail_id')
-                ? (int) get_post_thumbnail_id($postId)
-                : get_post_meta($postId, '_thumbnail_id', true),
+            'featured_image_id' => $featuredImageId,
+            'featured_image_alt' => $featuredImageId > 0
+                ? (string) get_post_meta(
+                    $featuredImageId,
+                    '_wp_attachment_image_alt',
+                    true
+                )
+                : null,
             'builders' => $this->builder_values($postId),
         ];
         foreach ($keys as $key) {
@@ -213,6 +221,7 @@ final class WPFixPilot_Change_Controller
             $noindex = in_array($noindex, ['1', 'true'], true);
         }
         return [
+            'title' => $values['title'],
             'seo_title' => $values[$keys['seo_title']] ?? '',
             'meta_description' => $values[$keys['meta_description']] ?? '',
             'focus_keyword' => $focusKeyword,
@@ -221,6 +230,8 @@ final class WPFixPilot_Change_Controller
             'content' => $values['content'],
             'internal_links' => $values['content'],
             'redirect' => $values['_wp_fixpilot_redirect_to'] ?? '',
+            'featured_image_id' => $values['featured_image_id'],
+            'featured_image_alt' => $values['featured_image_alt'],
         ];
     }
 

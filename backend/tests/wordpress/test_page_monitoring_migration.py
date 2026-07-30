@@ -91,6 +91,16 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
         page_version_unique_constraints = inspect(connection).get_unique_constraints(
             "page_observed_versions"
         )
+        score_unique_constraints = inspect(connection).get_unique_constraints(
+            "page_score_snapshots"
+        )
+        recommendation_columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("page_recommendations")
+        }
+        recommendation_unique_constraints = inspect(connection).get_unique_constraints(
+            "page_recommendations"
+        )
 
     assert {
         "id",
@@ -143,6 +153,15 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
     assert any(
         constraint["column_names"] == ["project_id", "id"]
         for constraint in page_version_unique_constraints
+    )
+    assert any(
+        constraint["column_names"] == ["page_version_id"]
+        for constraint in score_unique_constraints
+    )
+    assert "wordpress_page_id" in recommendation_columns
+    assert any(
+        constraint["column_names"] == ["wordpress_page_id", "fingerprint"]
+        for constraint in recommendation_unique_constraints
     )
 
     _downgrade("0023_keyword_sync_lifecycle")

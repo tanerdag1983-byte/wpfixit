@@ -113,17 +113,16 @@ def upgrade() -> None:
             ["page_version_id"], ["page_observed_versions.id"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_page_score_snapshots_page_version_id",
-        "page_score_snapshots",
-        ["page_version_id"],
-        unique=False,
+        sa.UniqueConstraint(
+            "page_version_id",
+            name="uq_page_score_snapshots_page_version",
+        ),
     )
     op.create_table(
         "page_recommendations",
         sa.Column("id", sa.String(length=64), nullable=False),
         sa.Column("page_version_id", sa.String(length=64), nullable=False),
+        sa.Column("wordpress_page_id", sa.String(length=64), nullable=False),
         sa.Column("fingerprint", sa.String(length=64), nullable=False),
         sa.Column("state", sa.String(length=24), nullable=False),
         sa.Column("evidence", sa.JSON(), nullable=False),
@@ -137,11 +136,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["page_version_id"], ["page_observed_versions.id"], ondelete="CASCADE"
         ),
+        sa.ForeignKeyConstraint(
+            ["wordpress_page_id"], ["wordpress_pages.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "page_version_id",
+            "wordpress_page_id",
             "fingerprint",
-            name="uq_page_recommendations_version_fingerprint",
+            name="uq_page_recommendations_page_fingerprint",
         ),
     )
     op.create_index(
@@ -270,10 +272,6 @@ def downgrade() -> None:
         table_name="page_recommendations",
     )
     op.drop_table("page_recommendations")
-    op.drop_index(
-        "ix_page_score_snapshots_page_version_id",
-        table_name="page_score_snapshots",
-    )
     op.drop_table("page_score_snapshots")
     op.drop_table("page_observed_versions")
     if any(

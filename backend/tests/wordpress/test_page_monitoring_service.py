@@ -5,7 +5,11 @@ from app.domains.wordpress.models import (
     PageTimelineEvent,
     WordPressPage,
 )
-from app.domains.wordpress.monitoring import check_page
+from app.domains.wordpress.monitoring import (
+    check_page,
+    record_page_version,
+    score_page_version,
+)
 
 
 def page_facts(content_hash: str, *, canonical: str = "") -> dict:
@@ -99,6 +103,17 @@ def test_changed_hash_creates_version_score_and_timeline(session, projects) -> N
     assert timeline_types[-1] == "score_created"
 
 
+def test_changed_hash_does_not_repeat_page_recommendations(session, projects) -> None:
+    page = make_page(session, projects)
+
+    first = check_page(session, page, page_facts("hash-a"), trigger="sync")
+    second = check_page(session, page, page_facts("hash-b"), trigger="sync")
+
+    assert first.recommendations_created == 1
+    assert second.recommendations_created == 0
+    assert session.scalar(select(func.count(PageRecommendation.id))) == 1
+
+
 def test_in_page_image_with_alt_is_sufficient_evidence(session, projects) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
@@ -110,3 +125,47 @@ def test_in_page_image_with_alt_is_sufficient_evidence(session, projects) -> Non
     )
 
     assert image_factor["points"] == image_factor["max_points"]
+
+
+def test_absent_image_evidence_is_unknown(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["featured_image_id"]
+    del facts["values"]["content"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 0
+    assert image_factor["suggested_action"] == ""
+
+
+def test_featured_image_absence_without_content_is_unknown(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    facts["values"]["featured_image_id"] = 0
+    del facts["values"]["content"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 0
+
+
+def test_historical_title_never_reads_mutable_page_title(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["seo_title"]
+
+    version, created = record_page_version(session, page, facts, source="sync")
+    page.title = "A mutable replacement title"
+    score = score_page_version(version)
+    title_factor = next(factor for factor in score.factors if factor["key"] == "title")
+
+    assert created is True
+    assert title_factor["max_points"] == 0
+    assert title_factor["suggested_action"] == ""
