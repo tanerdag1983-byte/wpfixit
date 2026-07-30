@@ -1,0 +1,112 @@
+from sqlalchemy import func, select
+
+from app.domains.wordpress.models import (
+    PageRecommendation,
+    PageTimelineEvent,
+    WordPressPage,
+)
+from app.domains.wordpress.monitoring import check_page
+
+
+def page_facts(content_hash: str, *, canonical: str = "") -> dict:
+    return {
+        "content_hash": content_hash,
+        "values": {
+            "seo_title": "Transmissie revisie",
+            "meta_description": (
+                "Deskundige transmissie revisie met een heldere diagnose."
+            ),
+            "focus_keyword": "transmissie revisie",
+            "canonical": canonical,
+            "noindex": False,
+            "content": (
+                "<h1>Transmissie revisie</h1><h2>Onze aanpak</h2>"
+                "<p>Wij onderzoeken uw auto zorgvuldig en leggen elke stap helder uit. "
+                "Onze specialisten herstellen transmissies met aandacht voor "
+                "kwaliteit.</p>"
+                "<a href=\"/contact\">Neem contact op</a>"
+                "<img src=\"transmissie.jpg\" alt=\"Transmissie revisie specialist\">"
+            ),
+            "featured_image_id": 12,
+        },
+    }
+
+
+def make_page(session, projects) -> WordPressPage:
+    page = WordPressPage(
+        id="monitoring-service-page",
+        project_id=projects.member_project.id,
+        wordpress_object_id=702,
+        post_type="page",
+        status="publish",
+        title="Transmissie revisie",
+        slug="transmissie-revisie",
+        url="https://member.example/transmissie-revisie",
+        content_hash="hash-a",
+    )
+    session.add(page)
+    session.commit()
+    return page
+
+
+def test_unchanged_hash_reuses_version_without_duplicate_recommendations(
+    session, projects
+) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+
+    first = check_page(session, page, facts, trigger="sync")
+    second = check_page(session, page, facts, trigger="manual")
+
+    assert first.version.id == second.version.id
+    assert first.recommendations_created == 1
+    assert second.recommendations_created == 0
+    assert (
+        session.scalar(
+            select(func.count(PageRecommendation.id)).where(
+                PageRecommendation.page_version_id == first.version.id
+            )
+        )
+        == 1
+    )
+
+
+def test_changed_hash_creates_version_score_and_timeline(session, projects) -> None:
+    page = make_page(session, projects)
+
+    first = check_page(session, page, page_facts("hash-a"), trigger="sync")
+    second = check_page(session, page, page_facts("hash-b"), trigger="sync")
+    timeline_types = list(
+        session.scalars(
+            select(PageTimelineEvent.event_type)
+            .where(PageTimelineEvent.wordpress_page_id == page.id)
+            .order_by(PageTimelineEvent.created_at, PageTimelineEvent.id)
+        )
+    )
+
+    assert first.version.id != second.version.id
+    assert second.version_created is True
+    assert second.score.factors[0]["explanation"]
+    assert second.score.factors[0].keys() == {
+        "key",
+        "value",
+        "points",
+        "max_points",
+        "explanation",
+        "suggested_action",
+        "evidence",
+    }
+    assert timeline_types[-1] == "score_created"
+
+
+def test_in_page_image_with_alt_is_sufficient_evidence(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["featured_image_id"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["points"] == image_factor["max_points"]

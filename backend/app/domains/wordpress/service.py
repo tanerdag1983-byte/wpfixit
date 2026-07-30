@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.wordpress.models import WordPressPage
+from app.domains.wordpress.monitoring import PageCheckResult, check_page
 
 
 def sync_inventory(
@@ -46,3 +47,10 @@ def sync_inventory(
     session.commit()
     return saved_count
 
+
+def sync_current_state(
+    session: Session,
+    page: WordPressPage,
+    facts: dict,
+) -> PageCheckResult:
+    return check_page(session, page, facts, trigger="sync")

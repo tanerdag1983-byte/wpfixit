@@ -36,7 +36,7 @@ from app.domains.wordpress.schemas import (
     WordPressConnectionRead,
     WordPressConnectRequest,
 )
-from app.domains.wordpress.service import sync_inventory
+from app.domains.wordpress.service import sync_current_state, sync_inventory
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["wordpress"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -241,7 +241,23 @@ def sync_pages(
     connection.seo_plugin = health.seo_plugin
     connection.health_state = "connected"
     connection.last_checked_at = datetime.now(UTC)
-    saved_count = sync_inventory(session, project_id, client.inventory())
+    inventory = client.inventory()
+    saved_count = sync_inventory(session, project_id, inventory)
+    for item in inventory:
+        page = session.scalar(
+            select(WordPressPage).where(
+                WordPressPage.project_id == project_id,
+                WordPressPage.wordpress_object_id == int(item["id"]),
+                WordPressPage.post_type == str(item["type"]),
+            )
+        )
+        if page is not None:
+            sync_current_state(
+                session,
+                page,
+                client.current_state(page.wordpress_object_id),
+            )
+    session.commit()
     return {"status": "ok", "saved_count": saved_count}
 
 
