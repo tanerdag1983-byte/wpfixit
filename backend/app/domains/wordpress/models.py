@@ -246,6 +246,200 @@ class WordPressPage(Base):
     )
 
 
+class PageObservedVersion(Base):
+    __tablename__ = "page_observed_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "wordpress_page_id",
+            "content_hash",
+            name="uq_page_observed_versions_page_hash",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_page_observed_versions_project_page",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "proposal_version_id"],
+            ["page_package_proposals.project_id", "page_package_proposals.id"],
+            name="fk_page_observed_versions_project_proposal",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    snapshot_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    proposal_version_id: Mapped[str | None] = mapped_column(String(64))
+    draft_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("wordpress_draft_jobs.id", ondelete="RESTRICT")
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PageScoreSnapshot(Base):
+    __tablename__ = "page_score_snapshots"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    page_version_id: Mapped[str] = mapped_column(
+        ForeignKey("page_observed_versions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    factors: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class PageRecommendation(Base):
+    __tablename__ = "page_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "page_version_id",
+            "fingerprint",
+            name="uq_page_recommendations_version_fingerprint",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    page_version_id: Mapped[str] = mapped_column(
+        ForeignKey("page_observed_versions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
+    suggested_action: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class PageTimelineEvent(Base):
+    __tablename__ = "page_timeline_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_page_timeline_events_project_page",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_page_timeline_events_page_created",
+            "wordpress_page_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("page_observed_versions.id", ondelete="SET NULL")
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class WordPressSnapshotCaptureJob(Base):
+    __tablename__ = "wordpress_snapshot_capture_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued', 'claimed', 'completed', 'failed', 'cancelled')",
+            name="ck_wordpress_snapshot_capture_jobs_state",
+        ),
+        CheckConstraint(
+            "(state = 'claimed' AND claim_token IS NOT NULL AND "
+            "claim_expires_at IS NOT NULL AND claimed_at IS NOT NULL) OR "
+            "(state != 'claimed' AND claim_token IS NULL AND "
+            "claim_expires_at IS NULL AND claimed_at IS NULL)",
+            name="ck_wordpress_snapshot_capture_jobs_claim_fields",
+        ),
+        CheckConstraint(
+            "(state IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NOT NULL) OR "
+            "(state NOT IN ('completed', 'failed') AND "
+            "terminal_claim_token_hash IS NULL)",
+            name="ck_wordpress_snapshot_capture_jobs_terminal_claim_hash",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_wordpress_snapshot_capture_jobs_project_page",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_wordpress_snapshot_capture_jobs_project_state",
+            "project_id",
+            "state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(24),
+        default="queued",
+        server_default="queued",
+        nullable=False,
+    )
+    claim_token: Mapped[str | None] = mapped_column(String(128))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminal_claim_token_hash: Mapped[str | None] = mapped_column(String(64))
+    snapshot_result: Mapped[dict | None] = mapped_column(JSON)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class WordPressChangeProposal(Base):
     __tablename__ = "wordpress_change_proposals"
 

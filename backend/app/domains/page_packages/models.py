@@ -84,6 +84,12 @@ class PagePackageProposal(Base):
             name="fk_page_package_proposals_blueprint_identity",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["project_id", "source_wordpress_page_id"],
+            ["wordpress_pages.project_id", "wordpress_pages.id"],
+            name="fk_page_package_proposals_source_wordpress_page_project",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint(
             "project_id",
             "id",
@@ -140,6 +146,7 @@ class PagePackageProposal(Base):
     )
     target_block_id: Mapped[str | None] = mapped_column(String(128))
     user_instruction: Mapped[str | None] = mapped_column(Text)
+    source_wordpress_page_id: Mapped[str | None] = mapped_column(String(64))
     blueprint_id: Mapped[str | None] = mapped_column(String(64))
     blueprint_version: Mapped[int | None] = mapped_column(Integer)
     blueprint_structure_hash: Mapped[str | None] = mapped_column(String(128))
