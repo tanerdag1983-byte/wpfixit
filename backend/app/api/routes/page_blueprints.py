@@ -12,7 +12,10 @@ from app.core.crypto import decrypt_text
 from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.jobs.models import Job
-from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.models import (
+    PageBlueprint,
+    ordinary_blueprint_clause,
+)
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 from app.domains.page_blueprints.service import (
     SNAPSHOT_MIGRATION_JOB_TYPE,
@@ -91,6 +94,7 @@ def _blueprint_or_404(
     statement = select(PageBlueprint).where(
         PageBlueprint.id == blueprint_id,
         PageBlueprint.project_id == project_id,
+        ordinary_blueprint_clause(),
     )
     if for_update:
         statement = statement.with_for_update()
@@ -345,7 +349,10 @@ def list_blueprints(
     _manager_project(session, user, project_id)
     items = session.scalars(
         select(PageBlueprint)
-        .where(PageBlueprint.project_id == project_id)
+        .where(
+            PageBlueprint.project_id == project_id,
+            ordinary_blueprint_clause(),
+        )
         .order_by(PageBlueprint.created_at, PageBlueprint.id)
     ).all()
     migration_results = []

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 import requests
 from fastapi.testclient import TestClient
@@ -123,6 +125,58 @@ def create_blueprint(client: TestClient, project_id: str) -> dict:
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_optimization_source_is_hidden_from_registry_and_actions(
+    client,
+    auth_as,
+    projects,
+    session,
+    monkeypatch,
+):
+    auth_as(projects.owner)
+    bridge = FakeBlueprintBridge()
+    monkeypatch.setattr(page_blueprints, "_bridge", lambda session, project_id: bridge)
+    optimization_source = PageBlueprint(
+        id="optimization-source-blueprint",
+        project_id=projects.member_project.id,
+        name="Existing page capture",
+        page_type="service",
+        source_wordpress_page_id="source-page",
+        wordpress_blueprint_id=990,
+        wordpress_snapshot_id=990,
+        snapshot_version=1,
+        schema_version="snapshot-text-v1",
+        adapter_version="optimization-source-v1",
+        capture_state="ready",
+        migration_state="native",
+        verified_at=datetime.now(UTC),
+        builder="acf",
+        seo_plugin="yoast",
+        version=1,
+        structure_hash="optimization-source-hash",
+        content_schema=valid_schema(),
+        state="ready",
+        is_default_for_page_type=False,
+    )
+    session.add(optimization_source)
+    session.commit()
+    route = (
+        f"/projects/{projects.member_project.id}/page-blueprints/"
+        f"{optimization_source.id}"
+    )
+
+    listed = client.get(f"/projects/{projects.member_project.id}/page-blueprints")
+    detail = client.get(route)
+    defaulted = client.post(f"{route}/set-default")
+    versioned = client.post(f"{route}/new-version")
+
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+    for response in (detail, defaulted, versioned):
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Blueprint not found"
+    assert bridge.capture_payloads == []
 
 
 def test_capture_timeout_returns_actionable_gateway_error(

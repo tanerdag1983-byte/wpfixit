@@ -1,9 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.domains.wordpress.draft_jobs import hash_project_key
-from app.domains.wordpress.models import WordPressOutboundCredential
+from app.domains.wordpress.models import (
+    WordPressOutboundCredential,
+    WordPressSnapshotCaptureJob,
+)
 from app.domains.wordpress.snapshot_jobs import (
     SnapshotJobError,
     claim_next_snapshot_job,
@@ -55,6 +59,131 @@ def test_repeated_capture_request_returns_same_open_job(session, wordpress_page)
     assert first.id == second.id
 
 
+def test_repeated_capture_retires_a_stale_claim_and_queues_current_identity(
+    session,
+    wordpress_page,
+):
+    stale = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    claimed = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    wordpress_page.url = "https://member.example/renamed"
+    wordpress_page.content_hash = "changed-builder-metadata-hash"
+    session.commit()
+
+    fresh = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    session.refresh(stale)
+
+    assert fresh.id != stale.id
+    assert fresh.state == "queued"
+    assert stale.state == "failed"
+    assert stale.error_code == "source_identity_changed"
+    assert stale.claim_token is None
+    with pytest.raises(SnapshotJobError) as replay_error:
+        complete_snapshot_job(
+            session,
+            stale.id,
+            claimed.claim_token,
+            snapshot_result(),
+        )
+    assert replay_error.value.code == "snapshot_source_changed"
+
+    next_claim = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert next_claim is not None
+    assert next_claim.job.id == fresh.id
+    assert next_claim.source_url == wordpress_page.url
+    assert next_claim.source_content_hash == wordpress_page.content_hash
+
+
+def test_repeated_capture_cancels_a_stale_queued_identity(
+    session,
+    wordpress_page,
+):
+    stale = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    claimed = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    stale.state = "queued"
+    stale.claim_token = None
+    stale.claimed_at = None
+    stale.claim_expires_at = None
+    wordpress_page.content_hash = "changed-after-claim-expiry"
+    session.commit()
+
+    fresh = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    session.refresh(stale)
+
+    assert fresh.id != stale.id
+    assert fresh.state == "queued"
+    assert stale.state == "cancelled"
+
+
+def test_completion_source_drift_terminalizes_claim_and_opens_fresh_capture(
+    session,
+    wordpress_page,
+):
+    stale = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    claimed = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    wordpress_page.content_hash = "changed-before-completion"
+    session.commit()
+
+    with pytest.raises(SnapshotJobError) as conflict:
+        complete_snapshot_job(
+            session,
+            stale.id,
+            claimed.claim_token,
+            snapshot_result(),
+        )
+
+    assert conflict.value.code == "snapshot_source_changed"
+    session.refresh(stale)
+    fresh = session.scalar(
+        select(WordPressSnapshotCaptureJob).where(
+            WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
+            WordPressSnapshotCaptureJob.state == "queued",
+        )
+    )
+    assert stale.state == "failed"
+    assert stale.error_code == "source_identity_changed"
+    assert fresh is not None
+    assert fresh.id != stale.id
+
+    with pytest.raises(SnapshotJobError) as replay:
+        complete_snapshot_job(
+            session,
+            stale.id,
+            claimed.claim_token,
+            snapshot_result(),
+        )
+    assert replay.value.code == "snapshot_source_changed"
+    assert session.scalar(
+        select(WordPressSnapshotCaptureJob).where(
+            WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
+            WordPressSnapshotCaptureJob.state == "queued",
+        )
+    ).id == fresh.id
+
+
 def test_new_snapshot_job_requires_a_source_content_hash(session, wordpress_page):
     wordpress_page.content_hash = None
     session.commit()
@@ -81,7 +210,10 @@ def test_claim_contains_immutable_source_identity(session, wordpress_page):
     assert claimed.claim_token
 
 
-def test_expired_claim_rejects_source_identity_drift(session, wordpress_page):
+def test_expired_claim_source_drift_terminalizes_and_claims_fresh_job(
+    session,
+    wordpress_page,
+):
     create_or_get_snapshot_job(session, wordpress_page)
     session.commit()
     first = claim_next_snapshot_job(
@@ -95,12 +227,27 @@ def test_expired_claim_rejects_source_identity_drift(session, wordpress_page):
     wordpress_page.content_hash = "changed-builder-metadata-hash"
     session.commit()
 
-    with pytest.raises(SnapshotJobError, match="source identity changed"):
-        claim_next_snapshot_job(
+    second = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert second is not None
+    session.refresh(first.job)
+
+    assert first.job.state == "failed"
+    assert first.job.error_code == "source_identity_changed"
+    assert second.job.id != first.job.id
+    assert second.source_url == wordpress_page.url
+    assert second.source_content_hash == wordpress_page.content_hash
+    with pytest.raises(SnapshotJobError) as replay:
+        complete_snapshot_job(
             session,
-            wordpress_page.project_id,
-            "https://member.example",
+            first.job.id,
+            first.claim_token,
+            snapshot_result(),
         )
+    assert replay.value.code == "snapshot_source_changed"
 
 
 def test_completion_rejects_a_different_source_page(session, wordpress_page):
@@ -134,13 +281,14 @@ def test_completion_rejects_a_changed_source_page(session, wordpress_page):
     wordpress_page.content_hash = "new-content-hash"
     session.commit()
 
-    with pytest.raises(SnapshotJobError, match="content changed"):
+    with pytest.raises(SnapshotJobError) as conflict:
         complete_snapshot_job(
             session,
             claimed.job.id,
             claimed.claim_token,
             snapshot_result(),
         )
+    assert conflict.value.code == "snapshot_source_changed"
 
 
 def test_completion_rejects_a_legacy_null_source_hash(session, wordpress_page):
@@ -155,13 +303,26 @@ def test_completion_rejects_a_legacy_null_source_hash(session, wordpress_page):
     wordpress_page.content_hash = None
     session.commit()
 
-    with pytest.raises(SnapshotJobError, match="content changed"):
+    with pytest.raises(SnapshotJobError) as conflict:
         complete_snapshot_job(
             session,
             claimed.job.id,
             claimed.claim_token,
             snapshot_result(),
         )
+    assert conflict.value.code == "snapshot_source_changed"
+    session.refresh(claimed.job)
+    assert claimed.job.state == "failed"
+    fresh = (
+        session.query(WordPressSnapshotCaptureJob)
+        .filter(
+            WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
+            WordPressSnapshotCaptureJob.state.in_(("queued", "claimed")),
+        )
+        .one()
+    )
+    assert fresh.id != claimed.job.id
+    assert fresh.state == "queued"
 
 
 def test_completion_is_idempotent_only_for_the_same_result(session, wordpress_page):

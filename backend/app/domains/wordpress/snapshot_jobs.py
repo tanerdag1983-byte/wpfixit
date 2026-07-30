@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select
 
 from app.domains.page_blueprints.schemas import SnapshotTextSchema
 from app.domains.wordpress.draft_jobs import normalize_site_url
@@ -40,9 +40,11 @@ class SnapshotJobError(ValueError):
         message: str,
         *,
         code: str = "snapshot_conflict",
+        persist_changes: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
+        self.persist_changes = persist_changes
 
 
 @dataclass(frozen=True)
@@ -57,36 +59,18 @@ class ClaimedSnapshotJob:
 def create_or_get_snapshot_job(
     session: "Session", page: "WordPressPage"
 ) -> "WordPressSnapshotCaptureJob":
-    from app.domains.wordpress.models import (
-        WordPressPage,
-        WordPressSnapshotCaptureJob,
-    )
+    from app.domains.wordpress.models import WordPressPage
 
     locked_page = session.scalar(
         select(WordPressPage).where(WordPressPage.id == page.id).with_for_update()
     )
     if locked_page is None:
         raise SnapshotJobError("snapshot job source page not found")
-    existing = session.scalar(
-        select(WordPressSnapshotCaptureJob).where(
-            WordPressSnapshotCaptureJob.project_id == locked_page.project_id,
-            WordPressSnapshotCaptureJob.wordpress_page_id == locked_page.id,
-            WordPressSnapshotCaptureJob.state.in_(("queued", "claimed")),
-        )
+    return _create_or_reuse_current_job(
+        session,
+        locked_page,
+        now=datetime.now(UTC),
     )
-    if existing is not None:
-        return existing
-    if not locked_page.content_hash:
-        raise SnapshotJobError("snapshot job source content hash missing")
-    job = WordPressSnapshotCaptureJob(
-        id=f"wsnapjob_{uuid4().hex}",
-        project_id=locked_page.project_id,
-        wordpress_page_id=locked_page.id,
-        state="queued",
-    )
-    session.add(job)
-    session.flush()
-    return job
 
 
 def claim_next_snapshot_job(
@@ -112,74 +96,105 @@ def claim_next_snapshot_job(
     )
     if credential is None or credential.site_url != normalized_site_url:
         raise SnapshotJobError("wordpress_outbound_credential_invalid")
-    session.execute(
-        update(WordPressSnapshotCaptureJob)
-        .where(
-            WordPressSnapshotCaptureJob.project_id == project_id,
-            WordPressSnapshotCaptureJob.state == "claimed",
-            WordPressSnapshotCaptureJob.claim_expires_at <= requested_at,
+    while True:
+        candidate = session.execute(
+            select(
+                WordPressSnapshotCaptureJob.id,
+                WordPressSnapshotCaptureJob.wordpress_page_id,
+            )
+            .where(
+                WordPressSnapshotCaptureJob.project_id == project_id,
+                or_(
+                    WordPressSnapshotCaptureJob.state == "queued",
+                    and_(
+                        WordPressSnapshotCaptureJob.state == "claimed",
+                        WordPressSnapshotCaptureJob.claim_expires_at <= requested_at,
+                    ),
+                ),
+            )
+            .order_by(
+                WordPressSnapshotCaptureJob.created_at,
+                WordPressSnapshotCaptureJob.id,
+            )
+            .limit(1)
+        ).one_or_none()
+        if candidate is None:
+            credential.last_seen_at = requested_at
+            return None
+        page = session.scalar(
+            select(WordPressPage).where(
+                WordPressPage.id == candidate.wordpress_page_id,
+                WordPressPage.project_id == project_id,
+            ).with_for_update()
         )
-        .values(
-            state="queued",
-            claim_token=None,
-            claim_expires_at=None,
-            claimed_at=None,
+        job = session.scalar(
+            select(WordPressSnapshotCaptureJob)
+            .where(WordPressSnapshotCaptureJob.id == candidate.id)
+            .with_for_update()
         )
-        .execution_options(synchronize_session=False)
-    )
-    session.expire_all()
-    job = session.scalar(
-        select(WordPressSnapshotCaptureJob)
-        .where(
-            WordPressSnapshotCaptureJob.project_id == project_id,
-            WordPressSnapshotCaptureJob.state == "queued",
+        if job is None:
+            continue
+        expired = (
+            job.state == "claimed"
+            and job.claim_expires_at is not None
+            and _as_utc(job.claim_expires_at) <= requested_at
         )
-        .order_by(
-            WordPressSnapshotCaptureJob.created_at,
-            WordPressSnapshotCaptureJob.id,
-        )
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
-    if job is None:
-        credential.last_seen_at = requested_at
-        return None
-    page = session.scalar(
-        select(WordPressPage).where(
-            WordPressPage.id == job.wordpress_page_id,
-            WordPressPage.project_id == project_id,
-        )
-    )
-    if page is None:
-        job.state = "cancelled"
-        job.cancelled_at = requested_at
-        session.flush()
-        return None
-    frozen_identity = _claim_identity(job)
-    current_identity = _page_identity(page)
-    if frozen_identity is None:
-        if not page.content_hash:
-            raise SnapshotJobError("snapshot job source content hash missing")
-        frozen_identity = current_identity
-        job.snapshot_result = {CLAIM_IDENTITY_KEY: frozen_identity}
-    elif frozen_identity != current_identity:
-        raise SnapshotJobError("snapshot job source identity changed")
+        if job.state != "queued" and not expired:
+            continue
+        if page is None:
+            job.state = "cancelled"
+            job.cancelled_at = requested_at
+            _clear_claim(job)
+            session.flush()
+            return None
 
-    claim_token = secrets.token_urlsafe(32)
-    job.state = "claimed"
-    job.claim_token = claim_token
-    job.claimed_at = requested_at
-    job.claim_expires_at = requested_at + CLAIM_TTL
-    job.attempt_count += 1
-    credential.last_seen_at = requested_at
-    session.flush()
-    return ClaimedSnapshotJob(
-        job=job,
-        claim_token=claim_token,
-        source_post_id=frozen_identity["source_post_id"],
-        source_url=frozen_identity["source_url"],
-        source_content_hash=frozen_identity["source_content_hash"],
-    )
+        frozen_identity = _claim_identity(job)
+        current_identity = _page_identity(page)
+        recovered_drift = False
+        if frozen_identity is not None and frozen_identity != current_identity:
+            _retire_source_drift(job, requested_at)
+            job = _create_or_reuse_current_job(
+                session,
+                page,
+                now=requested_at,
+                exclude_job_id=job.id,
+                allow_missing_content_hash=True,
+            )
+            recovered_drift = True
+            if job.state == "claimed":
+                credential.last_seen_at = requested_at
+                session.flush()
+                return None
+            frozen_identity = _claim_identity(job)
+        elif expired:
+            job.state = "queued"
+            _clear_claim(job)
+
+        if frozen_identity is None:
+            if not page.content_hash:
+                session.flush()
+                raise SnapshotJobError(
+                    "snapshot job source content hash missing",
+                    persist_changes=recovered_drift,
+                )
+            frozen_identity = current_identity
+            job.snapshot_result = {CLAIM_IDENTITY_KEY: frozen_identity}
+
+        claim_token = secrets.token_urlsafe(32)
+        job.state = "claimed"
+        job.claim_token = claim_token
+        job.claimed_at = requested_at
+        job.claim_expires_at = requested_at + CLAIM_TTL
+        job.attempt_count += 1
+        credential.last_seen_at = requested_at
+        session.flush()
+        return ClaimedSnapshotJob(
+            job=job,
+            claim_token=claim_token,
+            source_post_id=frozen_identity["source_post_id"],
+            source_url=frozen_identity["source_url"],
+            source_content_hash=frozen_identity["source_content_hash"],
+        )
 
 
 def complete_snapshot_job(
@@ -195,6 +210,20 @@ def complete_snapshot_job(
         WordPressSnapshotCaptureJob,
     )
 
+    identity = session.execute(
+        select(
+            WordPressSnapshotCaptureJob.project_id,
+            WordPressSnapshotCaptureJob.wordpress_page_id,
+        ).where(WordPressSnapshotCaptureJob.id == job_id)
+    ).one_or_none()
+    if identity is None:
+        raise SnapshotJobError("snapshot job not found")
+    page = session.scalar(
+        select(WordPressPage).where(
+            WordPressPage.id == identity.wordpress_page_id,
+            WordPressPage.project_id == identity.project_id,
+        ).with_for_update()
+    )
     job = session.scalar(
         select(WordPressSnapshotCaptureJob)
         .where(WordPressSnapshotCaptureJob.id == job_id)
@@ -207,31 +236,44 @@ def complete_snapshot_job(
         if job.snapshot_result != result:
             raise SnapshotJobError("snapshot job result conflict")
         return job
+    if job.state == "failed" and job.error_code == "source_identity_changed":
+        _require_terminal_claim(job, claim_token)
+        raise SnapshotJobError(
+            "snapshot job source identity changed",
+            code="snapshot_source_changed",
+        )
     _require_active_claim(job, claim_token, now=now)
     _validate_result(result)
     frozen_identity = _claim_identity(job)
     if frozen_identity is None:
         raise SnapshotJobError("snapshot job source identity missing")
-    page = session.scalar(
-        select(WordPressPage).where(
-            WordPressPage.id == job.wordpress_page_id,
-            WordPressPage.project_id == job.project_id,
-        ).with_for_update()
-    )
+    if page is not None and _page_identity(page) != frozen_identity:
+        requested_at = now or datetime.now(UTC)
+        _retire_source_drift(job, requested_at)
+        _create_or_reuse_current_job(
+            session,
+            page,
+            now=requested_at,
+            exclude_job_id=job.id,
+            allow_missing_content_hash=True,
+        )
+        session.flush()
+        raise SnapshotJobError(
+            "snapshot job source identity changed",
+            code="snapshot_source_changed",
+            persist_changes=True,
+        )
     if (
         page is None
         or result["source_post_id"] != frozen_identity["source_post_id"]
-        or page.wordpress_object_id != frozen_identity["source_post_id"]
     ):
         raise SnapshotJobError("snapshot result source page mismatch")
     if (
         result["source_url"] != frozen_identity["source_url"]
-        or page.url != frozen_identity["source_url"]
     ):
         raise SnapshotJobError("snapshot result source page URL mismatch")
     if (
         result["source_content_hash"] != frozen_identity["source_content_hash"]
-        or page.content_hash != frozen_identity["source_content_hash"]
     ):
         raise SnapshotJobError("snapshot result source page content changed")
 
@@ -280,6 +322,80 @@ def fail_snapshot_job(
     _clear_claim(job)
     session.flush()
     return job
+
+
+def _create_or_reuse_current_job(
+    session: "Session",
+    page: "WordPressPage",
+    *,
+    now: datetime,
+    exclude_job_id: str | None = None,
+    allow_missing_content_hash: bool = False,
+) -> "WordPressSnapshotCaptureJob":
+    from app.domains.wordpress.models import WordPressSnapshotCaptureJob
+
+    statement = (
+        select(WordPressSnapshotCaptureJob)
+        .where(
+            WordPressSnapshotCaptureJob.project_id == page.project_id,
+            WordPressSnapshotCaptureJob.wordpress_page_id == page.id,
+            WordPressSnapshotCaptureJob.state.in_(("queued", "claimed")),
+        )
+        .order_by(
+            WordPressSnapshotCaptureJob.created_at,
+            WordPressSnapshotCaptureJob.id,
+        )
+        .with_for_update()
+    )
+    if exclude_job_id is not None:
+        statement = statement.where(
+            WordPressSnapshotCaptureJob.id != exclude_job_id
+        )
+    current_identity = _page_identity(page)
+    reusable = None
+    retired_stale = False
+    for existing in session.scalars(statement).all():
+        frozen_identity = _claim_identity(existing)
+        if frozen_identity is None or frozen_identity == current_identity:
+            reusable = reusable or existing
+        else:
+            _retire_source_drift(existing, now)
+            retired_stale = True
+    if reusable is not None:
+        session.flush()
+        return reusable
+    if (
+        not page.content_hash
+        and not allow_missing_content_hash
+        and not retired_stale
+    ):
+        raise SnapshotJobError("snapshot job source content hash missing")
+
+    job = WordPressSnapshotCaptureJob(
+        id=f"wsnapjob_{uuid4().hex}",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        state="queued",
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def _retire_source_drift(
+    job: "WordPressSnapshotCaptureJob",
+    now: datetime,
+) -> None:
+    if job.state == "claimed" and job.claim_token:
+        job.state = "failed"
+        job.error_code = "source_identity_changed"
+        job.error_message = "Source identity changed after the capture claim"
+        job.failed_at = now
+        job.terminal_claim_token_hash = _hash_claim_token(job.claim_token)
+    else:
+        job.state = "cancelled"
+        job.cancelled_at = now
+    _clear_claim(job)
 
 
 def _validate_result(result: dict) -> None:

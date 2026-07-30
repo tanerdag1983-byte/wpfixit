@@ -8,7 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.jobs.models import Job
-from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.models import (
+    OPTIMIZATION_SOURCE_ADAPTER_VERSION,
+    PageBlueprint,
+    is_optimization_source_blueprint,
+    ordinary_blueprint_clause,
+)
 from app.domains.page_blueprints.schemas import SnapshotTextSchema
 from app.domains.page_packages.models import (
     PagePackageHandoff,
@@ -45,6 +50,7 @@ def existing_page_snapshot_blueprint(
         or result.get("source_post_id") != page.wordpress_object_id
         or result.get("source_url") != page.url
         or result.get("source_content_hash") != page.content_hash
+        or result.get("snapshot_kind") != "optimization_source"
     ):
         raise ValueError("completed snapshot does not match the existing page")
     schema = SnapshotTextSchema.model_validate(result.get("schema"))
@@ -101,7 +107,7 @@ def existing_page_snapshot_blueprint(
         wordpress_snapshot_id=snapshot_id,
         snapshot_version=snapshot_version,
         schema_version="snapshot-text-v1",
-        adapter_version="optimization-source-v1",
+        adapter_version=OPTIMIZATION_SOURCE_ADAPTER_VERSION,
         capture_state="ready",
         migration_state="native",
         verified_at=verified_at,
@@ -129,6 +135,7 @@ def lock_active_default_blueprint(
             PageBlueprint.page_type == page_type,
             PageBlueprint.state == "ready",
             PageBlueprint.is_default_for_page_type.is_(True),
+            ordinary_blueprint_clause(),
         )
     )
     if selected_id is None:
@@ -157,6 +164,7 @@ def lock_active_default_blueprint(
             candidate is not None
             and candidate.state == "ready"
             and candidate.is_default_for_page_type
+            and not is_optimization_source_blueprint(candidate)
             and not has_successor
         ):
             return candidate, True
@@ -166,6 +174,7 @@ def lock_active_default_blueprint(
                 PageBlueprint.page_type == page_type,
                 PageBlueprint.state == "ready",
                 PageBlueprint.is_default_for_page_type.is_(True),
+                ordinary_blueprint_clause(),
             )
         )
         if selected_id is None:

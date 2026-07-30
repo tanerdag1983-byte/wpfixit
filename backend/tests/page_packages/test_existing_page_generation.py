@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -8,12 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.service import set_default_blueprint
 from app.domains.page_packages import generation
 from app.domains.page_packages.models import PagePackageProposal
 from app.domains.page_packages.service import (
     accept_regeneration_candidate,
     create_regeneration_candidate,
     issue_page_package_handoff,
+    lock_active_default_blueprint,
 )
 from app.domains.recommendations.models import (
     AiConnection,
@@ -53,6 +56,38 @@ def _generated_snapshot_package() -> dict:
             "acf-cta-url": {"value": "/contact/"},
         }
     }
+
+
+def _normal_default_blueprint(
+    session: Session,
+    source: WordPressPage,
+) -> PageBlueprint:
+    result = snapshot_result(snapshot_id=902, structure_hash="default-structure-hash")
+    blueprint = PageBlueprint(
+        id="normal-new-page-default",
+        project_id=source.project_id,
+        name="Normal new-page default",
+        page_type="service",
+        source_wordpress_page_id=source.id,
+        wordpress_blueprint_id=902,
+        wordpress_snapshot_id=902,
+        snapshot_version=1,
+        schema_version="snapshot-text-v1",
+        adapter_version="wp-fixpilot-bridge-test",
+        capture_state="ready",
+        migration_state="native",
+        verified_at=datetime.fromisoformat(result["captured_at"]),
+        builder="acf",
+        seo_plugin="yoast",
+        version=1,
+        structure_hash=result["structure_hash"],
+        content_schema=result["schema"],
+        state="ready",
+        is_default_for_page_type=True,
+    )
+    session.add(blueprint)
+    session.commit()
+    return blueprint
 
 
 @pytest.fixture
@@ -242,6 +277,75 @@ def test_retry_after_capture_binds_one_proposal_to_the_snapshot(
     assert blueprint is not None
     assert blueprint.wordpress_snapshot_id == 901
     assert session.scalar(select(func.count(PagePackageProposal.id))) == 1
+
+
+def test_existing_page_snapshot_does_not_change_new_page_default(
+    client: TestClient,
+    session: Session,
+    captured_existing_page,
+) -> None:
+    captured = captured_existing_page
+    default = _normal_default_blueprint(session, captured.source)
+    new_opportunity = KeywordOpportunity(
+        id="new-page-control-opportunity",
+        project_id=captured.source.project_id,
+        keyword="new service page",
+        location_code=2528,
+        language_code="nl",
+        target_classification="new_page",
+        target_score=0,
+        target_evidence=["no_reliable_page_match"],
+        source="dataforseo",
+        raw_payload={},
+    )
+    session.add(new_opportunity)
+    session.commit()
+
+    existing = client.post(captured.route, json={"page_type": "service"})
+    assert existing.status_code == 202
+    existing_proposal = session.get(PagePackageProposal, existing.json()["id"])
+    assert existing_proposal is not None
+    optimization_blueprint = session.get(
+        PageBlueprint,
+        existing_proposal.blueprint_id,
+    )
+    new_page = client.post(
+        f"/projects/{captured.source.project_id}/keyword-opportunities/"
+        f"{new_opportunity.id}/page-proposal",
+        json={"page_type": "service"},
+    )
+
+    assert optimization_blueprint is not None
+    assert optimization_blueprint.adapter_version == "optimization-source-v1"
+    assert new_page.status_code == 202
+    assert new_page.json()["blueprint"]["id"] == default.id
+
+
+def test_optimization_source_cannot_be_selected_as_a_default(
+    client: TestClient,
+    session: Session,
+    captured_existing_page,
+) -> None:
+    captured = captured_existing_page
+    created = client.post(captured.route, json={"page_type": "service"})
+    proposal = session.get(PagePackageProposal, created.json()["id"])
+    assert proposal is not None
+    optimization_blueprint = session.get(PageBlueprint, proposal.blueprint_id)
+    assert optimization_blueprint is not None
+
+    with pytest.raises(ValueError, match="optimization source"):
+        set_default_blueprint(session, optimization_blueprint)
+
+    optimization_blueprint.is_default_for_page_type = True
+    session.commit()
+    selected, selection_changed = lock_active_default_blueprint(
+        session,
+        captured.source.project_id,
+        "service",
+    )
+
+    assert selected is None
+    assert selection_changed is False
 
 
 def test_source_change_after_capture_does_not_change_generation_context(

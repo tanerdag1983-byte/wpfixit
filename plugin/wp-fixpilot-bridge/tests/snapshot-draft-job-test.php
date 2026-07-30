@@ -7,6 +7,12 @@ require __DIR__ . '/blueprint-test.php';
 $jobController = new WPFixPilot_Draft_Job_Controller(new stdClass(), $controller);
 $currentSnapshot = $controller->read(200);
 assert(!is_wp_error($currentSnapshot));
+$sourcePostId = (int) $currentSnapshot['source_page_id'];
+$sourcePost = get_post($sourcePostId);
+assert($sourcePost instanceof WP_Post);
+$sourcePostBefore = serialize(get_object_vars($sourcePost));
+$sourceContentBefore = $sourcePost->post_content;
+$sourceMetaBefore = serialize($GLOBALS['wpfixpilot_meta'][$sourcePostId] ?? []);
 $snapshotJob = [
     'contract_version' => 'wordpress-snapshot-draft-job-v1',
     'payload' => [
@@ -37,6 +43,14 @@ assert($draft instanceof WP_Post);
 assert($draft->post_type === 'page');
 assert($draft->post_status === 'draft');
 assert($draft->post_title === 'Snapshotgestuurde titel');
+$sourcePostAfter = get_post($sourcePostId);
+assert($sourcePostAfter instanceof WP_Post);
+assert(serialize(get_object_vars($sourcePostAfter)) === $sourcePostBefore);
+assert($sourcePostAfter->post_content === $sourceContentBefore);
+assert(
+    serialize($GLOBALS['wpfixpilot_meta'][$sourcePostId] ?? [])
+    === $sourceMetaBefore
+);
 
 $replayed = $jobController->process_payload($snapshotJob);
 assert(!is_wp_error($replayed));

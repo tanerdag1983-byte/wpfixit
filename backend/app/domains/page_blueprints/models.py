@@ -12,12 +12,15 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    or_,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.domains.page_blueprints.lifecycle import blueprint_lifecycle_state_check
+
+OPTIMIZATION_SOURCE_ADAPTER_VERSION = "optimization-source-v1"
 
 
 class PageBlueprint(Base):
@@ -135,3 +138,14 @@ class PageBlueprint(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+def ordinary_blueprint_clause():
+    return or_(
+        PageBlueprint.adapter_version.is_(None),
+        PageBlueprint.adapter_version != OPTIMIZATION_SOURCE_ADAPTER_VERSION,
+    )
+
+
+def is_optimization_source_blueprint(blueprint: PageBlueprint) -> bool:
+    return blueprint.adapter_version == OPTIMIZATION_SOURCE_ADAPTER_VERSION

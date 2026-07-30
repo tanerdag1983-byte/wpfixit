@@ -71,6 +71,8 @@ def claim_snapshot_job(
     try:
         claimed = claim_next_snapshot_job(session, project_id, credential.site_url)
     except SnapshotJobError as error:
+        if error.persist_changes:
+            session.commit()
         raise HTTPException(status_code=409, detail=str(error)) from error
     if claimed is None:
         session.commit()
@@ -107,6 +109,8 @@ def complete_claimed_snapshot_job(
             payload.result.model_dump(mode="json", by_alias=True),
         )
     except SnapshotJobError as error:
+        if error.persist_changes:
+            session.commit()
         raise _snapshot_conflict(error) from error
     session.commit()
     return _job_payload(job)

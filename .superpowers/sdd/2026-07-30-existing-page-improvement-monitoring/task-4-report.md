@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete.
+Complete after Round 1 review fixes.
 
 ## Delivered
 
@@ -17,6 +17,12 @@ Complete.
   manual handoff paths reject them.
 - `new_page` behavior remains on the existing default-blueprint path, and `review`
   remains a `409`.
+- Optimization-source snapshot wrappers use the persisted
+  `optimization-source-v1` provenance and are excluded from ordinary blueprint
+  registry, detail, mutation, default, and version paths.
+- Frozen capture identity drift retires stale queued/claimed work under the shared
+  source-page lock and creates or reuses one fresh capture. Completion conflicts
+  preserve replay-safe terminal state and an open successor.
 
 ## TDD Evidence
 
@@ -26,26 +32,38 @@ Complete.
   source-bound idempotency fix.
 - Final review regressions failed before the manual-handoff guard and shared
   source-page lock, then passed after the minimal fixes.
+- Round 1 registry/default regressions failed while optimization snapshots remained
+  visible and selectable.
+- Round 1 drift regressions failed while stale claimed jobs were reused, expired
+  claims rolled back repeatedly, and null-hash completion left no open successor.
+- The PHP source post/content/meta byte comparison was added as a characterization
+  regression and was green before and after the backend fixes.
 
 ## Verification
 
-- Focused backend: `24 passed`.
-- Legacy proposal and handoff regressions: `42 passed`.
-- Full page-package suite: `128 passed, 2 skipped` (optional PostgreSQL tests require
+- Focused backend: `27 passed`.
+- Snapshot job service/routes: `22 passed`.
+- Blueprint route/service regressions: `53 passed`.
+- Full page-package suite: `131 passed, 2 skipped` (optional PostgreSQL tests require
   `WP_FIXPILOT_POSTGRES_TEST_URL`).
 - Ruff: `All checks passed!`
 - Plugin `tests/snapshot-draft-job-test.php`: lifecycle and snapshot draft-job tests
   passed under PHP 8.2 Docker.
+- The PostgreSQL source-drift completion/retry race regression was added but skipped
+  because `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured.
 
 ## Review
 
 Independent review found an alternate manual handoff draft path and a concurrent
 snapshot-wrapper race. Both were resolved by rejecting source-bound proposals from
 handoff issue/redeem/complete and locking the shared synchronized WordPress page
-before snapshot lookup/wrapping. Existing legacy route tests cover unchanged
-`new_page` behavior.
+before snapshot lookup/wrapping. Round 1 review then found blueprint registry leakage,
+expired-claim drift rollback, and missing null-hash recovery. These were resolved with
+provenance filtering, page-first claim locking, replayable stale terminal state, and
+one recoverable fresh capture. Route and service regressions cover unchanged
+`new_page` default resolution and internal existing-page resolution.
 
 ## Concerns
 
-No blocking concerns. The shared-row locking contract is covered by a focused query
-regression; a live PostgreSQL concurrency test was not added to keep Task 4 scoped.
+No blocking concerns. The PostgreSQL race regression is present but was not executed
+because the optional PostgreSQL test URL is unavailable in this environment.

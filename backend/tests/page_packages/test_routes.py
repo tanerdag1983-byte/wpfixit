@@ -2,7 +2,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.domains.dataforseo.models import KeywordOpportunity
-from app.domains.wordpress.models import WordPressPage
+from app.domains.wordpress.draft_jobs import hash_project_key
+from app.domains.wordpress.models import (
+    WordPressOutboundCredential,
+    WordPressPage,
+    WordPressSnapshotCaptureJob,
+)
+from app.domains.wordpress.snapshot_jobs import claim_next_snapshot_job
 from tests.recommendations.conftest import ProjectFixtures
 
 
@@ -78,3 +84,48 @@ def test_review_opportunity_still_requires_target_assignment(
     )
 
     assert response.status_code == 409
+
+
+def test_existing_page_source_drift_replaces_the_frozen_capture_job(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    opportunity = _existing_opportunity(session, projects)
+    session.add(
+        WordPressOutboundCredential(
+            id="existing-route-credential",
+            project_id=opportunity.project_id,
+            key_hash=hash_project_key("wpfx_existing_route"),
+            site_url="https://member.example",
+        )
+    )
+    session.commit()
+    route = (
+        f"/projects/{opportunity.project_id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal"
+    )
+    first = client.post(route, json={"page_type": "service"})
+    claimed = claim_next_snapshot_job(
+        session,
+        opportunity.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    source = session.get(WordPressPage, "existing-route-page")
+    assert source is not None
+    source.content_hash = "existing-route-drifted-hash"
+    session.commit()
+
+    retried = client.post(route, json={"page_type": "service"})
+    stale = session.get(WordPressSnapshotCaptureJob, first.json()["snapshot_job_id"])
+    fresh = session.get(WordPressSnapshotCaptureJob, retried.json()["snapshot_job_id"])
+
+    assert retried.status_code == 202
+    assert retried.json()["snapshot_job_id"] != first.json()["snapshot_job_id"]
+    assert stale is not None
+    assert stale.state == "failed"
+    assert fresh is not None
+    assert fresh.state == "queued"

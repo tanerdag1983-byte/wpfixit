@@ -206,7 +206,42 @@ def test_completion_rejects_claim_time_source_identity_drift(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "snapshot_conflict"
+    assert response.json()["detail"]["code"] == "snapshot_source_changed"
+    session.expire_all()
+    stale = session.get(WordPressSnapshotCaptureJob, job.id)
+    fresh = (
+        session.query(WordPressSnapshotCaptureJob)
+        .filter(
+            WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
+            WordPressSnapshotCaptureJob.state == "queued",
+        )
+        .one()
+    )
+    assert stale is not None
+    assert stale.state == "failed"
+    assert stale.error_code == "source_identity_changed"
+    assert fresh.id != stale.id
+
+    replay = client.post(
+        f"{endpoint}/{job.id}/complete",
+        headers=plugin_headers(),
+        json={
+            "claim_token": claimed["claim_token"],
+            "result": snapshot_result(),
+        },
+    )
+
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "snapshot_source_changed"
+    assert (
+        session.query(WordPressSnapshotCaptureJob)
+        .filter(
+            WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
+            WordPressSnapshotCaptureJob.state == "queued",
+        )
+        .count()
+        == 1
+    )
 
 
 def test_expired_completion_returns_retryable_conflict_and_reclaims(

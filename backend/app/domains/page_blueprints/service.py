@@ -11,7 +11,11 @@ from app.domains.page_blueprints.lifecycle import (
     BLUEPRINT_LIFECYCLE_STATES,
     BlueprintLifecycleState,
 )
-from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.models import (
+    PageBlueprint,
+    is_optimization_source_blueprint,
+    ordinary_blueprint_clause,
+)
 from app.domains.page_blueprints.schemas import BlueprintSchema, SnapshotTextSchema
 
 if TYPE_CHECKING:
@@ -54,6 +58,7 @@ def legacy_blueprint_candidates(
         PageBlueprint.project_id == project_id,
         PageBlueprint.source_wordpress_page_id
         == settings.template_wordpress_page_id,
+        ordinary_blueprint_clause(),
     ).first()
     if managed_source_exists is not None:
         return []
@@ -94,6 +99,8 @@ def set_default_blueprint(
     *,
     commit: bool = True,
 ) -> None:
+    if is_optimization_source_blueprint(blueprint):
+        raise ValueError("An optimization source cannot be set as the default")
     if blueprint.state != "ready":
         raise ValueError("Only ready blueprints can be set as the default")
     successor_id = session.scalar(
