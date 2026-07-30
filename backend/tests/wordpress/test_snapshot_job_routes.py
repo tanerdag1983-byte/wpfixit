@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -175,6 +177,7 @@ def test_completion_rejects_result_for_another_source(
     )
 
     assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "snapshot_conflict"
 
 
 def test_completion_rejects_claim_time_source_identity_drift(
@@ -203,6 +206,59 @@ def test_completion_rejects_claim_time_source_identity_drift(
     )
 
     assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "snapshot_conflict"
+
+
+def test_expired_completion_returns_retryable_conflict_and_reclaims(
+    client: TestClient,
+    session,
+    projects: ProjectFixtures,
+    wordpress_page,
+) -> None:
+    job = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    endpoint = (
+        f"/projects/{projects.member_project.id}/wordpress-snapshot-jobs"
+    )
+    first_claim = client.post(
+        f"{endpoint}/claim",
+        headers=plugin_headers(),
+    ).json()
+    stored = session.get(WordPressSnapshotCaptureJob, job.id)
+    assert stored is not None
+    stored.claim_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    session.commit()
+
+    expired = client.post(
+        f"{endpoint}/{job.id}/complete",
+        headers=plugin_headers(),
+        json={
+            "claim_token": first_claim["claim_token"],
+            "result": snapshot_result(),
+        },
+    )
+
+    assert expired.status_code == 409
+    assert expired.json()["detail"]["code"] == "snapshot_claim_invalid"
+
+    second_claim = client.post(
+        f"{endpoint}/claim",
+        headers=plugin_headers(),
+    )
+    assert second_claim.status_code == 200
+    assert second_claim.json()["job"]["id"] == job.id
+    assert second_claim.json()["claim_token"] != first_claim["claim_token"]
+
+    completed = client.post(
+        f"{endpoint}/{job.id}/complete",
+        headers=plugin_headers(),
+        json={
+            "claim_token": second_claim.json()["claim_token"],
+            "result": snapshot_result(),
+        },
+    )
+    assert completed.status_code == 200
+    assert completed.json()["state"] == "completed"
 
 
 def test_completion_rejects_coerced_result_fields(

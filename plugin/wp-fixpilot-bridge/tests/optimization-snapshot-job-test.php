@@ -474,6 +474,51 @@ assert(
     )
 );
 
+$snapshotCountBeforeLeaseExpiry = count(array_filter(
+    $GLOBALS['wpfixpilot_posts'],
+    static fn (WP_Post $post): bool =>
+        $post->post_type === WPFixPilot_Template_Snapshot_Store::POST_TYPE
+));
+$leaseJob = [
+    'id' => 'snapshot-job-expired-lease',
+    'source_post_id' => 42,
+    'source_url' => get_permalink(42),
+    'source_content_hash' => $outboundIdentity['content_hash'],
+];
+$GLOBALS['wpfixpilot_optimization_responses'] = [
+    optimization_response(200, [
+        'job' => $leaseJob,
+        'claim_token' => 'expired-claim-token-with-valid-length',
+    ]),
+    optimization_response(409, [
+        'detail' => ['code' => 'snapshot_claim_invalid'],
+    ]),
+    optimization_response(200, [
+        'job' => $leaseJob,
+        'claim_token' => 'reclaimed-token-with-valid-length',
+    ]),
+    optimization_response(200, [
+        'id' => 'snapshot-job-expired-lease',
+        'state' => 'completed',
+    ]),
+];
+$expiredLease = $client->process_next_snapshot($controller);
+assert(is_wp_error($expiredLease));
+$retainedSnapshotId = (
+    new WPFixPilot_Template_Snapshot_Store()
+)->find_for_job('snapshot-job-expired-lease');
+assert($retainedSnapshotId !== null);
+$reclaimedLease = $client->process_next_snapshot($controller);
+assert(!is_wp_error($reclaimedLease));
+assert($reclaimedLease['snapshot_id'] === $retainedSnapshotId);
+assert(
+    count(array_filter(
+        $GLOBALS['wpfixpilot_posts'],
+        static fn (WP_Post $post): bool =>
+            $post->post_type === WPFixPilot_Template_Snapshot_Store::POST_TYPE
+    )) === $snapshotCountBeforeLeaseExpiry + 1
+);
+
 $snapshotCountBeforeRejection = count($GLOBALS['wpfixpilot_posts']);
 $GLOBALS['wpfixpilot_optimization_responses'] = [
     optimization_response(200, [
@@ -485,7 +530,9 @@ $GLOBALS['wpfixpilot_optimization_responses'] = [
         ],
         'claim_token' => 'rejected-claim-token-with-valid-length',
     ]),
-    optimization_response(409, ['detail' => 'Source identity changed']),
+    optimization_response(409, [
+        'detail' => ['code' => 'snapshot_conflict'],
+    ]),
 ];
 $rejected = $client->process_next_snapshot($controller);
 assert(is_wp_error($rejected));

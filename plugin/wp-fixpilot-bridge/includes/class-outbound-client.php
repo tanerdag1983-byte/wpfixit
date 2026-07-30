@@ -108,7 +108,14 @@ final class WPFixPilot_Outbound_Client
             return $result;
         }
         $status = $this->error_status($completed);
-        if ($status !== null && $status >= 400 && $status < 500) {
+        $retryableClaimConflict = $status === 409
+            && $this->error_code($completed) === 'snapshot_claim_invalid';
+        if (
+            !$retryableClaimConflict
+            && $status !== null
+            && $status >= 400
+            && $status < 500
+        ) {
             $cleanup = $controller->discard_optimization_snapshot(
                 (int) ($result['snapshot_id'] ?? 0),
                 $jobId
@@ -193,10 +200,19 @@ final class WPFixPilot_Outbound_Client
         }
         $status = wp_remote_retrieve_response_code($response);
         if (!in_array($status, $acceptedStatuses, true)) {
+            $errorData = ['status' => $status];
+            $decoded = json_decode(wp_remote_retrieve_body($response), true);
+            $detail = is_array($decoded) ? ($decoded['detail'] ?? null) : null;
+            if (
+                is_array($detail)
+                && ($detail['code'] ?? '') === 'snapshot_claim_invalid'
+            ) {
+                $errorData['error_code'] = 'snapshot_claim_invalid';
+            }
             return new WP_Error(
                 'wp_fixpilot_outbound_request_failed',
                 'WP FixPilot kon de concepttaak niet verwerken.',
-                ['status' => $status]
+                $errorData
             );
         }
         if ($status === 204) {
@@ -232,5 +248,14 @@ final class WPFixPilot_Outbound_Client
         $status = (int) $data['status'];
 
         return $status > 0 ? $status : null;
+    }
+
+    private function error_code(WP_Error $error): string
+    {
+        $data = method_exists($error, 'get_error_data')
+            ? $error->get_error_data()
+            : ($error->data ?? null);
+
+        return is_array($data) ? (string) ($data['error_code'] ?? '') : '';
     }
 }

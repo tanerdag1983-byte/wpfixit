@@ -35,7 +35,14 @@ RESULT_KEYS = {
 
 
 class SnapshotJobError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "snapshot_conflict",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -362,7 +369,10 @@ def _require_active_claim(
         or job.claim_expires_at is None
         or _as_utc(job.claim_expires_at) <= requested_at
     ):
-        raise SnapshotJobError("snapshot job claim invalid")
+        raise SnapshotJobError(
+            "snapshot job claim invalid",
+            code="snapshot_claim_invalid",
+        )
 
 
 def _require_terminal_claim(
@@ -375,7 +385,10 @@ def _require_terminal_claim(
             _hash_claim_token(claim_token),
         )
     ):
-        raise SnapshotJobError("snapshot job claim invalid")
+        raise SnapshotJobError(
+            "snapshot job claim invalid",
+            code="snapshot_claim_invalid",
+        )
 
 
 def _clear_claim(job: "WordPressSnapshotCaptureJob") -> None:

@@ -24,6 +24,9 @@ Implemented, hardened after round-one review, and locally verified.
 - Added durable job-to-private-snapshot replay metadata. Ambiguous callback
   failures retain and reuse the same snapshot; definitive 4xx completion
   rejection deletes it.
+- Added a completion-only `snapshot_claim_invalid` conflict code so expired or
+  invalid claim-token 409s retain the snapshot for lease reclaim, while source
+  and result conflicts remain definitive cleanup signals.
 - Kept live source pages read-only and deletes incomplete or concurrently stale
   snapshot clones.
 - Polls one snapshot job at priority 5 before the existing draft-job callback.
@@ -45,10 +48,13 @@ Implemented, hardened after round-one review, and locally verified.
 - Added regressions for every fingerprint component, builder-meta mutation,
   all three supported SEO families, ambiguous completion replay, and 409
   snapshot cleanup without source writes.
+- Round-two RED: an expired-claim completion 409 deleted the retained private
+  snapshot; GREEN reclaims with a new token and completes using the same
+  snapshot ID without another capture.
 
 ## Verification
 
-- Backend focused/concurrency command: `18 passed, 2 skipped`.
+- Backend focused/concurrency command: `19 passed, 2 skipped`.
 - The two PostgreSQL concurrency tests skipped only because
   `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured.
 - Repository backend Ruff (`app`, `tests`, and `alembic`): clean.
@@ -61,7 +67,8 @@ Implemented, hardened after round-one review, and locally verified.
 Local review covered outbound authentication, site binding, page/job lock order,
 terminal races, claim identity persistence, strict schema/result validation,
 registered adapter fingerprinting, SEO metadata cloning, retry replay, 4xx clone
-cleanup, cron priority, and absence of live-page writes.
+cleanup, completion conflict classification, cron priority, and absence of
+live-page writes.
 
 ## Concern
 

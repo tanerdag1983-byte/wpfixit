@@ -107,7 +107,7 @@ def complete_claimed_snapshot_job(
             payload.result.model_dump(mode="json", by_alias=True),
         )
     except SnapshotJobError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        raise _snapshot_conflict(error) from error
     session.commit()
     return _job_payload(job)
 
@@ -162,3 +162,10 @@ def _job_payload(job: WordPressSnapshotCaptureJob) -> dict:
         "state": job.state,
         "attempt_count": job.attempt_count,
     }
+
+
+def _snapshot_conflict(error: SnapshotJobError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": error.code},
+    )
