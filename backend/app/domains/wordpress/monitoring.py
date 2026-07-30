@@ -204,14 +204,18 @@ def _score_factors(facts: dict) -> list[dict]:
     )
     featured_alt_available = "featured_image_alt" in values
     featured_alt = _text(values.get("featured_image_alt"))
+    featured_image_qualifies = None
+    if featured_image is False:
+        featured_image_qualifies = False
+    elif featured_image is True and featured_alt_available:
+        featured_image_qualifies = bool(featured_alt)
     inline_image_available = "content" in values
-    inline_image_qualifies = bool(images) and alt_count == len(images)
-    featured_image_qualifies = featured_image is True and bool(featured_alt)
-    image_qualifies = featured_image_qualifies or inline_image_qualifies
-    image_failure_known = not image_qualifies and (
-        featured_image is False
-        or (featured_image is True and featured_alt_available and not featured_alt)
-        or (inline_image_available and not inline_image_qualifies)
+    inline_image_qualifies = (
+        bool(images) and alt_count == len(images) if inline_image_available else None
+    )
+    image_qualifies = _combine_image_paths(
+        featured_image_qualifies,
+        inline_image_qualifies,
     )
 
     return [
@@ -260,9 +264,9 @@ def _score_factors(facts: dict) -> list[dict]:
                 "in_page": len(images),
                 "with_alt": alt_count,
             },
-            image_qualifies,
+            image_qualifies is True,
             "Add a featured or in-page image with descriptive alt text.",
-            available=image_qualifies or image_failure_known,
+            available=image_qualifies is not None,
         ),
         _factor(
             "company_profile",
@@ -361,6 +365,14 @@ def _page_version(
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _combine_image_paths(featured: bool | None, inline: bool | None) -> bool | None:
+    if True in (featured, inline):
+        return True
+    if featured is False and inline is False:
+        return False
+    return None
 
 
 def _plain_text(value: str) -> str:

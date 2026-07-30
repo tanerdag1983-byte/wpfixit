@@ -132,10 +132,46 @@ def test_qualifying_inline_image_succeeds_when_featured_presence_is_unknown(
     assert image_factor["suggested_action"] == ""
 
 
+def test_featured_unknown_with_text_only_inline_is_neutral(
+    session, projects
+) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["featured_image_id"]
+    facts["values"]["content"] = "<p>Text-only content.</p>"
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 0
+    assert image_factor["points"] == 0
+    assert image_factor["suggested_action"] == ""
+
+
 def test_featured_image_with_unknown_alt_is_neutral(session, projects) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
     del facts["values"]["featured_image_alt"]
+    facts["values"]["content"] = "<p>Text-only content.</p>"
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 0
+    assert image_factor["points"] == 0
+    assert image_factor["suggested_action"] == ""
+
+
+def test_known_absent_featured_image_with_unknown_inline_is_neutral(
+    session, projects
+) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    facts["values"]["featured_image_id"] = 0
     del facts["values"]["content"]
 
     result = check_page(session, page, facts, trigger="sync")
@@ -148,11 +184,11 @@ def test_featured_image_with_unknown_alt_is_neutral(session, projects) -> None:
     assert image_factor["suggested_action"] == ""
 
 
-def test_known_absent_featured_image_is_actionable(session, projects) -> None:
+def test_both_known_absent_image_paths_are_actionable(session, projects) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
     facts["values"]["featured_image_id"] = 0
-    del facts["values"]["content"]
+    facts["values"]["content"] = "<p>Text-only content.</p>"
 
     result = check_page(session, page, facts, trigger="sync")
     image_factor = next(
@@ -181,11 +217,13 @@ def test_qualifying_inline_image_succeeds_when_featured_is_absent(
     assert image_factor["suggested_action"] == ""
 
 
-def test_known_empty_featured_image_alt_is_actionable(session, projects) -> None:
+def test_known_empty_featured_image_alt_with_nonqualifying_inline_is_actionable(
+    session, projects
+) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
     facts["values"]["featured_image_alt"] = ""
-    del facts["values"]["content"]
+    facts["values"]["content"] = "<p>Text-only content.</p>"
 
     result = check_page(session, page, facts, trigger="sync")
     image_factor = next(
