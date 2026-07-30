@@ -2,13 +2,14 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
+from app.domains.page_blueprints.schemas import SnapshotTextSchema
 from app.domains.page_packages.models import (
     PagePackageHandoff,
     PagePackageProposal,
@@ -18,10 +19,103 @@ from app.domains.page_packages.models import (
 from app.domains.projects.models import Project
 from app.domains.projects.service import get_membership
 from app.domains.wordpress.draft_jobs import cancel_ineligible_draft_jobs
-from app.domains.wordpress.models import WordPressConnection, WordPressDraftJob
+from app.domains.wordpress.models import (
+    WordPressConnection,
+    WordPressDraftJob,
+    WordPressPage,
+    WordPressSnapshotCaptureJob,
+)
 
 HANDOFF_TTL = timedelta(minutes=10)
 REVOCABLE_HANDOFF_STATES = {"issued", "redeemed"}
+
+
+def existing_page_snapshot_blueprint(
+    session: Session,
+    page: WordPressPage,
+    snapshot_job: WordPressSnapshotCaptureJob,
+    page_type: str,
+) -> PageBlueprint:
+    result = snapshot_job.snapshot_result
+    if (
+        snapshot_job.state != "completed"
+        or snapshot_job.project_id != page.project_id
+        or snapshot_job.wordpress_page_id != page.id
+        or not isinstance(result, dict)
+        or result.get("source_post_id") != page.wordpress_object_id
+        or result.get("source_url") != page.url
+        or result.get("source_content_hash") != page.content_hash
+    ):
+        raise ValueError("completed snapshot does not match the existing page")
+    schema = SnapshotTextSchema.model_validate(result.get("schema"))
+    schema.fields_by_id()
+    snapshot_id = result.get("snapshot_id")
+    snapshot_version = result.get("snapshot_version")
+    structure_hash = result.get("structure_hash")
+    captured_at = result.get("captured_at")
+    if (
+        not isinstance(snapshot_id, int)
+        or isinstance(snapshot_id, bool)
+        or snapshot_id < 1
+        or not isinstance(snapshot_version, int)
+        or isinstance(snapshot_version, bool)
+        or snapshot_version < 1
+        or not isinstance(structure_hash, str)
+        or not structure_hash
+        or not isinstance(captured_at, str)
+    ):
+        raise ValueError("completed snapshot identity is invalid")
+    verified_at = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    if verified_at.tzinfo is None:
+        raise ValueError("completed snapshot identity is invalid")
+
+    existing = session.scalar(
+        select(PageBlueprint).where(
+            PageBlueprint.project_id == page.project_id,
+            PageBlueprint.wordpress_snapshot_id == snapshot_id,
+        )
+    )
+    if existing is not None:
+        if (
+            existing.source_wordpress_page_id != page.id
+            or existing.snapshot_version != snapshot_version
+            or existing.structure_hash != structure_hash
+            or existing.content_schema != schema.model_dump(mode="python")
+            or existing.state != "ready"
+        ):
+            raise ValueError("completed snapshot identity conflicts")
+        return existing
+
+    blueprint = PageBlueprint(
+        id=str(
+            uuid5(
+                NAMESPACE_URL,
+                f"wp-fixpilot-existing-page-snapshot:{page.project_id}:{snapshot_id}",
+            )
+        ),
+        project_id=page.project_id,
+        name=f"Existing page: {page.title or page.url}"[:160],
+        page_type=page_type,
+        source_wordpress_page_id=page.id,
+        wordpress_blueprint_id=snapshot_id,
+        wordpress_snapshot_id=snapshot_id,
+        snapshot_version=snapshot_version,
+        schema_version="snapshot-text-v1",
+        adapter_version="optimization-source-v1",
+        capture_state="ready",
+        migration_state="native",
+        verified_at=verified_at,
+        builder="snapshot",
+        seo_plugin="none",
+        version=snapshot_version,
+        structure_hash=structure_hash,
+        content_schema=schema.model_dump(mode="python"),
+        state="ready",
+        is_default_for_page_type=False,
+    )
+    session.add(blueprint)
+    session.flush()
+    return blueprint
 
 
 def lock_active_default_blueprint(
@@ -164,6 +258,7 @@ def accept_regeneration_candidate(
         generation_mode=candidate.generation_mode,
         target_block_id=candidate.target_block_id,
         user_instruction=candidate.instruction,
+        source_wordpress_page_id=current.source_wordpress_page_id,
         blueprint_id=current.blueprint_id,
         blueprint_version=current.blueprint_version,
         blueprint_structure_hash=current.blueprint_structure_hash,
@@ -280,6 +375,7 @@ def issue_page_package_handoff(
     if locked_proposal is None:
         raise ValueError("Proposal version is no longer available")
     proposal = locked_proposal
+    _require_manual_handoff_path(proposal)
     if (
         proposal.state != "approved"
         or not proposal.is_current
@@ -410,6 +506,9 @@ def redeem_page_package_handoff(
         raise ValueError("Handoff code is invalid")
     if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff code is invalid")
+    if proposal is None:
+        raise ValueError("Proposal version is no longer available")
+    _require_manual_handoff_path(proposal)
 
     connection = session.get(WordPressConnection, handoff.wordpress_connection_id)
     if connection is None:
@@ -483,13 +582,14 @@ def complete_page_package_handoff(
         raise ValueError("Handoff not found")
     if expected_project_id is not None and handoff.project_id != expected_project_id:
         raise ValueError("Handoff not found")
+    if proposal is None:
+        raise ValueError("Proposal version is no longer eligible")
+    _require_manual_handoff_path(proposal)
     if handoff.state == "completed":
         return handoff
     if handoff.state != "redeemed":
         raise ValueError("Handoff is not redeemable")
 
-    if proposal is None:
-        raise ValueError("Proposal version is no longer eligible")
     if proposal.state == "draft_in_progress":
         if not proposal.is_current or not proposal.approved_by:
             raise ValueError("Proposal version is no longer eligible")
@@ -574,6 +674,11 @@ def _revoke_open_handoffs(session: Session, proposal_version_id: str) -> None:
 
 def _hash_handoff_code(raw_code: str) -> str:
     return hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
+
+
+def _require_manual_handoff_path(proposal: PagePackageProposal) -> None:
+    if proposal.source_wordpress_page_id is not None:
+        raise ValueError("Existing-page drafts require the outbound draft-job path")
 
 
 def _utcnow_like(value: datetime) -> datetime:

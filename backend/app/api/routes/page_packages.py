@@ -19,6 +19,7 @@ from app.domains.jobs.models import Job
 from app.domains.page_blueprints.models import PageBlueprint
 from app.domains.page_packages.generation import (
     PolicyPagePackageGenerator,
+    build_context,
     normalize_snapshot_text_package,
     prompt_version,
     regeneration_candidate_payload,
@@ -49,6 +50,7 @@ from app.domains.page_packages.service import (
     complete_page_package_handoff,
     create_regeneration_candidate,
     discard_regeneration_candidate,
+    existing_page_snapshot_blueprint,
     issue_page_package_handoff,
     lock_active_default_blueprint,
     redeem_page_package_handoff,
@@ -80,9 +82,16 @@ from app.domains.subscriptions.models import UsageEvent
 from app.domains.wordpress.client import WordPressClient
 from app.domains.wordpress.draft_jobs import cancel_ineligible_draft_jobs
 from app.domains.wordpress.models import (
+    PageObservedVersion,
+    PageScoreSnapshot,
     WordPressConnection,
     WordPressDraftJob,
     WordPressPage,
+    WordPressSnapshotCaptureJob,
+)
+from app.domains.wordpress.snapshot_jobs import (
+    SnapshotJobError,
+    create_or_get_snapshot_job,
 )
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["page-packages"])
@@ -268,47 +277,93 @@ def create_page_package_proposal(
         select(KeywordOpportunity).where(
             KeywordOpportunity.id == opportunity_id,
             KeywordOpportunity.project_id == project_id,
-        )
+        ).with_for_update()
     )
     if opportunity is None:
         raise HTTPException(status_code=404, detail="Keyword opportunity not found")
-    if opportunity.target_classification != "new_page":
+    if opportunity.target_classification == "review":
         raise HTTPException(
             status_code=409,
-            detail="Only a new-page opportunity can create a page proposal",
+            detail="Assign a target page before creating a page proposal",
         )
-    blueprint, selection_changed = lock_active_default_blueprint(
-        session,
-        project_id,
-        payload.page_type,
-    )
-    if blueprint is None:
-        if selection_changed:
-            raise HTTPException(
-                status_code=409,
-                detail="Default blueprint changed; retry proposal creation",
+    source_page = None
+    snapshot_job = None
+    if opportunity.target_classification == "existing_page":
+        source_page = _existing_page_target(session, project_id, opportunity)
+        snapshot_job = _completed_existing_page_snapshot(session, source_page)
+        if snapshot_job is None:
+            try:
+                snapshot_job = create_or_get_snapshot_job(session, source_page)
+            except SnapshotJobError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            session.commit()
+            return {
+                "stage": "waiting_for_wordpress_snapshot",
+                "snapshot_job_id": snapshot_job.id,
+                "source_wordpress_page_id": source_page.id,
+            }
+        try:
+            blueprint = existing_page_snapshot_blueprint(
+                session,
+                source_page,
+                snapshot_job,
+                payload.page_type,
             )
-        raise HTTPException(
-            status_code=422,
-            detail="Set a ready default blueprint for this page type",
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+    elif opportunity.target_classification == "new_page":
+        blueprint, selection_changed = lock_active_default_blueprint(
+            session,
+            project_id,
+            payload.page_type,
         )
-    existing = session.scalar(
-        select(PagePackageProposal)
-        .where(
-            PagePackageProposal.project_id == project_id,
-            PagePackageProposal.opportunity_id == opportunity_id,
-            PagePackageProposal.blueprint_id == blueprint.id,
-            PagePackageProposal.is_current.is_(True),
+        if blueprint is None:
+            if selection_changed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Default blueprint changed; retry proposal creation",
+                )
+            raise HTTPException(
+                status_code=422,
+                detail="Set a ready default blueprint for this page type",
+            )
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="Opportunity target classification is not supported",
+        )
+    existing_query = select(PagePackageProposal).where(
+        PagePackageProposal.project_id == project_id,
+        PagePackageProposal.opportunity_id == opportunity_id,
+        PagePackageProposal.blueprint_id == blueprint.id,
+        PagePackageProposal.source_wordpress_page_id
+        == (source_page.id if source_page is not None else None),
+        PagePackageProposal.is_current.is_(True),
+    )
+    if source_page is None:
+        existing_query = existing_query.where(
             PagePackageProposal.state.in_(
                 ["generating", "needs_attention", "proposed"]
-            ),
+            )
         )
-        .order_by(PagePackageProposal.created_at.desc())
+    existing = session.scalar(
+        existing_query.order_by(PagePackageProposal.created_at.desc())
     )
     if existing is not None:
         return _proposal_payload(session, existing)
 
-    context = _generation_context(session, project, opportunity, blueprint)
+    context = (
+        _existing_page_generation_context(
+            session,
+            project,
+            opportunity,
+            source_page,
+            snapshot_job,
+            blueprint,
+        )
+        if source_page is not None and snapshot_job is not None
+        else _generation_context(session, project, opportunity, blueprint)
+    )
     policy = session.get(ProjectAiPolicy, project.id)
     if policy is None:
         raise HTTPException(
@@ -340,6 +395,19 @@ def create_page_package_proposal(
                 "adapter_version": blueprint.adapter_version,
             }
         )
+    if source_page is not None and snapshot_job is not None:
+        snapshot_result = snapshot_job.snapshot_result
+        assert isinstance(snapshot_result, dict)
+        config_snapshot.update(
+            {
+                "snapshot_job_id": snapshot_job.id,
+                "source_wordpress_page_id": source_page.id,
+                "source_wordpress_object_id": source_page.wordpress_object_id,
+                "source_url": snapshot_result["source_url"],
+                "source_content_hash": snapshot_result["source_content_hash"],
+                "generation_context": context.model_dump(mode="json"),
+            }
+        )
     proposal = PagePackageProposal(
         id=str(uuid4()),
         project_id=project_id,
@@ -351,6 +419,7 @@ def create_page_package_proposal(
         package={},
         rendered_html="",
         config_snapshot=config_snapshot,
+        source_wordpress_page_id=source_page.id if source_page is not None else None,
         blueprint_id=blueprint.id,
         blueprint_version=blueprint.version,
         blueprint_structure_hash=blueprint.structure_hash,
@@ -370,6 +439,107 @@ def create_page_package_proposal(
         proposal.id,
     )
     return _proposal_payload(session, proposal)
+
+
+def _existing_page_target(
+    session: Session,
+    project_id: str,
+    opportunity: KeywordOpportunity,
+) -> WordPressPage:
+    if not opportunity.target_url:
+        raise HTTPException(
+            status_code=409,
+            detail="Assign a synchronized target page before creating a proposal",
+        )
+    pages = session.scalars(
+        select(WordPressPage).where(
+            WordPressPage.project_id == project_id,
+            WordPressPage.post_type == "page",
+            WordPressPage.url == opportunity.target_url,
+        ).with_for_update()
+    ).all()
+    if len(pages) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Opportunity target must match one synchronized WordPress page",
+        )
+    return pages[0]
+
+
+def _completed_existing_page_snapshot(
+    session: Session,
+    page: WordPressPage,
+) -> WordPressSnapshotCaptureJob | None:
+    jobs = session.scalars(
+        select(WordPressSnapshotCaptureJob)
+        .where(
+            WordPressSnapshotCaptureJob.project_id == page.project_id,
+            WordPressSnapshotCaptureJob.wordpress_page_id == page.id,
+            WordPressSnapshotCaptureJob.state == "completed",
+        )
+        .order_by(
+            WordPressSnapshotCaptureJob.completed_at.desc(),
+            WordPressSnapshotCaptureJob.id.desc(),
+        )
+    ).all()
+    for job in jobs:
+        result = job.snapshot_result
+        if (
+            isinstance(result, dict)
+            and result.get("source_post_id") == page.wordpress_object_id
+            and result.get("source_url") == page.url
+            and result.get("source_content_hash") == page.content_hash
+        ):
+            return job
+    return None
+
+
+def _existing_page_generation_context(
+    session: Session,
+    project: Project,
+    opportunity: KeywordOpportunity,
+    page: WordPressPage,
+    snapshot_job: WordPressSnapshotCaptureJob,
+    blueprint: PageBlueprint,
+) -> PagePackageContext:
+    result = snapshot_job.snapshot_result
+    if not isinstance(result, dict):
+        raise ValueError("completed snapshot result is unavailable")
+    version = session.scalar(
+        select(PageObservedVersion)
+        .where(
+            PageObservedVersion.wordpress_page_id == page.id,
+            PageObservedVersion.content_hash == result["source_content_hash"],
+        )
+        .order_by(PageObservedVersion.observed_at.desc())
+    )
+    score = (
+        session.scalar(
+            select(PageScoreSnapshot).where(
+                PageScoreSnapshot.page_version_id == version.id
+            )
+        )
+        if version is not None
+        else None
+    )
+    improvement_context = {
+        "target_url": result["source_url"],
+        "prior_score": score.overall_score if score is not None else None,
+        "target_match_score": opportunity.target_score,
+        "improvement_evidence": {
+            "keyword_match": opportunity.target_evidence,
+            "recommended_action": opportunity.recommended_action,
+            "score_factors": score.factors if score is not None else [],
+        },
+    }
+    base = _generation_context(session, project, opportunity, blueprint)
+    company_context = (
+        "Existing page improvement context:\n"
+        + json.dumps(improvement_context, ensure_ascii=False, sort_keys=True)
+        + "\n"
+        + base.company_context
+    )[:10_000]
+    return base.model_copy(update={"company_context": company_context})
 
 
 def _run_page_package_generation(bind, proposal_id: str) -> None:
@@ -423,7 +593,13 @@ def _run_page_package_generation(bind, proposal_id: str) -> None:
         session.commit()
         try:
             generator = _page_package_generator(session, project)
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            )
             generated = PagePackageGenerationResult.model_validate(
                 generator.generate_page_package(context)
             )
@@ -541,7 +717,13 @@ def _run_snapshot_page_package_generation(
             session.commit()
             if blueprint is None:
                 raise ValueError("Snapshot changed before text generation")
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            )
             generated = PagePackageGenerationResult.model_validate(
                 _page_package_generator(session, project).generate_page_package(context)
             )
@@ -589,7 +771,13 @@ def _run_snapshot_page_package_generation(
             session.commit()
             if blueprint is None:
                 raise ValueError("Snapshot changed before text generation")
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            )
             generated = PagePackageGenerationResult.model_validate(
                 _page_package_generator(session, project).generate_page_package(context)
             )
@@ -634,7 +822,13 @@ def _run_snapshot_page_package_generation(
             session.commit()
             if blueprint is None:
                 raise ValueError("Snapshot changed before validation")
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            )
             _apply_snapshot_validation(
                 session,
                 proposal,
@@ -660,7 +854,13 @@ def _run_snapshot_page_package_generation(
             session.commit()
             if blueprint is None:
                 raise ValueError("Snapshot changed before validation")
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            )
             _apply_snapshot_validation(
                 session,
                 proposal,
@@ -857,7 +1057,13 @@ def retry_page_proposal_stage(
     job.completed_at = None
     session.commit()
     try:
-        context = _generation_context(session, project, opportunity, blueprint)
+        context = _proposal_generation_context(
+            session,
+            proposal,
+            project,
+            opportunity,
+            blueprint,
+        )
         stored_replacements = proposal.package.get("text_replacements", {})
         if not isinstance(stored_replacements, dict):
             raise ValueError("Stored snapshot package is invalid")
@@ -941,7 +1147,13 @@ def update_page_package_proposal(
             session,
             proposal,
             job,
-            _generation_context(session, project, opportunity, blueprint),
+            _proposal_generation_context(
+                session,
+                proposal,
+                project,
+                opportunity,
+                blueprint,
+            ),
             payload.package.model_dump(mode="json"),
             validation.attempt_token,
         )
@@ -958,7 +1170,13 @@ def update_page_package_proposal(
     package = GeneratedBlueprintPackage.model_validate(payload.package)
     validate_blueprint_replacements(
         package,
-        _generation_context(session, project, opportunity, blueprint),
+        _proposal_generation_context(
+            session,
+            proposal,
+            project,
+            opportunity,
+            blueprint,
+        ),
     )
     proposal.package = package.model_dump()
     proposal.rendered_html = ""
@@ -1015,8 +1233,9 @@ def approve_page_package_proposal(
                     detail="Proposal validation stages are unavailable",
                 )
             package = GeneratedBlueprintPackage.model_validate(proposal.package)
-            context = _generation_context(
+            context = _proposal_generation_context(
                 session,
+                proposal,
                 project_context,
                 opportunity,
                 blueprint,
@@ -1085,9 +1304,21 @@ def approve_page_package_proposal(
         package = GeneratedBlueprintPackage.model_validate(proposal.package)
         validate_blueprint_replacements(
             package,
-            _generation_context(session, project_context, opportunity, blueprint),
+            _proposal_generation_context(
+                session,
+                proposal,
+                project_context,
+                opportunity,
+                blueprint,
+            ),
         )
-    _require_current_wordpress_blueprint(session, project_id, blueprint)
+    if proposal.source_wordpress_page_id is None:
+        _require_current_wordpress_blueprint(session, project_id, blueprint)
+    else:
+        try:
+            _require_stored_snapshot_identity(proposal, blueprint)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
     proposal.state = "approved"
     proposal.approved_by = user.id
     proposal.approved_at = datetime.now(UTC)
@@ -1174,7 +1405,13 @@ def _run_page_package_regeneration(bind, candidate_id: str) -> None:
             session.commit()
             return
         try:
-            context = _generation_context(session, project, opportunity, blueprint)
+            context = _proposal_generation_context(
+                session,
+                base,
+                project,
+                opportunity,
+                blueprint,
+            )
             guidance = "Regeneratie-instructie: " + (
                 candidate.instruction or "Maak een verbeterde versie."
             )
@@ -1437,13 +1674,24 @@ def create_wordpress_draft(
         raise HTTPException(
             status_code=409, detail="Outbound WordPress delivery is already active"
         )
+    if proposal.source_wordpress_page_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Existing-page drafts require the outbound draft-job path",
+        )
     blueprint = _proposal_blueprint_or_409(session, proposal)
     _require_current_wordpress_blueprint(session, project_id, blueprint)
     opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
     if opportunity is None:
         raise HTTPException(status_code=409, detail="Proposal context is unavailable")
     package = GeneratedBlueprintPackage.model_validate(proposal.package)
-    context = _generation_context(session, project, opportunity, blueprint)
+    context = _proposal_generation_context(
+        session,
+        proposal,
+        project,
+        opportunity,
+        blueprint,
+    )
     validate_blueprint_replacements(package, context)
     replacements = {
         replacement.field_id: replacement.value for replacement in package.replacements
@@ -1644,6 +1892,7 @@ def _create_snapshot_text_retry_version(
         current_version_id=next_version_id,
         is_current=True,
         generation_mode="full",
+        source_wordpress_page_id=proposal.source_wordpress_page_id,
         blueprint_id=proposal.blueprint_id,
         blueprint_version=proposal.blueprint_version,
         blueprint_structure_hash=proposal.blueprint_structure_hash,
@@ -1710,6 +1959,18 @@ def _page_package_generator(session: Session, project):
                 fallback, policy.fallback_model, company_context
             )
     return PolicyPagePackageGenerator(primary_generator, fallback_generator)
+
+
+def _proposal_generation_context(
+    session: Session,
+    proposal: PagePackageProposal,
+    project: Project,
+    opportunity: KeywordOpportunity,
+    blueprint: PageBlueprint,
+) -> PagePackageContext:
+    if getattr(proposal, "source_wordpress_page_id", None) is not None:
+        return build_context(session, proposal)
+    return _generation_context(session, project, opportunity, blueprint)
 
 
 def _generation_context(
@@ -1852,6 +2113,7 @@ def _proposal_payload(session: Session, proposal: PagePackageProposal) -> dict:
         "generation_mode": proposal.generation_mode,
         "target_block_id": proposal.target_block_id,
         "user_instruction": proposal.user_instruction,
+        "source_wordpress_page_id": proposal.source_wordpress_page_id,
         "package": proposal.package,
         "rendered_html": proposal.rendered_html,
         "config_snapshot": proposal.config_snapshot,
@@ -1984,7 +2246,13 @@ def _import_package_payload(session: Session, proposal: PagePackageProposal) -> 
         and opportunity is not None
         and blueprint.content_schema is not None
     ):
-        context = _generation_context(session, project, opportunity, blueprint)
+        context = _proposal_generation_context(
+            session,
+            proposal,
+            project,
+            opportunity,
+            blueprint,
+        )
         try:
             package = normalize_blueprint_package(package, context).model_dump(
                 mode="json"

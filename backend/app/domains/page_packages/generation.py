@@ -4,7 +4,10 @@ import json
 import re
 from html.parser import HTMLParser
 
+from sqlalchemy.orm import Session
+
 from app.domains.page_blueprints.schemas import SnapshotTextField
+from app.domains.page_packages.models import PagePackageProposal
 from app.domains.page_packages.schemas import (
     GeneratedBlueprintPackage,
     GeneratedPagePackage,
@@ -18,6 +21,27 @@ from app.domains.page_packages.schemas import (
     safe_html,
 )
 from app.domains.recommendations.provider import ProviderGenerationError
+
+
+def build_context(
+    session: Session,
+    proposal: PagePackageProposal,
+) -> PagePackageContext:
+    stored = session.get(PagePackageProposal, proposal.id)
+    if stored is None or stored.source_wordpress_page_id is None:
+        raise ValueError("existing-page proposal context is unavailable")
+    raw_context = stored.config_snapshot.get("generation_context")
+    if not isinstance(raw_context, dict):
+        raise ValueError("existing-page proposal context is unavailable")
+    context = PagePackageContext.model_validate(raw_context)
+    schema = (
+        context.blueprint_schema.model_dump(mode="python")
+        if context.blueprint_schema is not None
+        else None
+    )
+    if schema != stored.config_snapshot.get("content_schema"):
+        raise ValueError("existing-page proposal context is invalid")
+    return context
 
 
 class _LinkCollector(HTMLParser):

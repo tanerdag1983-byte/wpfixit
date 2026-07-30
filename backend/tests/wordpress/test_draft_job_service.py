@@ -288,6 +288,24 @@ def test_snapshot_job_contains_only_snapshot_contract_fields(
     )
 
 
+def test_existing_page_draft_job_clones_the_captured_snapshot(
+    session, approved_blueprint_proposal
+) -> None:
+    proposal = make_native_snapshot_proposal(session, approved_blueprint_proposal)
+    source = session.get(WordPressPage, "draft-job-source")
+    assert source is not None
+    proposal.source_wordpress_page_id = source.id
+    source_before = (source.status, source.title, source.slug, source.url)
+    session.commit()
+
+    job = create_or_get_draft_job(session, proposal)
+
+    assert job.contract_version == "wordpress-snapshot-draft-job-v1"
+    assert job.payload["snapshot_id"] == 903
+    assert "wordpress_blueprint_id" not in job.payload
+    assert (source.status, source.title, source.slug, source.url) == source_before
+
+
 def test_snapshot_job_rejects_changed_snapshot_identity(
     session, approved_blueprint_proposal
 ) -> None:
