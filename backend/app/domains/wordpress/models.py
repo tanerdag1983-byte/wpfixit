@@ -115,6 +115,11 @@ class WordPressDraftJob(Base):
             name="fk_wordpress_draft_jobs_project_proposal",
             ondelete="CASCADE",
         ),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_wordpress_draft_jobs_project_id_id",
+        ),
         Index("ix_wordpress_draft_jobs_project_state", "project_id", "state"),
     )
 
@@ -266,6 +271,17 @@ class PageObservedVersion(Base):
             name="fk_page_observed_versions_project_proposal",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["project_id", "draft_job_id"],
+            ["wordpress_draft_jobs.project_id", "wordpress_draft_jobs.id"],
+            name="fk_page_observed_versions_project_draft_job",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_page_observed_versions_project_id_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -277,9 +293,7 @@ class PageObservedVersion(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     snapshot_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     proposal_version_id: Mapped[str | None] = mapped_column(String(64))
-    draft_job_id: Mapped[str | None] = mapped_column(
-        ForeignKey("wordpress_draft_jobs.id", ondelete="RESTRICT")
-    )
+    draft_job_id: Mapped[str | None] = mapped_column(String(64))
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -342,6 +356,12 @@ class PageTimelineEvent(Base):
             name="fk_page_timeline_events_project_page",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["project_id", "page_version_id"],
+            ["page_observed_versions.project_id", "page_observed_versions.id"],
+            name="fk_page_timeline_events_project_version",
+            ondelete="RESTRICT",
+        ),
         Index(
             "ix_page_timeline_events_page_created",
             "wordpress_page_id",
@@ -354,9 +374,7 @@ class PageTimelineEvent(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     wordpress_page_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    page_version_id: Mapped[str | None] = mapped_column(
-        ForeignKey("page_observed_versions.id", ondelete="SET NULL")
-    )
+    page_version_id: Mapped[str | None] = mapped_column(String(64))
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

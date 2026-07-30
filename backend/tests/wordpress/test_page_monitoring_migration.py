@@ -79,6 +79,18 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
         proposal_foreign_keys = inspect(connection).get_foreign_keys(
             "page_package_proposals"
         )
+        page_version_foreign_keys = inspect(connection).get_foreign_keys(
+            "page_observed_versions"
+        )
+        timeline_foreign_keys = inspect(connection).get_foreign_keys(
+            "page_timeline_events"
+        )
+        draft_job_unique_constraints = inspect(connection).get_unique_constraints(
+            "wordpress_draft_jobs"
+        )
+        page_version_unique_constraints = inspect(connection).get_unique_constraints(
+            "page_observed_versions"
+        )
 
     assert {
         "id",
@@ -114,6 +126,24 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
         and foreign_key["referred_table"] == "wordpress_pages"
         for foreign_key in proposal_foreign_keys
     )
+    assert any(
+        foreign_key["constrained_columns"] == ["project_id", "draft_job_id"]
+        and foreign_key["referred_table"] == "wordpress_draft_jobs"
+        for foreign_key in page_version_foreign_keys
+    )
+    assert any(
+        foreign_key["constrained_columns"] == ["project_id", "page_version_id"]
+        and foreign_key["referred_table"] == "page_observed_versions"
+        for foreign_key in timeline_foreign_keys
+    )
+    assert any(
+        constraint["column_names"] == ["project_id", "id"]
+        for constraint in draft_job_unique_constraints
+    )
+    assert any(
+        constraint["column_names"] == ["project_id", "id"]
+        for constraint in page_version_unique_constraints
+    )
 
     _downgrade("0023_keyword_sync_lifecycle")
 
@@ -123,6 +153,9 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
             column["name"]
             for column in inspect(connection).get_columns("page_package_proposals")
         }
+        draft_job_unique_constraints = inspect(connection).get_unique_constraints(
+            "wordpress_draft_jobs"
+        )
 
     assert "page_observed_versions" not in tables
     assert "page_score_snapshots" not in tables
@@ -130,4 +163,17 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
     assert "page_timeline_events" not in tables
     assert "wordpress_snapshot_capture_jobs" not in tables
     assert "source_wordpress_page_id" not in proposal_columns
+    assert not any(
+        constraint["column_names"] == ["project_id", "id"]
+        for constraint in draft_job_unique_constraints
+    )
+
+    _upgrade("head")
+
+    with engine.connect() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+
+    assert revision == "0024_page_monitoring"
     engine.dispose()

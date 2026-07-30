@@ -31,6 +31,12 @@ def upgrade() -> None:
             ["project_id", "id"],
         )
 
+    op.create_unique_constraint(
+        "uq_wordpress_draft_jobs_project_id_id",
+        "wordpress_draft_jobs",
+        ["project_id", "id"],
+    )
+
     with op.batch_alter_table("page_package_proposals") as batch:
         batch.add_column(
             sa.Column("source_wordpress_page_id", sa.String(length=64), nullable=True)
@@ -74,11 +80,17 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["draft_job_id"],
-            ["wordpress_draft_jobs.id"],
+            ["project_id", "draft_job_id"],
+            ["wordpress_draft_jobs.project_id", "wordpress_draft_jobs.id"],
+            name="fk_page_observed_versions_project_draft_job",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_page_observed_versions_project_id_id",
+        ),
         sa.UniqueConstraint(
             "wordpress_page_id",
             "content_hash",
@@ -160,9 +172,10 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["page_version_id"],
-            ["page_observed_versions.id"],
-            ondelete="SET NULL",
+            ["project_id", "page_version_id"],
+            ["page_observed_versions.project_id", "page_observed_versions.id"],
+            name="fk_page_timeline_events_project_version",
+            ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -263,6 +276,17 @@ def downgrade() -> None:
     )
     op.drop_table("page_score_snapshots")
     op.drop_table("page_observed_versions")
+    if any(
+        constraint["name"] == "uq_wordpress_draft_jobs_project_id_id"
+        for constraint in sa.inspect(op.get_bind()).get_unique_constraints(
+            "wordpress_draft_jobs"
+        )
+    ):
+        op.drop_constraint(
+            "uq_wordpress_draft_jobs_project_id_id",
+            "wordpress_draft_jobs",
+            type_="unique",
+        )
     with op.batch_alter_table("page_package_proposals") as batch:
         batch.drop_constraint(
             "fk_page_package_proposals_source_wordpress_page_project",

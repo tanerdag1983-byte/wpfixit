@@ -45,6 +45,7 @@ def snapshot_job(
     *,
     state: str = "queued",
     claim_token: str | None = None,
+    terminal_claim_token_hash: str | None = None,
 ) -> WordPressSnapshotCaptureJob:
     claimed_at = datetime.now(UTC) if claim_token else None
     return WordPressSnapshotCaptureJob(
@@ -57,6 +58,7 @@ def snapshot_job(
             datetime.now(UTC) + timedelta(minutes=5) if claim_token else None
         ),
         claimed_at=claimed_at,
+        terminal_claim_token_hash=terminal_claim_token_hash,
     )
 
 
@@ -76,6 +78,36 @@ def test_capture_job_requires_claim_fields_only_while_claimed(
     session, wordpress_page
 ) -> None:
     session.add(snapshot_job(wordpress_page, state="claimed", claim_token=None))
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+@pytest.mark.parametrize("state", ["completed", "failed"])
+def test_capture_job_requires_terminal_claim_hash_after_completion(
+    session, wordpress_page, state
+) -> None:
+    session.add(snapshot_job(wordpress_page, state=state))
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+@pytest.mark.parametrize(
+    ("state", "claim_token"),
+    [("queued", None), ("claimed", "claim-token"), ("cancelled", None)],
+)
+def test_capture_job_rejects_terminal_claim_hash_before_completion(
+    session, wordpress_page, state, claim_token
+) -> None:
+    session.add(
+        snapshot_job(
+            wordpress_page,
+            state=state,
+            claim_token=claim_token,
+            terminal_claim_token_hash="terminal-hash",
+        )
+    )
 
     with pytest.raises(IntegrityError):
         session.commit()
