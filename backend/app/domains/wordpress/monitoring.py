@@ -204,8 +204,14 @@ def _score_factors(facts: dict) -> list[dict]:
     )
     featured_alt_available = "featured_image_alt" in values
     featured_alt = _text(values.get("featured_image_alt"))
-    image_evidence_available = featured_image_available and (
-        featured_image is False or featured_alt_available
+    inline_image_available = "content" in values
+    inline_image_qualifies = bool(images) and alt_count == len(images)
+    featured_image_qualifies = featured_image is True and bool(featured_alt)
+    image_qualifies = featured_image_qualifies or inline_image_qualifies
+    image_failure_known = not image_qualifies and (
+        featured_image is False
+        or (featured_image is True and featured_alt_available and not featured_alt)
+        or (inline_image_available and not inline_image_qualifies)
     )
 
     return [
@@ -250,12 +256,13 @@ def _score_factors(facts: dict) -> list[dict]:
                 "featured_alt": featured_alt if featured_alt_available else None,
                 "featured_image_known": featured_image_available,
                 "featured_alt_known": featured_alt_available,
+                "in_page_known": inline_image_available,
                 "in_page": len(images),
                 "with_alt": alt_count,
             },
-            featured_image is True and bool(featured_alt),
+            image_qualifies,
             "Add a featured or in-page image with descriptive alt text.",
-            available=image_evidence_available,
+            available=image_qualifies or image_failure_known,
         ),
         _factor(
             "company_profile",

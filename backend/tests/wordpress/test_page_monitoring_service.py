@@ -115,7 +115,7 @@ def test_changed_hash_does_not_repeat_page_recommendations(session, projects) ->
     assert session.scalar(select(func.count(PageRecommendation.id))) == 1
 
 
-def test_featured_image_presence_unknown_is_neutral_even_with_content(
+def test_qualifying_inline_image_succeeds_when_featured_presence_is_unknown(
     session, projects
 ) -> None:
     page = make_page(session, projects)
@@ -127,7 +127,8 @@ def test_featured_image_presence_unknown_is_neutral_even_with_content(
         factor for factor in result.score.factors if factor["key"] == "images"
     )
 
-    assert image_factor["max_points"] == 0
+    assert image_factor["max_points"] == 10
+    assert image_factor["points"] == 10
     assert image_factor["suggested_action"] == ""
 
 
@@ -161,6 +162,23 @@ def test_known_absent_featured_image_is_actionable(session, projects) -> None:
     assert image_factor["max_points"] == 10
     assert image_factor["points"] == 0
     assert image_factor["suggested_action"]
+
+
+def test_qualifying_inline_image_succeeds_when_featured_is_absent(
+    session, projects
+) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    facts["values"]["featured_image_id"] = 0
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 10
+    assert image_factor["points"] == 10
+    assert image_factor["suggested_action"] == ""
 
 
 def test_known_empty_featured_image_alt_is_actionable(session, projects) -> None:
