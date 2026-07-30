@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented and locally verified.
+Implemented, hardened after round-one review, and locally verified.
 
 ## Delivered
 
@@ -13,6 +13,17 @@ Implemented and locally verified.
 - Added optimization-source snapshot capture through the existing registered
   ACF, Elementor, WPBakery, Bricks, and Gutenberg adapters.
 - Persisted snapshot kind and source identity on private snapshot posts.
+- Preserved current Yoast, Rank Math, and AIOSEO metadata in optimization
+  snapshots and exposed their real title, description, and focus-keyword values
+  in the snapshot schema.
+- Expanded the source fingerprint to title, slug, permalink, content, page
+  template, featured image, SEO metadata, and every matching registered
+  builder's structure and clone metadata.
+- Froze source URL and content hash at first claim, rejects null legacy hashes
+  for new work, and rejects claim retry or completion after source drift.
+- Added durable job-to-private-snapshot replay metadata. Ambiguous callback
+  failures retain and reuse the same snapshot; definitive 4xx completion
+  rejection deletes it.
 - Kept live source pages read-only and deletes incomplete or concurrently stale
   snapshot clones.
 - Polls one snapshot job at priority 5 before the existing draft-job callback.
@@ -27,25 +38,30 @@ Implemented and locally verified.
 - PHP RED: `capture_optimization_snapshot()` was undefined.
 - Strict-boundary RED: a numeric-string `snapshot_id` returned HTTP 200 before
   strict integer validation; GREEN returns HTTP 422.
+- Round-one backend RED: null source hashes, lease-time identity drift, and
+  completion after a legacy null hash were accepted (`3 failed, 15 passed`).
+- Round-one PHP RED: optimization schema SEO fields were empty and supported SEO
+  metadata was not cloned.
+- Added regressions for every fingerprint component, builder-meta mutation,
+  all three supported SEO families, ambiguous completion replay, and 409
+  snapshot cleanup without source writes.
 
 ## Verification
 
-- Backend focused/concurrency command: `14 passed, 2 skipped`.
+- Backend focused/concurrency command: `18 passed, 2 skipped`.
 - The two PostgreSQL concurrency tests skipped only because
   `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured.
-- Focused backend Ruff: clean.
-- PHP optimization snapshot, template snapshot, and snapshot draft-job suites:
-  passed under PHP 8.2 in Docker.
-- Additional draft-job and draft-job admin regressions: passed.
-- Owned-file PHP lint: clean.
+- Repository backend Ruff (`app`, `tests`, and `alembic`): clean.
+- PHP optimization snapshot, template snapshot, snapshot draft-job, and change
+  controller suites passed under PHP 8.2 in Docker.
+- Full plugin PHP syntax lint: clean.
 
 ## Review
 
 Local review covered outbound authentication, site binding, page/job lock order,
-terminal races, strict schema/result validation, snapshot persistence checks,
-registered adapter wiring, cron priority, clone cleanup, and absence of live-page
-writes. A separate read-only Codex review was started but interrupted by the
-explicit status checkpoint before it returned findings.
+terminal races, claim identity persistence, strict schema/result validation,
+registered adapter fingerprinting, SEO metadata cloning, retry replay, 4xx clone
+cleanup, cron priority, and absence of live-page writes.
 
 ## Concern
 

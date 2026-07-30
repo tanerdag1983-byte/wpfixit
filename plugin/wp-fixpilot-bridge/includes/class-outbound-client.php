@@ -57,13 +57,28 @@ final class WPFixPilot_Outbound_Client
         $claimToken = (string) ($claimed['claim_token'] ?? '');
         $jobId = is_array($job) ? (string) ($job['id'] ?? '') : '';
         $sourcePostId = is_array($job) ? (int) ($job['source_post_id'] ?? 0) : 0;
-        if ($jobId === '' || $claimToken === '' || $sourcePostId < 1) {
+        $sourceUrl = is_array($job) ? (string) ($job['source_url'] ?? '') : '';
+        $sourceContentHash = is_array($job)
+            ? (string) ($job['source_content_hash'] ?? '')
+            : '';
+        if (
+            $jobId === ''
+            || $claimToken === ''
+            || $sourcePostId < 1
+            || $sourceUrl === ''
+            || $sourceContentHash === ''
+        ) {
             return new WP_Error(
                 'wp_fixpilot_snapshot_job_invalid',
                 'De ontvangen snapshottaak is ongeldig.'
             );
         }
-        $result = $controller->capture_optimization_snapshot($sourcePostId);
+        $result = $controller->capture_optimization_snapshot(
+            $sourcePostId,
+            $jobId,
+            $sourceUrl,
+            $sourceContentHash
+        );
         if (is_wp_error($result)) {
             $failure = $this->request(
                 'POST',
@@ -71,7 +86,11 @@ final class WPFixPilot_Outbound_Client
                 [
                     'claim_token' => $claimToken,
                     'error_code' => 'wordpress_error',
-                    'error_message' => substr($result->get_error_message(), 0, 500),
+                    'error_message' => substr(
+                        $this->error_message($result),
+                        0,
+                        500
+                    ),
                 ],
                 [200],
                 'wordpress-snapshot-jobs'
@@ -85,8 +104,21 @@ final class WPFixPilot_Outbound_Client
             [200],
             'wordpress-snapshot-jobs'
         );
+        if (!is_wp_error($completed)) {
+            return $result;
+        }
+        $status = $this->error_status($completed);
+        if ($status !== null && $status >= 400 && $status < 500) {
+            $cleanup = $controller->discard_optimization_snapshot(
+                (int) ($result['snapshot_id'] ?? 0),
+                $jobId
+            );
+            if (is_wp_error($cleanup)) {
+                return $cleanup;
+            }
+        }
 
-        return is_wp_error($completed) ? $completed : $result;
+        return $completed;
     }
 
     /** @param array<string, mixed> $draft */
@@ -178,5 +210,27 @@ final class WPFixPilot_Outbound_Client
             );
         }
         return $decoded;
+    }
+
+    private function error_message(WP_Error $error): string
+    {
+        if (method_exists($error, 'get_error_message')) {
+            return (string) $error->get_error_message();
+        }
+
+        return (string) ($error->message ?? '');
+    }
+
+    private function error_status(WP_Error $error): ?int
+    {
+        $data = method_exists($error, 'get_error_data')
+            ? $error->get_error_data()
+            : ($error->data ?? null);
+        if (!is_array($data) || !isset($data['status'])) {
+            return null;
+        }
+        $status = (int) $data['status'];
+
+        return $status > 0 ? $status : null;
     }
 }

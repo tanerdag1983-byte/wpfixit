@@ -55,17 +55,64 @@ final class WPFixPilot_Blueprint_Controller
     }
 
     /** @return array<string, mixed>|WP_Error */
-    public function capture_optimization_snapshot(int $sourcePostId): array|WP_Error
-    {
+    public function capture_optimization_snapshot(
+        int $sourcePostId,
+        string $jobId,
+        string $expectedSourceUrl,
+        string $expectedSourceContentHash
+    ): array|WP_Error {
+        if (
+            $jobId === ''
+            || $expectedSourceUrl === ''
+            || $expectedSourceContentHash === ''
+        ) {
+            return new WP_Error(
+                'wp_fixpilot_snapshot_job_invalid',
+                'De ontvangen snapshottaak is ongeldig.',
+                ['status' => 400]
+            );
+        }
         $source = $this->source_page($sourcePostId);
         if (is_wp_error($source)) {
             return $source;
         }
-        $sourceState = (new WPFixPilot_Change_Controller())->current_state(
-            $sourcePostId
+        $seoPlugin = $this->detected_seo_plugin_snapshot();
+        $changeController = new WPFixPilot_Change_Controller($this->adapters());
+        $sourceState = $changeController->current_state(
+            $sourcePostId,
+            $seoPlugin
         );
         if (is_wp_error($sourceState)) {
             return $sourceState;
+        }
+        $sourceUrl = (string) get_permalink($source);
+        if (
+            !hash_equals($expectedSourceUrl, $sourceUrl)
+            || !hash_equals(
+                $expectedSourceContentHash,
+                (string) $sourceState['content_hash']
+            )
+        ) {
+            return $this->source_changed_error();
+        }
+        $store = new WPFixPilot_Template_Snapshot_Store();
+        $replaySnapshotId = $store->find_for_job($jobId);
+        if ($replaySnapshotId !== null) {
+            $stored = $store->load($replaySnapshotId);
+            if (
+                is_wp_error($stored)
+                || (int) ($stored['source_post_id'] ?? 0) !== $sourcePostId
+                || (string) ($stored['source_url'] ?? '') !== $expectedSourceUrl
+                || (string) ($stored['source_content_hash'] ?? '')
+                    !== $expectedSourceContentHash
+            ) {
+                $cleanup = $this->cleanup_blueprint($replaySnapshotId);
+                return is_wp_error($cleanup)
+                    ? $cleanup
+                    : $this->source_changed_error();
+            }
+
+            return $stored;
         }
         $captured = $this->capture([
             'source_page_id' => $sourcePostId,
@@ -77,31 +124,34 @@ final class WPFixPilot_Blueprint_Controller
             return $captured;
         }
         $snapshotId = (int) ($captured['wordpress_snapshot_id'] ?? 0);
-        $currentState = (new WPFixPilot_Change_Controller())->current_state(
-            $sourcePostId
+        $currentState = $changeController->current_state(
+            $sourcePostId,
+            $seoPlugin
         );
         if (
             is_wp_error($currentState)
             || !hash_equals(
-                (string) $sourceState['content_hash'],
+                $expectedSourceContentHash,
                 (string) ($currentState['content_hash'] ?? '')
+            )
+            || !hash_equals(
+                $expectedSourceUrl,
+                (string) get_permalink($source)
             )
         ) {
             $cleanup = $this->cleanup_blueprint($snapshotId);
-            return is_wp_error($cleanup) ? $cleanup : new WP_Error(
-                'wp_fixpilot_snapshot_source_changed',
-                'De bronpagina wijzigde tijdens de snapshotopname.',
-                ['status' => 409]
-            );
+            return is_wp_error($cleanup)
+                ? $cleanup
+                : $this->source_changed_error();
         }
         $capture = [
+            'job_id' => $jobId,
             'snapshot_kind' => 'optimization_source',
             'source_post_id' => $sourcePostId,
-            'source_url' => (string) get_permalink($source),
-            'source_content_hash' => (string) $sourceState['content_hash'],
+            'source_url' => $expectedSourceUrl,
+            'source_content_hash' => $expectedSourceContentHash,
             'captured_at' => gmdate('c'),
         ];
-        $store = new WPFixPilot_Template_Snapshot_Store();
         if (!$store->save_optimization_capture($snapshotId, $capture)) {
             $cleanup = $this->cleanup_blueprint($snapshotId);
             return is_wp_error($cleanup) ? $cleanup : $this->blueprint_failed_error();
@@ -114,6 +164,22 @@ final class WPFixPilot_Blueprint_Controller
         }
 
         return $stored;
+    }
+
+    public function discard_optimization_snapshot(
+        int $snapshotId,
+        string $jobId
+    ): true|WP_Error {
+        $store = new WPFixPilot_Template_Snapshot_Store();
+        if ($store->find_for_job($jobId) !== $snapshotId) {
+            return new WP_Error(
+                'wp_fixpilot_snapshot_cleanup_invalid',
+                'De snapshot hoort niet bij deze taak.',
+                ['status' => 409]
+            );
+        }
+
+        return $this->cleanup_blueprint($snapshotId);
     }
 
     /** @return array<string, mixed>|WP_Error */
@@ -191,11 +257,22 @@ final class WPFixPilot_Blueprint_Controller
             );
         }
 
+        $changeController = new WPFixPilot_Change_Controller($this->adapters());
+        $sourceState = $changeController->current_state(
+            $sourceId,
+            $capturedSeoPlugin
+        );
+        if (is_wp_error($sourceState)) {
+            return $sourceState;
+        }
         $blueprintId = $this->cloner()->clone_page(
             $sourceId,
             $name,
             true,
-            $adapter->clone_meta_keys($sourceId),
+            array_values(array_unique(array_merge(
+                $adapter->clone_meta_keys($sourceId),
+                $changeController->seo_meta_keys($capturedSeoPlugin)
+            ))),
             WPFixPilot_Template_Snapshot_Store::POST_TYPE
         );
         if (is_wp_error($blueprintId)) {
@@ -216,9 +293,9 @@ final class WPFixPilot_Blueprint_Controller
             $schema['document_fields'] = [
                 $this->snapshot_field('document:title', 'post_title', 'Paginatitel', 'heading', $source->post_title, true, 180),
                 $this->snapshot_field('document:slug', 'post_name', 'Slug', 'plain_text', $source->post_name, true, 160),
-                $this->snapshot_field('seo:title', 'seo.title', 'SEO-titel', 'seo_title', '', true, 70),
-                $this->snapshot_field('seo:meta_description', 'seo.meta_description', 'Meta description', 'meta_description', '', true, 170),
-                $this->snapshot_field('seo:focus_keyword', 'seo.focus_keyword', 'Focuszoekwoord', 'focus_keyword', '', true, 160),
+                $this->snapshot_field('seo:title', 'seo.title', 'SEO-titel', 'seo_title', (string) $sourceState['values']['seo_title'], true, 70),
+                $this->snapshot_field('seo:meta_description', 'seo.meta_description', 'Meta description', 'meta_description', (string) $sourceState['values']['meta_description'], true, 170),
+                $this->snapshot_field('seo:focus_keyword', 'seo.focus_keyword', 'Focuszoekwoord', 'focus_keyword', (string) $sourceState['values']['focus_keyword'], true, 160),
             ];
             $structureHash = $adapter->structure_hash($blueprintId);
             $snapshotValidation = $this->validate_snapshot_contract(
@@ -1429,6 +1506,15 @@ final class WPFixPilot_Blueprint_Controller
             'wp_fixpilot_blueprint_failed',
             'De blueprint kon niet volledig worden vastgelegd.',
             ['status' => 500]
+        );
+    }
+
+    private function source_changed_error(): WP_Error
+    {
+        return new WP_Error(
+            'wp_fixpilot_snapshot_source_changed',
+            'De bronpagina wijzigde tijdens de snapshotopname.',
+            ['status' => 409]
         );
     }
 

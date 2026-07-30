@@ -177,6 +177,34 @@ def test_completion_rejects_result_for_another_source(
     assert response.status_code == 409
 
 
+def test_completion_rejects_claim_time_source_identity_drift(
+    client: TestClient,
+    session,
+    projects: ProjectFixtures,
+    wordpress_page,
+) -> None:
+    job = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    endpoint = (
+        f"/projects/{projects.member_project.id}/wordpress-snapshot-jobs"
+    )
+    claimed = client.post(f"{endpoint}/claim", headers=plugin_headers()).json()
+    wordpress_page.url = "https://member.example/renamed"
+    wordpress_page.content_hash = "builder-metadata-changed"
+    session.commit()
+
+    response = client.post(
+        f"{endpoint}/{job.id}/complete",
+        headers=plugin_headers(),
+        json={
+            "claim_token": claimed["claim_token"],
+            "result": snapshot_result(),
+        },
+    )
+
+    assert response.status_code == 409
+
+
 def test_completion_rejects_coerced_result_fields(
     client: TestClient,
     session,

@@ -6,6 +6,7 @@ final class WPFixPilot_Template_Snapshot_Store
 {
     public const POST_TYPE = 'wpfixpilot_snapshot';
     private const OPTIMIZATION_META = [
+        'job_id' => '_wp_fixpilot_snapshot_job_id',
         'snapshot_kind' => '_wp_fixpilot_snapshot_kind',
         'source_post_id' => '_wp_fixpilot_source_page_id',
         'source_url' => '_wp_fixpilot_source_url',
@@ -69,6 +70,26 @@ final class WPFixPilot_Template_Snapshot_Store
         }
 
         return true;
+    }
+
+    public function find_for_job(string $jobId): ?int
+    {
+        if ($jobId === '') {
+            return null;
+        }
+        $matches = get_posts([
+            'post_type' => self::POST_TYPE,
+            'post_status' => 'private',
+            'fields' => 'ids',
+            'numberposts' => 1,
+            'suppress_filters' => true,
+            'meta_query' => [[
+                'key' => self::OPTIMIZATION_META['job_id'],
+                'value' => $jobId,
+            ]],
+        ]);
+
+        return isset($matches[0]) ? (int) $matches[0] : null;
     }
 
     /** @return array<string, mixed>|WP_Error */

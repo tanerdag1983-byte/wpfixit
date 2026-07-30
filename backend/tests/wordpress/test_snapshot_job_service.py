@@ -55,6 +55,14 @@ def test_repeated_capture_request_returns_same_open_job(session, wordpress_page)
     assert first.id == second.id
 
 
+def test_new_snapshot_job_requires_a_source_content_hash(session, wordpress_page):
+    wordpress_page.content_hash = None
+    session.commit()
+
+    with pytest.raises(SnapshotJobError, match="content hash"):
+        create_or_get_snapshot_job(session, wordpress_page)
+
+
 def test_claim_contains_immutable_source_identity(session, wordpress_page):
     job = create_or_get_snapshot_job(session, wordpress_page)
     session.commit()
@@ -71,6 +79,28 @@ def test_claim_contains_immutable_source_identity(session, wordpress_page):
     assert claimed.source_url == "https://member.example/monitoring-page"
     assert claimed.source_content_hash == "source-content-hash"
     assert claimed.claim_token
+
+
+def test_expired_claim_rejects_source_identity_drift(session, wordpress_page):
+    create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    first = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert first is not None
+    first.job.claim_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    wordpress_page.url = "https://member.example/renamed"
+    wordpress_page.content_hash = "changed-builder-metadata-hash"
+    session.commit()
+
+    with pytest.raises(SnapshotJobError, match="source identity changed"):
+        claim_next_snapshot_job(
+            session,
+            wordpress_page.project_id,
+            "https://member.example",
+        )
 
 
 def test_completion_rejects_a_different_source_page(session, wordpress_page):
@@ -102,6 +132,27 @@ def test_completion_rejects_a_changed_source_page(session, wordpress_page):
     )
     assert claimed is not None
     wordpress_page.content_hash = "new-content-hash"
+    session.commit()
+
+    with pytest.raises(SnapshotJobError, match="content changed"):
+        complete_snapshot_job(
+            session,
+            claimed.job.id,
+            claimed.claim_token,
+            snapshot_result(),
+        )
+
+
+def test_completion_rejects_a_legacy_null_source_hash(session, wordpress_page):
+    create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    claimed = claim_next_snapshot_job(
+        session,
+        wordpress_page.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    wordpress_page.content_hash = None
     session.commit()
 
     with pytest.raises(SnapshotJobError, match="content changed"):

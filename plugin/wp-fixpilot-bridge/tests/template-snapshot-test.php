@@ -107,6 +107,7 @@ function get_post_type_object(string $postType): ?WP_Post_Type
 require_once __DIR__ . '/../includes/builder-adapters/interface-blueprint-adapter.php';
 require_once __DIR__ . '/../includes/class-template-snapshot-store.php';
 require_once __DIR__ . '/../includes/class-post-cloner.php';
+require_once __DIR__ . '/../includes/class-change-controller.php';
 require_once __DIR__ . '/../includes/class-blueprint-controller.php';
 
 final class Snapshot_Test_Adapter implements WPFixPilot_Blueprint_Adapter

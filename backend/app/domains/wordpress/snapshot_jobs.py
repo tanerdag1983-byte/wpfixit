@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     )
 
 CLAIM_TTL = timedelta(minutes=5)
+CLAIM_IDENTITY_KEY = "_claim_identity"
 RESULT_KEYS = {
     "snapshot_id",
     "snapshot_version",
@@ -43,7 +44,7 @@ class ClaimedSnapshotJob:
     claim_token: str
     source_post_id: int
     source_url: str
-    source_content_hash: str | None
+    source_content_hash: str
 
 
 def create_or_get_snapshot_job(
@@ -68,6 +69,8 @@ def create_or_get_snapshot_job(
     )
     if existing is not None:
         return existing
+    if not locked_page.content_hash:
+        raise SnapshotJobError("snapshot job source content hash missing")
     job = WordPressSnapshotCaptureJob(
         id=f"wsnapjob_{uuid4().hex}",
         project_id=locked_page.project_id,
@@ -145,6 +148,15 @@ def claim_next_snapshot_job(
         job.cancelled_at = requested_at
         session.flush()
         return None
+    frozen_identity = _claim_identity(job)
+    current_identity = _page_identity(page)
+    if frozen_identity is None:
+        if not page.content_hash:
+            raise SnapshotJobError("snapshot job source content hash missing")
+        frozen_identity = current_identity
+        job.snapshot_result = {CLAIM_IDENTITY_KEY: frozen_identity}
+    elif frozen_identity != current_identity:
+        raise SnapshotJobError("snapshot job source identity changed")
 
     claim_token = secrets.token_urlsafe(32)
     job.state = "claimed"
@@ -157,9 +169,9 @@ def claim_next_snapshot_job(
     return ClaimedSnapshotJob(
         job=job,
         claim_token=claim_token,
-        source_post_id=page.wordpress_object_id,
-        source_url=page.url,
-        source_content_hash=page.content_hash,
+        source_post_id=frozen_identity["source_post_id"],
+        source_url=frozen_identity["source_url"],
+        source_content_hash=frozen_identity["source_content_hash"],
     )
 
 
@@ -190,18 +202,29 @@ def complete_snapshot_job(
         return job
     _require_active_claim(job, claim_token, now=now)
     _validate_result(result)
+    frozen_identity = _claim_identity(job)
+    if frozen_identity is None:
+        raise SnapshotJobError("snapshot job source identity missing")
     page = session.scalar(
         select(WordPressPage).where(
             WordPressPage.id == job.wordpress_page_id,
             WordPressPage.project_id == job.project_id,
         ).with_for_update()
     )
-    if page is None or result["source_post_id"] != page.wordpress_object_id:
+    if (
+        page is None
+        or result["source_post_id"] != frozen_identity["source_post_id"]
+        or page.wordpress_object_id != frozen_identity["source_post_id"]
+    ):
         raise SnapshotJobError("snapshot result source page mismatch")
-    if result["source_url"] != page.url:
+    if (
+        result["source_url"] != frozen_identity["source_url"]
+        or page.url != frozen_identity["source_url"]
+    ):
         raise SnapshotJobError("snapshot result source page URL mismatch")
-    if page.content_hash is not None and (
-        result["source_content_hash"] != page.content_hash
+    if (
+        result["source_content_hash"] != frozen_identity["source_content_hash"]
+        or page.content_hash != frozen_identity["source_content_hash"]
     ):
         raise SnapshotJobError("snapshot result source page content changed")
 
@@ -290,6 +313,39 @@ def _validate_result(result: dict) -> None:
         raise SnapshotJobError("snapshot result invalid") from error
     if captured_at.tzinfo is None:
         raise SnapshotJobError("snapshot result invalid")
+
+
+def _page_identity(page: "WordPressPage") -> dict[str, int | str | None]:
+    return {
+        "source_post_id": page.wordpress_object_id,
+        "source_url": page.url,
+        "source_content_hash": page.content_hash,
+    }
+
+
+def _claim_identity(
+    job: "WordPressSnapshotCaptureJob",
+) -> dict[str, int | str] | None:
+    stored = job.snapshot_result
+    if not isinstance(stored, dict):
+        return None
+    identity = stored.get(CLAIM_IDENTITY_KEY)
+    if (
+        not isinstance(identity, dict)
+        or not isinstance(identity.get("source_post_id"), int)
+        or isinstance(identity.get("source_post_id"), bool)
+        or identity["source_post_id"] < 1
+        or not isinstance(identity.get("source_url"), str)
+        or not identity["source_url"]
+        or not isinstance(identity.get("source_content_hash"), str)
+        or not identity["source_content_hash"]
+    ):
+        return None
+    return {
+        "source_post_id": identity["source_post_id"],
+        "source_url": identity["source_url"],
+        "source_content_hash": identity["source_content_hash"],
+    }
 
 
 def _require_active_claim(
