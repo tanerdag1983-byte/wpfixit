@@ -76,6 +76,31 @@ $wpFixPilotAdmin->register_action_handlers();
 $wpFixPilotAdmin->register_cron_handlers();
 add_action('admin_menu', [$wpFixPilotAdmin, 'register']);
 
+add_action('wp_fixpilot_poll_draft_jobs', static function (): void {
+    $backendUrl = (string) get_option('wp_fixpilot_outbound_backend_url', '');
+    $projectId = (string) get_option('wp_fixpilot_outbound_project_id', '');
+    $projectKey = (string) get_option('wp_fixpilot_outbound_project_key', '');
+    if ($backendUrl === '' || $projectId === '' || $projectKey === '') {
+        return;
+    }
+    try {
+        $client = new WPFixPilot_Outbound_Client(
+            $backendUrl,
+            $projectId,
+            $projectKey
+        );
+        $client->process_next_snapshot(new WPFixPilot_Blueprint_Controller([
+            new WPFixPilot_ACF_Blueprint_Adapter(),
+            new WPFixPilot_Elementor_Adapter(),
+            new WPFixPilot_WPBakery_Adapter(),
+            new WPFixPilot_Bricks_Adapter(),
+            new WPFixPilot_Gutenberg_Adapter(),
+        ]));
+    } catch (Throwable) {
+        return;
+    }
+}, 5);
+
 add_action('template_redirect', static function (): void {
     if (!is_singular()) {
         return;

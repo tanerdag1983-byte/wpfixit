@@ -5,6 +5,13 @@ declare(strict_types=1);
 final class WPFixPilot_Template_Snapshot_Store
 {
     public const POST_TYPE = 'wpfixpilot_snapshot';
+    private const OPTIMIZATION_META = [
+        'snapshot_kind' => '_wp_fixpilot_snapshot_kind',
+        'source_post_id' => '_wp_fixpilot_source_page_id',
+        'source_url' => '_wp_fixpilot_source_url',
+        'source_content_hash' => '_wp_fixpilot_source_content_hash',
+        'captured_at' => '_wp_fixpilot_captured_at',
+    ];
 
     public function register(): void
     {
@@ -40,5 +47,86 @@ final class WPFixPilot_Template_Snapshot_Store
             'Blueprintpagina niet gevonden.',
             ['status' => 404]
         );
+    }
+
+    /** @param array<string, mixed> $capture */
+    public function save_optimization_capture(int $postId, array $capture): bool
+    {
+        if (!$this->is_snapshot($postId)) {
+            return false;
+        }
+        foreach (self::OPTIMIZATION_META as $field => $metaKey) {
+            if (!array_key_exists($field, $capture)) {
+                return false;
+            }
+            update_post_meta($postId, $metaKey, $capture[$field]);
+            if (
+                (string) get_post_meta($postId, $metaKey, true)
+                !== (string) $capture[$field]
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @return array<string, mixed>|WP_Error */
+    public function load(int $postId): array|WP_Error
+    {
+        $snapshot = $this->assert_snapshot($postId);
+        if (is_wp_error($snapshot)) {
+            return $snapshot;
+        }
+        $schema = get_post_meta(
+            $postId,
+            '_wp_fixpilot_content_schema',
+            true
+        );
+
+        return [
+            'snapshot_id' => $postId,
+            'snapshot_version' => (int) get_post_meta(
+                $postId,
+                '_wp_fixpilot_snapshot_version',
+                true
+            ),
+            'structure_hash' => (string) get_post_meta(
+                $postId,
+                '_wp_fixpilot_structure_hash',
+                true
+            ),
+            'schema_version' => (string) get_post_meta(
+                $postId,
+                '_wp_fixpilot_snapshot_schema_version',
+                true
+            ),
+            'schema' => is_array($schema) ? $schema : [],
+            'snapshot_kind' => (string) get_post_meta(
+                $postId,
+                self::OPTIMIZATION_META['snapshot_kind'],
+                true
+            ),
+            'source_post_id' => (int) get_post_meta(
+                $postId,
+                self::OPTIMIZATION_META['source_post_id'],
+                true
+            ),
+            'source_url' => (string) get_post_meta(
+                $postId,
+                self::OPTIMIZATION_META['source_url'],
+                true
+            ),
+            'source_content_hash' => (string) get_post_meta(
+                $postId,
+                self::OPTIMIZATION_META['source_content_hash'],
+                true
+            ),
+            'captured_at' => (string) get_post_meta(
+                $postId,
+                self::OPTIMIZATION_META['captured_at'],
+                true
+            ),
+        ];
     }
 }

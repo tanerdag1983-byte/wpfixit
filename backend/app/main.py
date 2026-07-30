@@ -15,6 +15,9 @@ from app.api.routes.priorities import router as priorities_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.wordpress import router as wordpress_router
 from app.api.routes.wordpress_draft_jobs import router as wordpress_draft_jobs_router
+from app.api.routes.wordpress_snapshot_jobs import (
+    router as wordpress_snapshot_jobs_router,
+)
 from app.core.config import get_settings
 
 
@@ -44,6 +47,7 @@ def create_app() -> FastAPI:
     application.include_router(projects_router)
     application.include_router(wordpress_router)
     application.include_router(wordpress_draft_jobs_router)
+    application.include_router(wordpress_snapshot_jobs_router)
     application.include_router(dashboards_router)
     application.include_router(crawls_router)
     application.include_router(dataforseo_router)

@@ -55,6 +55,68 @@ final class WPFixPilot_Blueprint_Controller
     }
 
     /** @return array<string, mixed>|WP_Error */
+    public function capture_optimization_snapshot(int $sourcePostId): array|WP_Error
+    {
+        $source = $this->source_page($sourcePostId);
+        if (is_wp_error($source)) {
+            return $source;
+        }
+        $sourceState = (new WPFixPilot_Change_Controller())->current_state(
+            $sourcePostId
+        );
+        if (is_wp_error($sourceState)) {
+            return $sourceState;
+        }
+        $captured = $this->capture([
+            'source_page_id' => $sourcePostId,
+            'name' => 'Optimization snapshot ' . $sourcePostId,
+            'page_type' => 'generic',
+            'version' => 1,
+        ]);
+        if (is_wp_error($captured)) {
+            return $captured;
+        }
+        $snapshotId = (int) ($captured['wordpress_snapshot_id'] ?? 0);
+        $currentState = (new WPFixPilot_Change_Controller())->current_state(
+            $sourcePostId
+        );
+        if (
+            is_wp_error($currentState)
+            || !hash_equals(
+                (string) $sourceState['content_hash'],
+                (string) ($currentState['content_hash'] ?? '')
+            )
+        ) {
+            $cleanup = $this->cleanup_blueprint($snapshotId);
+            return is_wp_error($cleanup) ? $cleanup : new WP_Error(
+                'wp_fixpilot_snapshot_source_changed',
+                'De bronpagina wijzigde tijdens de snapshotopname.',
+                ['status' => 409]
+            );
+        }
+        $capture = [
+            'snapshot_kind' => 'optimization_source',
+            'source_post_id' => $sourcePostId,
+            'source_url' => (string) get_permalink($source),
+            'source_content_hash' => (string) $sourceState['content_hash'],
+            'captured_at' => gmdate('c'),
+        ];
+        $store = new WPFixPilot_Template_Snapshot_Store();
+        if (!$store->save_optimization_capture($snapshotId, $capture)) {
+            $cleanup = $this->cleanup_blueprint($snapshotId);
+            return is_wp_error($cleanup) ? $cleanup : $this->blueprint_failed_error();
+        }
+
+        $stored = $store->load($snapshotId);
+        if (is_wp_error($stored)) {
+            $cleanup = $this->cleanup_blueprint($snapshotId);
+            return is_wp_error($cleanup) ? $cleanup : $stored;
+        }
+
+        return $stored;
+    }
+
+    /** @return array<string, mixed>|WP_Error */
     public function capture(array $payload): array|WP_Error
     {
         $required = ['source_page_id', 'name', 'page_type', 'version'];

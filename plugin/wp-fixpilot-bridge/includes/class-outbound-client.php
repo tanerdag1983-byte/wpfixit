@@ -40,6 +40,55 @@ final class WPFixPilot_Outbound_Client
         return $this->request('POST', '/claim', [], [200, 204]);
     }
 
+    /** @return array<string, mixed>|null|WP_Error */
+    public function process_next_snapshot(object $controller): array|null|WP_Error
+    {
+        $claimed = $this->request(
+            'POST',
+            '/claim',
+            [],
+            [200, 204],
+            'wordpress-snapshot-jobs'
+        );
+        if ($claimed === null || is_wp_error($claimed)) {
+            return $claimed;
+        }
+        $job = $claimed['job'] ?? null;
+        $claimToken = (string) ($claimed['claim_token'] ?? '');
+        $jobId = is_array($job) ? (string) ($job['id'] ?? '') : '';
+        $sourcePostId = is_array($job) ? (int) ($job['source_post_id'] ?? 0) : 0;
+        if ($jobId === '' || $claimToken === '' || $sourcePostId < 1) {
+            return new WP_Error(
+                'wp_fixpilot_snapshot_job_invalid',
+                'De ontvangen snapshottaak is ongeldig.'
+            );
+        }
+        $result = $controller->capture_optimization_snapshot($sourcePostId);
+        if (is_wp_error($result)) {
+            $failure = $this->request(
+                'POST',
+                '/' . rawurlencode($jobId) . '/fail',
+                [
+                    'claim_token' => $claimToken,
+                    'error_code' => 'wordpress_error',
+                    'error_message' => substr($result->get_error_message(), 0, 500),
+                ],
+                [200],
+                'wordpress-snapshot-jobs'
+            );
+            return is_wp_error($failure) ? $failure : $result;
+        }
+        $completed = $this->request(
+            'POST',
+            '/' . rawurlencode($jobId) . '/complete',
+            ['claim_token' => $claimToken, 'result' => $result],
+            [200],
+            'wordpress-snapshot-jobs'
+        );
+
+        return is_wp_error($completed) ? $completed : $result;
+    }
+
     /** @param array<string, mixed> $draft */
     public function complete(
         string $jobId,
@@ -87,11 +136,12 @@ final class WPFixPilot_Outbound_Client
         string $method,
         string $suffix,
         array $body = [],
-        array $acceptedStatuses = [200]
+        array $acceptedStatuses = [200],
+        string $jobType = 'wordpress-draft-jobs'
     ): array|null|WP_Error {
         $url = $this->backendBaseUrl
             . '/projects/' . rawurlencode($this->projectId)
-            . '/wordpress-draft-jobs' . $suffix;
+            . '/' . $jobType . $suffix;
         $response = wp_remote_request($url, [
             'method' => $method,
             'timeout' => 30,
