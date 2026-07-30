@@ -168,7 +168,6 @@ def _score_for_version(
 
 def _score_factors(facts: dict) -> list[dict]:
     values = facts.get("values") if isinstance(facts.get("values"), dict) else {}
-    content_available = isinstance(values.get("content"), str)
     content = _text(values.get("content"))
     plain_content = _plain_text(content)
     title_value = values.get("title", values.get("seo_title"))
@@ -199,13 +198,14 @@ def _score_factors(facts: dict) -> list[dict]:
             if _text(term)
         ]
     profile_matches = any(term in plain_content.casefold() for term in profile_terms)
-    featured_image = bool(values.get("featured_image_id"))
-    featured_alt_available = isinstance(values.get("featured_image_alt"), str)
+    featured_image_available = "featured_image_id" in values
+    featured_image = (
+        bool(values.get("featured_image_id")) if featured_image_available else None
+    )
+    featured_alt_available = "featured_image_alt" in values
     featured_alt = _text(values.get("featured_image_alt"))
-    image_evidence_available = featured_image or content_available
-    image_alt_passes = (
-        (not featured_image or not featured_alt_available or bool(featured_alt))
-        and (not images or alt_count == len(images))
+    image_evidence_available = featured_image_available and (
+        featured_image is False or featured_alt_available
     )
 
     return [
@@ -248,10 +248,12 @@ def _score_factors(facts: dict) -> list[dict]:
             {
                 "featured": featured_image,
                 "featured_alt": featured_alt if featured_alt_available else None,
+                "featured_image_known": featured_image_available,
+                "featured_alt_known": featured_alt_available,
                 "in_page": len(images),
                 "with_alt": alt_count,
             },
-            (featured_image or bool(images)) and image_alt_passes,
+            featured_image is True and bool(featured_alt),
             "Add a featured or in-page image with descriptive alt text.",
             available=image_evidence_available,
         ),

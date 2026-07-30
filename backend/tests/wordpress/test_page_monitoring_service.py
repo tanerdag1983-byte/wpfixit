@@ -32,6 +32,7 @@ def page_facts(content_hash: str, *, canonical: str = "") -> dict:
                 "<img src=\"transmissie.jpg\" alt=\"Transmissie revisie specialist\">"
             ),
             "featured_image_id": 12,
+            "featured_image_alt": "Transmissie revisie specialist",
         },
     }
 
@@ -114,24 +115,12 @@ def test_changed_hash_does_not_repeat_page_recommendations(session, projects) ->
     assert session.scalar(select(func.count(PageRecommendation.id))) == 1
 
 
-def test_in_page_image_with_alt_is_sufficient_evidence(session, projects) -> None:
+def test_featured_image_presence_unknown_is_neutral_even_with_content(
+    session, projects
+) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
     del facts["values"]["featured_image_id"]
-
-    result = check_page(session, page, facts, trigger="sync")
-    image_factor = next(
-        factor for factor in result.score.factors if factor["key"] == "images"
-    )
-
-    assert image_factor["points"] == image_factor["max_points"]
-
-
-def test_absent_image_evidence_is_unknown(session, projects) -> None:
-    page = make_page(session, projects)
-    facts = page_facts("hash-a")
-    del facts["values"]["featured_image_id"]
-    del facts["values"]["content"]
 
     result = check_page(session, page, facts, trigger="sync")
     image_factor = next(
@@ -142,7 +131,23 @@ def test_absent_image_evidence_is_unknown(session, projects) -> None:
     assert image_factor["suggested_action"] == ""
 
 
-def test_featured_image_absence_without_content_is_unknown(session, projects) -> None:
+def test_featured_image_with_unknown_alt_is_neutral(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["featured_image_alt"]
+    del facts["values"]["content"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 0
+    assert image_factor["points"] == 0
+    assert image_factor["suggested_action"] == ""
+
+
+def test_known_absent_featured_image_is_actionable(session, projects) -> None:
     page = make_page(session, projects)
     facts = page_facts("hash-a")
     facts["values"]["featured_image_id"] = 0
@@ -153,7 +158,40 @@ def test_featured_image_absence_without_content_is_unknown(session, projects) ->
         factor for factor in result.score.factors if factor["key"] == "images"
     )
 
-    assert image_factor["max_points"] == 0
+    assert image_factor["max_points"] == 10
+    assert image_factor["points"] == 0
+    assert image_factor["suggested_action"]
+
+
+def test_known_empty_featured_image_alt_is_actionable(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    facts["values"]["featured_image_alt"] = ""
+    del facts["values"]["content"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 10
+    assert image_factor["points"] == 0
+    assert image_factor["suggested_action"]
+
+
+def test_known_featured_image_alt_receives_full_points(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("hash-a")
+    del facts["values"]["content"]
+
+    result = check_page(session, page, facts, trigger="sync")
+    image_factor = next(
+        factor for factor in result.score.factors if factor["key"] == "images"
+    )
+
+    assert image_factor["max_points"] == 10
+    assert image_factor["points"] == 10
+    assert image_factor["suggested_action"] == ""
 
 
 def test_historical_title_never_reads_mutable_page_title(session, projects) -> None:
