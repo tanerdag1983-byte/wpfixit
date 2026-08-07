@@ -1,9 +1,10 @@
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
@@ -72,6 +73,12 @@ def record_page_version(
         version = _page_version(session, page.id, content_hash)
         if version is None:
             raise
+        _bind_version_lineage(
+            version,
+            proposal_version_id=proposal_version_id,
+            draft_job_id=draft_job_id,
+            published_at=published_at,
+        )
         page.content_hash = content_hash
         return version, False
     page.content_hash = content_hash
@@ -113,6 +120,7 @@ def check_page(
         published_at=published_at,
     )
     score, score_created = _score_for_version(session, version)
+    _supersede_prior_recommendations(session, version)
     recommendations_created = _record_recommendations(session, version, score.factors)
     recorded_at = datetime.now(UTC)
     if version_created:
@@ -197,7 +205,10 @@ def _score_for_version(
 
 def _score_factors(facts: dict) -> list[dict]:
     values = facts.get("values") if isinstance(facts.get("values"), dict) else {}
-    content = _text(values.get("content"))
+    content = "\n".join(_analysis_fragments(values.get("content")))
+    builder_content = "\n".join(_analysis_fragments(values.get("builders")))
+    if builder_content:
+        content = "\n".join(filter(None, (content, builder_content)))
     plain_content = _plain_text(content)
     title_value = values.get("title", values.get("seo_title"))
     title_available = isinstance(title_value, str)
@@ -357,7 +368,7 @@ def _record_recommendations(
         )
         existing = session.scalar(
             select(PageRecommendation).where(
-                PageRecommendation.wordpress_page_id == version.wordpress_page_id,
+                PageRecommendation.page_version_id == version.id,
                 PageRecommendation.fingerprint == fingerprint,
             )
         )
@@ -395,6 +406,20 @@ def _record_recommendations(
     return created
 
 
+def _supersede_prior_recommendations(
+    session: Session, version: PageObservedVersion
+) -> None:
+    session.execute(
+        update(PageRecommendation)
+        .where(
+            PageRecommendation.wordpress_page_id == version.wordpress_page_id,
+            PageRecommendation.page_version_id != version.id,
+            PageRecommendation.state == "open",
+        )
+        .values(state="superseded")
+    )
+
+
 def _page_version(
     session: Session, wordpress_page_id: str, content_hash: str
 ) -> PageObservedVersion | None:
@@ -427,6 +452,28 @@ def _bind_version_lineage(
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _analysis_fragments(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [
+            fragment
+            for item in value.values()
+            for fragment in _analysis_fragments(item)
+        ]
+    if isinstance(value, list):
+        return [fragment for item in value for fragment in _analysis_fragments(item)]
+    if not isinstance(value, str) or not value.strip():
+        return []
+    candidate = value.strip()
+    if candidate[:1] in {"[", "{"}:
+        try:
+            decoded = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        else:
+            return _analysis_fragments(decoded)
+    return [candidate]
 
 
 def _combine_image_paths(featured: bool | None, inline: bool | None) -> bool | None:

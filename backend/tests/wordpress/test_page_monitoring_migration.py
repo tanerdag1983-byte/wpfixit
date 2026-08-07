@@ -160,7 +160,7 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
     )
     assert "wordpress_page_id" in recommendation_columns
     assert any(
-        constraint["column_names"] == ["wordpress_page_id", "fingerprint"]
+        constraint["column_names"] == ["page_version_id", "fingerprint"]
         for constraint in recommendation_unique_constraints
     )
 
@@ -194,5 +194,5 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "0024_page_monitoring"
+    assert revision == "0025_versioned_recs"
     engine.dispose()

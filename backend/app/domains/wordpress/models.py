@@ -329,9 +329,9 @@ class PageRecommendation(Base):
     __tablename__ = "page_recommendations"
     __table_args__ = (
         UniqueConstraint(
-            "wordpress_page_id",
+            "page_version_id",
             "fingerprint",
-            name="uq_page_recommendations_page_fingerprint",
+            name="uq_page_recommendations_version_fingerprint",
         ),
     )
 

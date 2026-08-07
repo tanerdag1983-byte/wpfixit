@@ -720,7 +720,7 @@ def test_failed_draft_job_does_not_report_draft_ready() -> None:
     assert status == "proposal_ready"
 
 
-def test_persisted_open_recommendation_precedes_improved_score_trend(
+def test_historical_superseded_recommendation_does_not_mark_page_attention(
     client: TestClient, session, auth_as, projects
 ) -> None:
     auth_as(projects.member)
@@ -775,7 +775,7 @@ def test_persisted_open_recommendation_precedes_improved_score_trend(
             page_version_id=old_version.id,
             wordpress_page_id=page.id,
             fingerprint="persistent-recommendation-fingerprint",
-            state="open",
+            state="superseded",
             evidence={},
             suggested_action="Keep this page-scoped recommendation open.",
         ),
@@ -787,7 +787,8 @@ def test_persisted_open_recommendation_precedes_improved_score_trend(
     )
 
     assert response.status_code == 200
-    assert response.json()["page"]["status"] == "needs_attention"
+    assert response.json()["page"]["status"] == "improved"
+    assert len(response.json()["recommendations"]) == 1
 
 
 def test_failed_manual_fetch_does_not_advance_latest_check(

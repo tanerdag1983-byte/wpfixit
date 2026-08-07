@@ -232,6 +232,7 @@ final class WPFixPilot_Change_Controller
             'redirect' => $values['_wp_fixpilot_redirect_to'] ?? '',
             'featured_image_id' => $values['featured_image_id'],
             'featured_image_alt' => $values['featured_image_alt'],
+            'builders' => $values['builders'],
         ];
     }
 

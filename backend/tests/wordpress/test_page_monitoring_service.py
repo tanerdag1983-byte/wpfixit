@@ -1,4 +1,8 @@
+from contextlib import nullcontext
+from datetime import UTC, datetime
+
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.domains.wordpress.models import (
     PageRecommendation,
@@ -113,15 +117,78 @@ def test_changed_hash_creates_version_score_and_timeline(session, projects) -> N
     assert timeline_types[-1] == "page_checked"
 
 
-def test_changed_hash_does_not_repeat_page_recommendations(session, projects) -> None:
+def test_changed_hash_records_recommendations_per_version(session, projects) -> None:
     page = make_page(session, projects)
 
     first = check_page(session, page, page_facts("hash-a"), trigger="sync")
     second = check_page(session, page, page_facts("hash-b"), trigger="sync")
 
     assert first.recommendations_created == 1
+    assert second.recommendations_created == 1
+    assert session.scalar(select(func.count(PageRecommendation.id))) == 2
+    states = list(
+        session.scalars(
+            select(PageRecommendation.state).order_by(PageRecommendation.created_at)
+        )
+    )
+    assert states == ["superseded", "open"]
+
+
+def test_clean_version_supersedes_historical_recommendations(
+    session, projects
+) -> None:
+    page = make_page(session, projects)
+
+    first = check_page(session, page, page_facts("hash-a"), trigger="sync")
+    second = check_page(
+        session,
+        page,
+        page_facts("hash-b", canonical="https://member.example/transmissie-revisie"),
+        trigger="sync",
+    )
+
+    recommendation = session.scalar(select(PageRecommendation))
+    assert first.recommendations_created == 1
     assert second.recommendations_created == 0
-    assert session.scalar(select(func.count(PageRecommendation.id))) == 1
+    assert recommendation is not None
+    assert recommendation.state == "superseded"
+
+
+def test_builder_payload_contributes_to_page_score(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("builder-hash")
+    facts["values"]["content"] = ""
+    facts["values"]["builders"] = {
+        "elementor": {
+            "meta": {
+                "_elementor_data": (
+                    '[{"settings":{"editor":"<h1>Transmissie revisie</h1>'
+                    '<p>Onze specialisten verzorgen transmissie revisie.</p>"}}]'
+                )
+            }
+        },
+        "bricks": {
+            "meta": {
+                "_bricks_page_content_2": [
+                    {"settings": {"text": '<a href="/contact">Contact</a>'}}
+                ]
+            }
+        },
+        "acf": {
+            "meta": {
+                "hero_image": '<img src="revisie.jpg" alt="Transmissie revisie">'
+            }
+        },
+    }
+    facts["values"]["featured_image_id"] = 0
+
+    result = check_page(session, page, facts, trigger="sync")
+    factors = {factor["key"]: factor for factor in result.score.factors}
+
+    assert factors["headings"]["points"] == 10
+    assert factors["keyword_coverage"]["points"] == 10
+    assert factors["links"]["points"] == 10
+    assert factors["images"]["points"] == 10
 
 
 def test_qualifying_inline_image_succeeds_when_featured_presence_is_unknown(
@@ -272,3 +339,47 @@ def test_historical_title_never_reads_mutable_page_title(session, projects) -> N
     assert created is True
     assert title_factor["max_points"] == 0
     assert title_factor["suggested_action"] == ""
+
+
+def test_conflict_recovery_binds_lineage_to_existing_version(
+    session, projects, monkeypatch
+) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("race-hash")
+    published_at = datetime(2026, 8, 7, 10, tzinfo=UTC)
+    existing = record_page_version(
+        session,
+        page,
+        page_facts("existing-hash"),
+        source="sync",
+    )[0]
+    versions = iter([None, existing])
+
+    monkeypatch.setattr(
+        "app.domains.wordpress.monitoring._page_version",
+        lambda *_args: next(versions),
+    )
+    monkeypatch.setattr(session, "begin_nested", nullcontext)
+    monkeypatch.setattr(
+        session,
+        "flush",
+        lambda: (_ for _ in ()).throw(
+            IntegrityError("duplicate version", {}, RuntimeError("unique"))
+        ),
+    )
+
+    version, created = record_page_version(
+        session,
+        page,
+        facts,
+        source="draft",
+        proposal_version_id="proposal-race",
+        draft_job_id="draft-race",
+        published_at=published_at,
+    )
+
+    assert created is False
+    assert version is existing
+    assert version.proposal_version_id == "proposal-race"
+    assert version.draft_job_id == "draft-race"
+    assert version.published_at == published_at

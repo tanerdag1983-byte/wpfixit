@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domains.wordpress.models import (
     PageObservedVersion,
+    PageRecommendation,
     PageScoreSnapshot,
     WordPressPage,
     WordPressSnapshotCaptureJob,
@@ -100,6 +101,40 @@ def test_one_score_snapshot_is_allowed_per_page_version(
 
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_same_recommendation_fingerprint_is_unique_per_page_version(
+    session, wordpress_page
+) -> None:
+    first = observed_version(wordpress_page, "recommendation-a")
+    second = observed_version(wordpress_page, "recommendation-b")
+    session.add_all([first, second])
+    session.flush()
+
+    session.add_all(
+        [
+            PageRecommendation(
+                id="recommendation-one",
+                page_version_id=first.id,
+                wordpress_page_id=wordpress_page.id,
+                fingerprint="same-fingerprint",
+                state="open",
+                evidence={},
+                suggested_action="Add a heading.",
+            ),
+            PageRecommendation(
+                id="recommendation-two",
+                page_version_id=second.id,
+                wordpress_page_id=wordpress_page.id,
+                fingerprint="same-fingerprint",
+                state="open",
+                evidence={},
+                suggested_action="Add a heading.",
+            ),
+        ]
+    )
+
+    session.commit()
 
 
 def test_capture_job_requires_claim_fields_only_while_claimed(
