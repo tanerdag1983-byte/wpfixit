@@ -124,12 +124,18 @@ def test_target_classification_does_not_cross_brand_or_force_generic_query(
     context = _transmission_context(session, projects)
 
     vw = classify_target("vw dsg versnellingsbak reviseren", context)
+    opel = classify_target("opel astra j versnellingsbak problemen", context)
     generic = classify_target("problemen automatische versnellingsbak", context)
+    generic_phrase = classify_target("versnellingsbak problemen", context)
 
     assert vw.classification == "new_page"
     assert vw.url is None
+    assert opel.classification == "new_page"
+    assert opel.url is None
     assert generic.classification == "new_page"
     assert generic.url is None
+    assert generic_phrase.classification == "new_page"
+    assert generic_phrase.url is None
 
 
 def test_target_classification_uses_distinctive_entity_or_shared_phrase(

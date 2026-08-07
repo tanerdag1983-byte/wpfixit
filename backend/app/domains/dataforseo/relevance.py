@@ -197,17 +197,20 @@ def classify_target(keyword: str, context: KeywordContext) -> PageMatch:
     ranked: list[tuple[int, int, str, tuple[str, ...]]] = []
 
     for page in context.pages:
-        exact_phrase = any(
+        page_entities = page.tokens - context.business_tokens - MATCH_STOP_TOKENS
+        entity_overlap = candidate_entities & page_entities
+        exact_phrase = bool(candidate_tokens - MATCH_STOP_TOKENS) and any(
             phrase
             and len(_tokens(phrase)) >= 2
             and (phrase in normalized or normalized in phrase)
             for phrase in page.phrases
         )
-        shared_bigrams = candidate_bigrams & {
-            bigram for phrase in page.phrases for bigram in _bigrams(phrase)
+        shared_bigrams = {
+            bigram
+            for phrase in page.phrases
+            for bigram in candidate_bigrams & _bigrams(phrase)
+            if frozenset(_tokens(bigram)) - MATCH_STOP_TOKENS
         }
-        page_entities = page.tokens - context.business_tokens - MATCH_STOP_TOKENS
-        entity_overlap = candidate_entities & page_entities
 
         if exact_phrase:
             ranked.append((100, 2, page.url, ("exact_phrase",)))
