@@ -14,6 +14,7 @@ from app.domains.dataforseo.models import (
     KeywordOpportunitySyncState,
 )
 from app.domains.dataforseo.relevance import (
+    PageMatch,
     build_keyword_context,
     classify_target,
     is_relevant,
@@ -188,6 +189,11 @@ def _upsert_keyword_opportunities(
             )
         ).all()
     }
+    for opportunity in existing.values():
+        _apply_target_match(
+            opportunity,
+            classify_target(opportunity.keyword, context),
+        )
     synced: list[KeywordOpportunity] = []
     created: set[tuple[str, int, str]] = set()
     updated: set[tuple[str, int, str]] = set()
@@ -220,7 +226,6 @@ def _upsert_keyword_opportunities(
             updated.add(identity)
 
         match = classify_target(keyword, context)
-        matched_url = match.url
         opportunity.search_volume = _optional_int(row.get("search_volume"))
         opportunity.cpc = _optional_decimal(row.get("cpc"))
         opportunity.competition = _optional_decimal(row.get("competition"))
@@ -229,22 +234,7 @@ def _upsert_keyword_opportunities(
             row.get("keyword_difficulty")
         )
         opportunity.intent = row.get("intent")
-        opportunity.target_url = matched_url
-        opportunity.target_classification = match.classification
-        opportunity.target_score = match.score
-        opportunity.target_evidence = list(match.evidence)
-        if match.classification == "existing_page":
-            opportunity.recommended_action = (
-                f"Verbeter {matched_url} voor het zoekwoord '{keyword}'."
-            )
-        elif match.classification == "review":
-            opportunity.recommended_action = (
-                f"Controleer of '{keyword}' bij een bestaande of nieuwe pagina hoort."
-            )
-        else:
-            opportunity.recommended_action = (
-                f"Maak een nieuwe landingspagina voor het zoekwoord '{keyword}'."
-            )
+        _apply_target_match(opportunity, match)
         opportunity.source = "dataforseo"
         opportunity.raw_payload = row.get("raw_payload") or row
         if run_id is not None:
@@ -252,6 +242,26 @@ def _upsert_keyword_opportunities(
         opportunity.last_seen_at = now
         synced.append(opportunity)
     return synced, accepted_count, len(created), len(updated)
+
+
+def _apply_target_match(opportunity: KeywordOpportunity, match: PageMatch) -> None:
+    keyword = opportunity.keyword
+    opportunity.target_url = match.url
+    opportunity.target_classification = match.classification
+    opportunity.target_score = match.score
+    opportunity.target_evidence = list(match.evidence)
+    if match.classification == "existing_page":
+        opportunity.recommended_action = (
+            f"Verbeter {match.url} voor het zoekwoord '{keyword}'."
+        )
+    elif match.classification == "review":
+        opportunity.recommended_action = (
+            f"Controleer of '{keyword}' bij een bestaande of nieuwe pagina hoort."
+        )
+    else:
+        opportunity.recommended_action = (
+            f"Maak een nieuwe landingspagina voor het zoekwoord '{keyword}'."
+        )
 
 
 def _locked_sync_state(

@@ -11,6 +11,7 @@ from app.domains.dataforseo.service import (
     sync_keyword_opportunity_window,
 )
 from app.domains.recommendations.models import CompanyProfile
+from app.domains.wordpress.models import WordPressPage
 from tests.recommendations.conftest import ProjectFixtures
 
 
@@ -172,6 +173,46 @@ def test_sync_reports_exact_counts_and_collapses_duplicate_identities(
     )
     assert new_item.first_seen_run_id == result.run_id
     assert new_item.last_seen_run_id == result.run_id
+
+
+def test_sync_reclassifies_stale_opportunities_not_in_the_current_window(
+    session: Session,
+    projects: ProjectFixtures,
+) -> None:
+    _add_profile(session, projects)
+    project = projects.member_project
+    session.add_all(
+        [
+            WordPressPage(
+                id="page-cupra",
+                project_id=project.id,
+                wordpress_object_id=104,
+                post_type="page",
+                status="publish",
+                title="Cupra versnellingsbak problemen oplossingen",
+                slug="cupra-versnellingsbak-problemen-oplossingen",
+                url=f"{project.domain}/cupra-versnellingsbak-problemen-oplossingen/",
+            ),
+            KeywordOpportunity(
+                id="stale-opportunity",
+                project_id=project.id,
+                keyword="opel astra j versnellingsbak problemen",
+                location_code=2528,
+                language_code="nl",
+                source="dataforseo",
+                target_url=f"{project.domain}/cupra-versnellingsbak-problemen-oplossingen/",
+                target_classification="existing_page",
+                raw_payload={},
+            ),
+        ]
+    )
+    session.commit()
+
+    sync_keyword_opportunity_window(session, project, StubProvider([[]]), limit=10)
+
+    opportunity = session.get(KeywordOpportunity, "stale-opportunity")
+    assert opportunity.target_classification == "new_page"
+    assert opportunity.target_url is None
 
 
 def test_provider_failure_persists_safe_run_without_cursor_or_row_mutation(
