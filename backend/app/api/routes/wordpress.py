@@ -330,7 +330,17 @@ def check_wordpress_page(
     user: UserDependency,
 ) -> dict[str, Any]:
     _project_or_404(session, user, project_id)
+    request_started_at = datetime.now(UTC)
     page = _page_or_404(session, project_id, page_id, for_update=True)
+    completed_check = _completed_page_check(session, page.id, request_started_at)
+    if completed_check is not None:
+        return {
+            "version_id": completed_check.page_version_id,
+            "version_created": False,
+            "overall_score": completed_check.payload["overall_score"],
+            "recommendations_created": 0,
+            "checked_at": completed_check.created_at,
+        }
     facts = _current_wordpress_state(session, project_id, page)
     result = check_page(session, page, facts, trigger="manual")
     session.commit()
@@ -341,6 +351,22 @@ def check_wordpress_page(
         "recommendations_created": result.recommendations_created,
         "checked_at": result.checked_at,
     }
+
+
+def _completed_page_check(
+    session: Session,
+    page_id: str,
+    request_started_at: datetime,
+) -> PageTimelineEvent | None:
+    return session.scalar(
+        select(PageTimelineEvent)
+        .where(
+            PageTimelineEvent.wordpress_page_id == page_id,
+            PageTimelineEvent.event_type == "page_checked",
+            PageTimelineEvent.created_at >= request_started_at,
+        )
+        .order_by(PageTimelineEvent.created_at.desc(), PageTimelineEvent.id.desc())
+    )
 
 
 @router.get("/wordpress-pages/{page_id}/monitoring")

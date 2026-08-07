@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy import func, select
 
 from app import maintenance
-from app.domains.wordpress.models import PageTimelineEvent, WordPressPage
+from app.api.routes import wordpress as wordpress_routes
+from app.core.security import CurrentUser
+from app.domains.wordpress.models import (
+    PageObservedVersion,
+    PageTimelineEvent,
+    WordPressPage,
+)
 from app.maintenance import WeeklyPageCheckResult, main, run_weekly_page_checks
 
 NOW = datetime(2026, 7, 30, tzinfo=UTC)
@@ -40,6 +46,32 @@ def _checked(session, page: WordPressPage, at: datetime) -> None:
             created_at=at,
         )
     )
+
+
+def _completed_check(session, page: WordPressPage, at: datetime) -> PageTimelineEvent:
+    version = PageObservedVersion(
+        id=f"version-{page.id}-{at.timestamp()}",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        content_hash=f"hash-{page.id}-{at.timestamp()}",
+        source="scheduled",
+        snapshot_payload={"content_hash": f"hash-{page.id}", "values": {}},
+        observed_at=at,
+    )
+    session.add(version)
+    session.flush()
+    event = PageTimelineEvent(
+        id=f"completed-{page.id}-{at.timestamp()}",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        page_version_id=version.id,
+        event_type="page_checked",
+        payload={"overall_score": 73},
+        created_at=at,
+    )
+    session.add(event)
+    session.flush()
+    return event
 
 
 def test_weekly_runner_checks_only_due_pages(session, projects, monkeypatch) -> None:
@@ -130,18 +162,12 @@ def test_weekly_runner_rechecks_due_evidence_after_lock(
     assert result.failed_page_ids == ()
 
 
-@pytest.mark.parametrize(
-    ("message", "secret"),
-    [
-        ("token=secret-value", "secret-value"),
-        ("Authorization: Bearer bearer-secret", "bearer-secret"),
-    ],
-)
 def test_weekly_runner_logs_a_sanitized_failure(
-    session, projects, monkeypatch, caplog, message, secret
+    session, projects, monkeypatch, caplog
 ) -> None:
     page = _page(session, projects, "failed-log-page-1")
     session.commit()
+    message = '{"api_key":"api-secret","access_token":"access-secret"}'
     monkeypatch.setattr(
         maintenance,
         "_current_wordpress_state",
@@ -153,8 +179,81 @@ def test_weekly_runner_logs_a_sanitized_failure(
 
     assert result.failed_page_ids == (page.id,)
     assert page.id in caplog.text
-    assert "RuntimeError" in caplog.text
-    assert secret not in caplog.text
+    assert "error_class=runtime_error" in caplog.text
+    assert "page_check_failed" in caplog.text
+    assert "api-secret" not in caplog.text
+    assert "access-secret" not in caplog.text
+    assert message not in caplog.text
+
+
+def test_manual_check_reuses_completed_overlapping_check(
+    session, projects, monkeypatch
+) -> None:
+    page = _page(session, projects, "manual-overlap-page-1")
+    session.commit()
+    original_page_or_404 = wordpress_routes._page_or_404
+    completed = None
+
+    def lock_page(*args, **kwargs):
+        nonlocal completed
+        locked = original_page_or_404(*args, **kwargs)
+        completed = _completed_check(session, locked, datetime.now(UTC))
+        return locked
+
+    monkeypatch.setattr(wordpress_routes, "_page_or_404", lock_page)
+    monkeypatch.setattr(
+        wordpress_routes,
+        "_current_wordpress_state",
+        lambda *_args: pytest.fail("overlapping completion must be reused"),
+    )
+
+    result = wordpress_routes.check_wordpress_page(
+        page.project_id,
+        page.id,
+        session,
+        CurrentUser(id=projects.member.id, email=projects.member.email),
+    )
+
+    assert completed is not None
+    assert result == {
+        "version_id": completed.page_version_id,
+        "version_created": False,
+        "overall_score": 73,
+        "recommendations_created": 0,
+        "checked_at": completed.created_at,
+    }
+
+
+def test_manual_check_runs_after_a_preexisting_completion(
+    session, projects, monkeypatch
+) -> None:
+    page = _page(session, projects, "manual-explicit-page-1")
+    _completed_check(session, page, NOW)
+    session.commit()
+    fetched_pages = []
+    monkeypatch.setattr(
+        wordpress_routes,
+        "_current_wordpress_state",
+        lambda _session, _project_id, locked_page: (
+            fetched_pages.append(locked_page.id)
+            or {"content_hash": "manual-explicit-hash", "values": {"title": page.title}}
+        ),
+    )
+
+    wordpress_routes.check_wordpress_page(
+        page.project_id,
+        page.id,
+        session,
+        CurrentUser(id=projects.member.id, email=projects.member.email),
+    )
+
+    assert fetched_pages == [page.id]
+    assert session.scalar(
+        select(func.count(PageTimelineEvent.id)).where(
+            PageTimelineEvent.wordpress_page_id == page.id,
+            PageTimelineEvent.event_type == "page_checked",
+        )
+    ) == 2
 
 
 def test_render_cron_reuses_the_api_encryption_secret() -> None:

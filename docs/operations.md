@@ -99,8 +99,8 @@ days old; a failed page does not stop checks for other due pages. Use
 the due count without writing to the database. Its encryption key is referenced
 from `wp-fixpilot-api`; keep that API key stable so the cron can decrypt existing
 WordPress connection secrets. Failed checks log only the page ID plus a sanitized
-exception class and message, and the cron exits nonzero after processing all due
-pages.
+exception class and fixed `page_check_failed` reason code; raw exception text is
+never logged. The cron exits nonzero after processing all due pages.
 
 ## Recovery
 

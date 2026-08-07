@@ -1,6 +1,5 @@
 import argparse
 import logging
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -13,10 +12,12 @@ from app.domains.wordpress.models import PageTimelineEvent, WordPressPage
 from app.domains.wordpress.monitoring import check_page
 
 logger = logging.getLogger(__name__)
-_SENSITIVE_VALUE = re.compile(
-    r"(?i)\b(token|secret|password|authorization|api[-_ ]?key|key)\b"
-    r"(?:\s*(?:[:=]|is)\s*|\s+)(?:bearer\s+)?\S+"
-)
+_FAILURE_CLASSES = {
+    ConnectionError: "connection_error",
+    RuntimeError: "runtime_error",
+    TimeoutError: "timeout_error",
+    ValueError: "value_error",
+}
 
 @dataclass(frozen=True)
 class WeeklyPageCheckResult:
@@ -56,10 +57,9 @@ def run_weekly_page_checks(
             session.rollback()
             failed_page_ids.append(page_id)
             logger.error(
-                "Weekly page check failed page_id=%s error=%s message=%s",
+                "page_check_failed page_id=%s error_class=%s",
                 page_id,
-                type(error).__name__,
-                _safe_error_message(error),
+                _failure_class(error),
             )
     return WeeklyPageCheckResult(
         due_page_ids,
@@ -115,9 +115,8 @@ def _page_is_due(session: Session, page_id: str, checked_at: datetime) -> bool:
     return latest_check is None or latest_check <= checked_at - timedelta(days=7)
 
 
-def _safe_error_message(error: Exception) -> str:
-    message = _SENSITIVE_VALUE.sub(r"\1=[redacted]", str(error).strip())
-    return message[:500] or "(no message)"
+def _failure_class(error: Exception) -> str:
+    return _FAILURE_CLASSES.get(type(error), "unexpected_error")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -96,7 +96,6 @@ def check_page(
     draft_job_id: str | None = None,
     published_at: datetime | None = None,
 ) -> PageCheckResult:
-    checked_at = datetime.now(UTC)
     profile = session.get(CompanyProfile, page.project_id)
     snapshot_facts = dict(facts)
     if profile is not None:
@@ -115,6 +114,7 @@ def check_page(
     )
     score, score_created = _score_for_version(session, version)
     recommendations_created = _record_recommendations(session, version, score.factors)
+    recorded_at = datetime.now(UTC)
     if version_created:
         session.add(
             PageTimelineEvent(
@@ -124,7 +124,7 @@ def check_page(
                 page_version_id=version.id,
                 event_type="version_observed",
                 payload={"content_hash": version.content_hash, "trigger": trigger},
-                created_at=checked_at,
+                created_at=recorded_at,
             )
         )
     if score_created:
@@ -136,9 +136,10 @@ def check_page(
                 page_version_id=version.id,
                 event_type="score_created",
                 payload={"overall_score": score.overall_score, "trigger": trigger},
-                created_at=checked_at,
+                created_at=recorded_at,
             )
         )
+    checked_at = datetime.now(UTC)
     session.add(
         PageTimelineEvent(
             id=f"ptimeline_{uuid4().hex}",
