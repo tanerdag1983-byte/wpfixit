@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -7,13 +7,17 @@ from sqlalchemy import func, select
 from app.api.routes import wordpress as wordpress_routes
 from app.domains.dataforseo.models import KeywordOpportunity
 from app.domains.jobs.models import Job
-from app.domains.page_packages.models import PagePackageProposal
+from app.domains.page_packages.models import (
+    PagePackageProposal,
+    PagePackageRegenerationCandidate,
+)
 from app.domains.wordpress.client import WordPressHealth
 from app.domains.wordpress.draft_jobs import hash_draft_job_payload
 from app.domains.wordpress.models import (
     PageObservedVersion,
     PageRecommendation,
     PageScoreSnapshot,
+    PageTimelineEvent,
     WordPressConnection,
     WordPressDraftJob,
     WordPressPage,
@@ -138,6 +142,112 @@ def test_sync_pages_records_current_state_monitoring(
     assert session.scalar(select(func.count(PageScoreSnapshot.id))) == 1
 
 
+def test_sync_links_published_managed_draft_to_proposal_and_source_timeline(
+    client: TestClient, session, auth_as, projects, monkeypatch
+) -> None:
+    auth_as(projects.member)
+    source = WordPressPage(
+        id="published-source-page",
+        project_id=projects.member_project.id,
+        wordpress_object_id=710,
+        post_type="page",
+        status="publish",
+        title="Original source",
+        slug="original-source",
+        url="https://member.example/original-source",
+    )
+    connection = WordPressConnection(
+        id="published-sync-connection",
+        project_id=projects.member_project.id,
+        site_url="https://member.example",
+        encrypted_secret="encrypted",
+        health_state="connected",
+    )
+    session.add_all([source, connection])
+    session.commit()
+    proposal = _existing_page_proposal(
+        session,
+        projects,
+        source,
+        "published-proposal",
+        state="draft_created",
+        wordpress_object_id=711,
+    )
+    job_payload = {}
+    draft_job = WordPressDraftJob(
+        id="published-draft-job",
+        project_id=source.project_id,
+        proposal_version_id=proposal.id,
+        contract_version="wordpress-draft-job-v1",
+        state="completed",
+        payload=job_payload,
+        payload_hash=hash_draft_job_payload(job_payload),
+        terminal_claim_token_hash="b" * 64,
+        wordpress_object_id=711,
+        completed_at=datetime(2026, 8, 4, 9, tzinfo=UTC),
+    )
+    session.add(draft_job)
+    session.commit()
+
+    class PublishedClient:
+        def __init__(self, _site_url: str, _secret: str) -> None:
+            pass
+
+        def health(self) -> WordPressHealth:
+            return WordPressHealth(
+                site_url="https://member.example",
+                wordpress_version="6.8",
+                plugin_version="0.2.1",
+                seo_plugin="yoast",
+            )
+
+        def inventory(self) -> list[dict]:
+            return [{
+                "id": 711,
+                "type": "page",
+                "status": "publish",
+                "title": "Improved page",
+                "slug": "improved-page",
+                "url": "https://member.example/improved-page",
+                "modified": "2026-08-05T10:00:00+00:00",
+                "content_hash": "published-content-hash",
+            }]
+
+        def current_state(self, _object_id: int) -> dict:
+            return {
+                "content_hash": "published-content-hash",
+                "values": {"title": "Improved page", "content": "<h1>Improved</h1>"},
+            }
+
+    monkeypatch.setattr(wordpress_routes, "decrypt_text", lambda _: "secret")
+    monkeypatch.setattr(wordpress_routes, "WordPressClient", PublishedClient)
+
+    response = client.post(f"/projects/{source.project_id}/sync-pages")
+
+    assert response.status_code == 200
+    published_page = session.scalar(
+        select(WordPressPage).where(WordPressPage.wordpress_object_id == 711)
+    )
+    assert published_page is not None
+    version = session.scalar(
+        select(PageObservedVersion).where(
+            PageObservedVersion.wordpress_page_id == published_page.id
+        )
+    )
+    assert version is not None
+    assert version.proposal_version_id == proposal.id
+    assert version.draft_job_id == draft_job.id
+    assert version.published_at is not None
+    publication = session.scalar(
+        select(PageTimelineEvent).where(
+            PageTimelineEvent.wordpress_page_id == source.id,
+            PageTimelineEvent.event_type == "published",
+        )
+    )
+    assert publication is not None
+    assert publication.page_version_id == version.id
+
+
 def test_manual_check_reuses_unchanged_page_version(
     client: TestClient, session, auth_as, projects, monkeypatch
 ) -> None:
@@ -193,6 +303,15 @@ def test_manual_check_reuses_unchanged_page_version(
         session.scalar(select(func.count(PageRecommendation.id)))
         == recommendation_count
     )
+    checked_events = list(
+        session.scalars(
+            select(PageTimelineEvent).where(
+                PageTimelineEvent.wordpress_page_id == page.id,
+                PageTimelineEvent.event_type == "page_checked",
+            )
+        )
+    )
+    assert len(checked_events) == 2
 
 
 def test_page_monitoring_returns_ordered_history_and_schedule(
@@ -248,10 +367,8 @@ def test_page_monitoring_returns_ordered_history_and_schedule(
     ]
     assert payload["scores"][0]["overall_score"] == checked.json()["overall_score"]
     assert payload["recommendations"][0]["state"] == "open"
-    assert [event["event_type"] for event in payload["events"]] == [
-        "score_created",
-        "version_observed",
-    ]
+    assert payload["latest_sync_at"] == checked.json()["checked_at"]
+    assert "page_checked" in [event["event_type"] for event in payload["events"]]
 
 
 def test_page_monitoring_hides_pages_from_other_projects(
@@ -278,7 +395,7 @@ def test_page_monitoring_hides_pages_from_other_projects(
     assert response.status_code == 404
 
 
-def test_page_monitoring_scopes_projection_to_selected_proposal(
+def test_page_monitoring_binds_projection_to_captured_version_when_live_changed(
     client: TestClient, session, auth_as, projects
 ) -> None:
     auth_as(projects.member)
@@ -294,12 +411,11 @@ def test_page_monitoring_scopes_projection_to_selected_proposal(
     )
     session.add(page)
     session.commit()
-    first = _existing_page_proposal(session, projects, page, "scope-first")
-    second = _existing_page_proposal(
+    proposal = _existing_page_proposal(
         session,
         projects,
         page,
-        "scope-second",
+        "captured-proposal",
         package={
             "text_replacements": {
                 "seo:meta_description": (
@@ -308,48 +424,142 @@ def test_page_monitoring_scopes_projection_to_selected_proposal(
                 )
             }
         },
+        config_snapshot={
+            "source_content_hash": "captured-hash",
+            "content_schema": {
+                "document_fields": [{
+                    "id": "seo:meta_description",
+                    "path": "seo.meta_description",
+                }],
+                "blocks": [],
+            },
+        },
+    )
+    captured = PageObservedVersion(
+        id="captured-version",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        content_hash="captured-hash",
+        source="sync",
+        snapshot_payload={
+            "content_hash": "captured-hash",
+            "values": {"title": page.title, "meta_description": ""},
+        },
+        observed_at=datetime(2026, 8, 1, 10, tzinfo=UTC),
+    )
+    live = PageObservedVersion(
+        id="live-version",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        content_hash="live-hash",
+        source="manual",
+        snapshot_payload={
+            "content_hash": "live-hash",
+            "values": {
+                "title": page.title,
+                "meta_description": (
+                    "Deze live tekst mag niet als voorstelbasis dienen."
+                ),
+            },
+        },
+        observed_at=datetime(2026, 8, 2, 10, tzinfo=UTC),
+    )
+    session.add_all([
+        captured,
+        live,
+        PageScoreSnapshot(
+            id="captured-score",
+            page_version_id=captured.id,
+            overall_score=31,
+            factors=[{
+                "key": "meta_description",
+                "value": "",
+                "points": 0,
+                "max_points": 10,
+                "explanation": "Captured explanation.",
+                "suggested_action": "Add a meta description.",
+                "evidence": {"value": ""},
+            }],
+            created_at=datetime(2026, 8, 1, 10, tzinfo=UTC),
+        ),
+        PageScoreSnapshot(
+            id="live-score",
+            page_version_id=live.id,
+            overall_score=92,
+            factors=[],
+            created_at=datetime(2026, 8, 2, 10, tzinfo=UTC),
+        ),
+    ])
+    session.commit()
+
+    response = client.get(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring",
+        params={"proposal_id": proposal.id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["captured_version"]["id"] == captured.id
+    assert payload["captured_score"]["id"] == "captured-score"
+    assert payload["live_changed_since_capture"] is True
+    meta = next(
+        factor
+        for factor in payload["projected_score"]["factors"]
+        if factor["key"] == "meta_description"
+    )
+    assert meta["points"] == 10
+
+
+def test_page_monitoring_does_not_fallback_when_captured_version_is_missing(
+    client: TestClient, session, auth_as, projects
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="missing-capture-page",
+        project_id=projects.member_project.id,
+        wordpress_object_id=708,
+        post_type="page",
+        status="publish",
+        title="Missing capture",
+        slug="missing-capture",
+        url="https://member.example/missing-capture",
+    )
+    session.add(page)
+    session.commit()
+    proposal = _existing_page_proposal(
+        session,
+        projects,
+        page,
+        "missing-capture-proposal",
+        config_snapshot={
+            "source_content_hash": "not-observed",
+            "content_schema": {"document_fields": [], "blocks": []},
+        },
     )
     session.add(
         PageObservedVersion(
-            id="proposal-scope-version",
+            id="unrelated-live-version",
             project_id=page.project_id,
             wordpress_page_id=page.id,
-            content_hash="proposal-scope-hash",
+            content_hash="newest-live-hash",
             source="sync",
-            snapshot_payload={
-                "content_hash": "proposal-scope-hash",
-                "values": {"title": page.title, "meta_description": ""},
-            },
+            snapshot_payload={"content_hash": "newest-live-hash", "values": {}},
         )
     )
     session.commit()
 
-    first_response = client.get(
+    response = client.get(
         f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring",
-        params={"proposal_id": first.id},
-    )
-    second_response = client.get(
-        f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring",
-        params={"proposal_id": second.id},
+        params={"proposal_id": proposal.id},
     )
 
-    assert first_response.status_code == 200
-    assert second_response.status_code == 200
-    first_meta = next(
-        factor
-        for factor in first_response.json()["projected_score"]["factors"]
-        if factor["key"] == "meta_description"
-    )
-    second_meta = next(
-        factor
-        for factor in second_response.json()["projected_score"]["factors"]
-        if factor["key"] == "meta_description"
-    )
-    assert first_meta["points"] == 0
-    assert second_meta["points"] == 10
+    assert response.status_code == 200
+    assert response.json()["captured_version"] is None
+    assert response.json()["captured_score"] is None
+    assert response.json()["projected_score"] is None
 
 
-def test_page_monitoring_includes_selected_proposal_lifecycle(
+def test_page_monitoring_uses_only_durable_lifecycle_states_and_events(
     client: TestClient, session, auth_as, projects
 ) -> None:
     auth_as(projects.member)
@@ -399,7 +609,44 @@ def test_page_monitoring_includes_selected_proposal_lifecycle(
         draft_job_id=draft_job.id,
         published_at=datetime(2026, 8, 4, 10, tzinfo=UTC),
     )
-    session.add_all([draft_job, published])
+    accepted = PagePackageRegenerationCandidate(
+        id="accepted-candidate",
+        proposal_group_id=proposal.proposal_group_id,
+        base_version_id=proposal.id,
+        generation_mode="full",
+        candidate_package={},
+        candidate_rendered_html="",
+        status="accepted",
+        created_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 2, 12, tzinfo=UTC),
+    )
+    discarded = PagePackageRegenerationCandidate(
+        id="discarded-candidate",
+        proposal_group_id=proposal.proposal_group_id,
+        base_version_id=proposal.id,
+        generation_mode="full",
+        candidate_package={},
+        candidate_rendered_html="",
+        status="discarded",
+        created_at=datetime(2026, 8, 2, 13, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 2, 14, tzinfo=UTC),
+    )
+    recommendation_event = PageTimelineEvent(
+        id="recommendation-event",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        page_version_id=published.id,
+        event_type="recommendation_created",
+        payload={"recommendation_id": "recommendation-1"},
+        created_at=datetime(2026, 8, 4, 11, tzinfo=UTC),
+    )
+    session.add_all([
+        draft_job,
+        published,
+        accepted,
+        discarded,
+        recommendation_event,
+    ])
     session.commit()
 
     response = client.get(
@@ -408,13 +655,17 @@ def test_page_monitoring_includes_selected_proposal_lifecycle(
     )
 
     assert response.status_code == 200
-    event_types = [event["event_type"] for event in response.json()["events"]]
-    assert event_types == [
-        "published",
-        "draft_created",
+    event_types = {event["event_type"] for event in response.json()["events"]}
+    assert {
+        "proposal_version_created",
         "proposal_approved",
-        "proposal_created",
-    ]
+        "candidate_created",
+        "candidate_accepted",
+        "candidate_discarded",
+        "recommendation_created",
+        "draft_created",
+    } <= event_types
+    assert "published" not in event_types
 
 
 def test_projected_score_uses_proposed_snapshot_values() -> None:
@@ -469,7 +720,7 @@ def test_failed_draft_job_does_not_report_draft_ready() -> None:
     assert status == "proposal_ready"
 
 
-def test_historic_recommendation_does_not_override_latest_page_status() -> None:
+def test_open_deduplicated_recommendation_keeps_page_attention_status() -> None:
     status = wordpress_routes._monitoring_status(
         None,
         None,
@@ -480,4 +731,60 @@ def test_historic_recommendation_does_not_override_latest_page_status() -> None:
         [SimpleNamespace(state="open", page_version_id="old")],
     )
 
-    assert status == "monitoring"
+    assert status == "needs_attention"
+
+
+def test_failed_manual_fetch_does_not_advance_latest_check(
+    client: TestClient, session, auth_as, projects, monkeypatch
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="failed-check-page",
+        project_id=projects.member_project.id,
+        wordpress_object_id=709,
+        post_type="page",
+        status="publish",
+        title="Failed check",
+        slug="failed-check",
+        url="https://member.example/failed-check",
+        last_synced_at=datetime.now(UTC) + timedelta(days=30),
+    )
+    session.add(page)
+    session.commit()
+
+    class WorkingClient:
+        def current_state(self, _object_id: int) -> dict:
+            return {"content_hash": "working-hash", "values": {}}
+
+    monkeypatch.setattr(
+        wordpress_routes,
+        "_connection_client",
+        lambda _session, _project_id: WorkingClient(),
+    )
+    succeeded = client.post(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/checks"
+    )
+    before = client.get(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring"
+    ).json()["latest_sync_at"]
+
+    class FailingClient:
+        def current_state(self, _object_id: int) -> dict:
+            raise RuntimeError("WordPress unavailable")
+
+    monkeypatch.setattr(
+        wordpress_routes,
+        "_connection_client",
+        lambda _session, _project_id: FailingClient(),
+    )
+    failed = client.post(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/checks"
+    )
+    after = client.get(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring"
+    ).json()["latest_sync_at"]
+
+    assert succeeded.status_code == 200
+    assert failed.status_code == 400
+    assert before == succeeded.json()["checked_at"]
+    assert after == before

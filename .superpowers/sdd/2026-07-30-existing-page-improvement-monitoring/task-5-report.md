@@ -2,58 +2,66 @@
 
 ## Status
 
-Complete. Existing-page opportunities now open the established proposal review flow,
-with page monitoring and manual checks added without any live-publishing action.
+Complete after Round 1 review fixes. Monitoring and review data now remain bound to
+the proposal's captured source version, and no live-publishing action was added.
 
-## Delivered
+## Round 1 Fixes
 
-- Added project-scoped monitoring and idempotent manual-check endpoints.
-- Returned ordered versions, scores, recommendations, monitoring events, latest sync,
-  next weekly check, current status, and proposal-scoped projected score factors.
-- Added a complete ordered timeline derived from monitoring, proposal, approval,
-  draft-job, and observed publication state.
-- Added existing-page opportunity creation with the exact action label
-  `Verbeteringsvoorstel maken` and safe handling while WordPress captures a snapshot.
-- Kept the full-width preview above current/proposed comparisons and editable fields.
-- Reused regeneration, comparison, approval, and draft controls. Draft creation remains
-  disabled until approval; no publishing control was added.
-- Added accessible score tables, timeline semantics, manual-check state, errors, and a
-  polite live-region completion message.
+- Bound captured content, current score factors, and projected score factors to
+  `proposal.config_snapshot.source_content_hash`. A newer live observation is shown
+  as a distinct warning and is never substituted as the proposal baseline.
+- Approval now saves unsaved edits first and approves the exact returned proposal
+  version. A failed save stops approval and leaves draft creation disabled.
+- Replaced inferred lifecycle entries with durable proposal, candidate, draft-job,
+  recommendation, check, and publication records. Publication is added only when a
+  normal inventory sync proves that a managed draft/version is published.
+- Added a durable `page_checked` event for every successful idempotent check and a
+  durable recommendation event only when a recommendation is actually created.
+- Cleared stale monitoring while proposals, saved packages, and checks refresh, with
+  accessible loading and error states.
+- Made status and open suggestions page-scoped across deduplicated recommendations.
+- Added captured/live version context, score history, open suggestions, and both
+  current and projected factor explanations while preserving the full-width preview.
+- Derived latest and next check timestamps only from successful check events or an
+  observed score timestamp. Inventory sync timestamps and failed fetches cannot
+  advance the schedule.
 
 ## TDD Evidence
 
-- Initial focused backend tests failed because the monitoring/check routes did not
-  exist; initial focused frontend tests failed because the monitoring components and
-  existing-page review behavior did not exist.
-- Review regressions then failed for snapshot-wait responses, proposal-scoped
-  projections, lifecycle events, current-version status, monitoring refresh, and
-  accessible completion feedback before their production fixes were applied.
-- Final focused result: 9 backend route tests and 36 frontend component tests passed.
+- Added failing backend regressions for captured-version projection, missing capture,
+  durable lifecycle evidence, published managed-draft linkage, page-scoped status,
+  successful-check timestamps, failed fetches, recommendation/check events, and
+  edit-then-approve persistence.
+- Added failing frontend regressions for save-before-approve, save failure, stale
+  monitoring removal, captured score selection, live-change labeling, score history,
+  open suggestions, and both sides of factor explanations.
+- Focused backend result after implementation: 25 passed.
+- Focused frontend result after implementation: 27 passed.
 
 ## Verification
 
-- `backend/.venv/bin/python -m pytest tests/wordpress/test_routes.py tests/page_packages -q`:
-  141 passed, 2 skipped.
-- The two skips require the optional `WP_FIXPILOT_POSTGRES_TEST_URL` concurrency test
-  database.
-- Scoped Ruff check: passed.
-- `frontend npm test -- --run`: 29 files, 115 tests passed.
+- `backend/.venv/bin/python -m pytest --import-mode=importlib -q tests/wordpress tests/page_packages`:
+  239 passed, 8 skipped.
+- `backend/.venv/bin/ruff check app tests alembic`: passed.
+- `frontend npm test -- --run`: 29 files, 118 tests passed.
 - `frontend npm run lint`: passed.
 - `frontend npm run build`: passed.
 - `git diff --check`: passed.
 
-## Independent Review
+## Self-Review
 
-An independent read-only Codex review found six issues: snapshot-wait handling,
-proposal projection scope, stale projected scores after edits, missing lifecycle
-events, historic recommendations affecting current status, and missing asynchronous
-status announcement. All six were reproduced or verified against the current models
-and fixed with regressions before commit.
+- Tenant/project filters remain on page, proposal, candidate, draft-job, and timeline
+  queries.
+- Existing regeneration, compare, approval, and draft controls remain in place.
+- WordPress creation remains draft-only and unavailable before approval.
+- Manual checks remain idempotent for observed versions, scores, and recommendations;
+  each successful check has its own durable check event.
+- No publishing endpoint, control, or automatic publication behavior was introduced.
 
 ## Concerns
 
-- PostgreSQL-only concurrency tests were not run because
-  `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured. Their absence is reported by the
-  suite as two explicit skips, not failures.
-- Vitest emits the repository's existing `--localstorage-file` path warning; all tests
-  pass.
+- Eight PostgreSQL concurrency tests were skipped because
+  `WP_FIXPILOT_POSTGRES_TEST_URL` is not configured. These are explicit environment
+  skips, not test failures.
+- Vitest emits the repository's existing `--localstorage-file` warning; all frontend
+  tests pass.

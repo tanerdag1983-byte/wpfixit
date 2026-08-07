@@ -1118,10 +1118,10 @@ def update_page_package_proposal(
                 status_code=409,
                 detail="Only the current snapshot proposal version can be edited",
             )
-        if proposal.state != "needs_attention":
+        if proposal.state not in {"needs_attention", "proposed"}:
             raise HTTPException(
                 status_code=409,
-                detail="Only snapshot proposals needing attention can be edited",
+                detail="Only proposed snapshot proposals can be edited",
             )
         if not isinstance(payload.package, GeneratedSnapshotTextPackage):
             raise HTTPException(
@@ -1134,10 +1134,26 @@ def update_page_package_proposal(
                 status_code=409,
                 detail="Proposal text is not ready for validation",
             )
-        try:
-            validation = retry_stage(session, proposal.id, "validation")
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
+        if proposal.state == "needs_attention":
+            try:
+                validation = retry_stage(session, proposal.id, "validation")
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+        else:
+            validation = locked_stage(session, proposal.id, "validation")
+            if validation.state != "ready":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Proposal validation is not ready for editing",
+                )
+            validation.state = "running"
+            validation.retry_count += 1
+            validation.started_at = datetime.now(UTC)
+            validation.last_retried_at = validation.started_at
+            validation.completed_at = None
+            validation.result = {}
+            validation.errors = {}
+            validation.attempt_token = str(uuid4())
         job = session.get(Job, proposal.job_id)
         if job is None:
             raise HTTPException(status_code=409, detail="Proposal job is unavailable")

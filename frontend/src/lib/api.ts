@@ -112,6 +112,32 @@ export type ScoreSnapshot = {
   factors: ScoreFactor[];
 };
 
+export type PageVersion = {
+  id: string;
+  content_hash: string;
+  source?: string;
+  snapshot_payload?: Record<string, unknown>;
+  proposal_version_id?: string | null;
+  draft_job_id?: string | null;
+  observed_at?: string;
+  published_at?: string | null;
+};
+
+export type PageRecommendation = {
+  id: string;
+  page_version_id: string;
+  state: string;
+  evidence: Record<string, unknown>;
+  suggested_action: string;
+  created_at: string;
+};
+
+export type StoredScoreSnapshot = ScoreSnapshot & {
+  id: string;
+  page_version_id: string;
+  created_at: string;
+};
+
 export type PageTimelineEvent = {
   id: string;
   event_type: string;
@@ -128,15 +154,14 @@ export type PageMonitoring = {
     wordpress_status?: string;
     status: string;
   };
-  latest_sync_at: string;
-  next_check_at: string;
-  versions: Array<Record<string, unknown>>;
-  scores: Array<ScoreSnapshot & {
-    id: string;
-    page_version_id: string;
-    created_at: string;
-  }>;
+  latest_sync_at: string | null;
+  next_check_at: string | null;
+  captured_version: PageVersion | null;
+  captured_score: StoredScoreSnapshot | null;
+  live_changed_since_capture: boolean;
+  versions: PageVersion[];
+  scores: StoredScoreSnapshot[];
   projected_score: ScoreSnapshot | null;
-  recommendations: Array<Record<string, unknown>>;
+  recommendations: PageRecommendation[];
   events: PageTimelineEvent[];
 };

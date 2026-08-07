@@ -74,6 +74,15 @@ def test_unchanged_hash_reuses_version_without_duplicate_recommendations(
         )
         == 1
     )
+    timeline_types = list(
+        session.scalars(
+            select(PageTimelineEvent.event_type).where(
+                PageTimelineEvent.wordpress_page_id == page.id
+            )
+        )
+    )
+    assert timeline_types.count("recommendation_created") == 1
+    assert timeline_types.count("page_checked") == 2
 
 
 def test_changed_hash_creates_version_score_and_timeline(session, projects) -> None:
@@ -101,7 +110,7 @@ def test_changed_hash_creates_version_score_and_timeline(session, projects) -> N
         "suggested_action",
         "evidence",
     }
-    assert timeline_types[-1] == "score_created"
+    assert timeline_types[-1] == "page_checked"
 
 
 def test_changed_hash_does_not_repeat_page_recommendations(session, projects) -> None:

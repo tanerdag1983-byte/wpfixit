@@ -13,7 +13,10 @@ from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
 from app.domains.audits.service import audit_project
-from app.domains.page_packages.models import PagePackageProposal
+from app.domains.page_packages.models import (
+    PagePackageProposal,
+    PagePackageRegenerationCandidate,
+)
 from app.domains.projects.service import get_membership, get_project
 from app.domains.recommendations.provider import (
     PUBLISHABLE_ACTION_TYPES,
@@ -322,16 +325,14 @@ def check_wordpress_page(
     _project_or_404(session, user, project_id)
     page = _page_or_404(session, project_id, page_id)
     facts = _current_wordpress_state(session, project_id, page)
-    checked_at = datetime.now(UTC)
     result = check_page(session, page, facts, trigger="manual")
-    page.last_synced_at = checked_at
     session.commit()
     return {
         "version_id": result.version.id,
         "version_created": result.version_created,
         "overall_score": result.score.overall_score,
         "recommendations_created": result.recommendations_created,
-        "checked_at": checked_at,
+        "checked_at": result.checked_at,
     }
 
 
@@ -415,18 +416,49 @@ def get_page_monitoring(
         if proposal is not None
         else None
     )
+    source_content_hash = (
+        proposal.config_snapshot.get("source_content_hash")
+        if proposal is not None
+        else None
+    )
+    captured_version = next(
+        (
+            version
+            for version in versions
+            if version.content_hash == source_content_hash
+        ),
+        None,
+    )
+    captured_score = next(
+        (
+            score
+            for score in scores
+            if captured_version is not None
+            and score.page_version_id == captured_version.id
+        ),
+        None,
+    )
     page_status = _monitoring_status(proposal, draft_job, scores, recommendations)
-    timeline = _monitoring_events(events, versions, proposal, draft_job)
+    timeline = _monitoring_events(session, events, proposal)
     projected_score = (
         _projected_score(
-            versions[0].snapshot_payload,
+            captured_version.snapshot_payload,
             proposal.config_snapshot,
             proposal.package,
             proposal.rendered_html,
         )
-        if versions and proposal is not None and proposal.package
+        if captured_version is not None and proposal is not None and proposal.package
         else None
     )
+    latest_check_at = next(
+        (
+            event.created_at
+            for event in events
+            if event.event_type == "page_checked"
+        ),
+        scores[0].created_at if scores else None,
+    )
+    latest_check_at = _as_utc_datetime(latest_check_at)
     return {
         "page": {
             "id": page.id,
@@ -435,29 +467,31 @@ def get_page_monitoring(
             "wordpress_status": page.status,
             "status": page_status,
         },
-        "latest_sync_at": page.last_synced_at,
-        "next_check_at": page.last_synced_at + timedelta(days=7),
+        "latest_sync_at": latest_check_at,
+        "next_check_at": (
+            latest_check_at + timedelta(days=7)
+            if latest_check_at is not None
+            else None
+        ),
+        "captured_version": (
+            _version_payload(captured_version)
+            if captured_version is not None
+            else None
+        ),
+        "captured_score": (
+            _score_payload(captured_score) if captured_score is not None else None
+        ),
+        "live_changed_since_capture": bool(
+            captured_version is not None
+            and versions
+            and versions[0].id != captured_version.id
+        ),
         "versions": [
-            {
-                "id": version.id,
-                "content_hash": version.content_hash,
-                "source": version.source,
-                "snapshot_payload": version.snapshot_payload,
-                "proposal_version_id": version.proposal_version_id,
-                "draft_job_id": version.draft_job_id,
-                "observed_at": version.observed_at,
-                "published_at": version.published_at,
-            }
+            _version_payload(version)
             for version in versions
         ],
         "scores": [
-            {
-                "id": score.id,
-                "page_version_id": score.page_version_id,
-                "overall_score": score.overall_score,
-                "factors": score.factors,
-                "created_at": score.created_at,
-            }
+            _score_payload(score)
             for score in scores
         ],
         "projected_score": projected_score,
@@ -496,20 +530,15 @@ def _monitoring_status(
         return "proposal_ready"
     if len(scores) > 1 and scores[0].overall_score > scores[1].overall_score:
         return "improved"
-    latest_version_id = scores[0].page_version_id if scores else None
-    if any(
-        item.state == "open" and item.page_version_id == latest_version_id
-        for item in recommendations
-    ):
+    if any(item.state == "open" for item in recommendations):
         return "needs_attention"
     return "monitoring"
 
 
 def _monitoring_events(
+    session: Session,
     events: list[PageTimelineEvent],
-    versions: list[PageObservedVersion],
     proposal: PagePackageProposal | None,
-    draft_job: WordPressDraftJob | None,
 ) -> list[dict[str, Any]]:
     timeline = [
         {
@@ -522,49 +551,102 @@ def _monitoring_events(
         for event in events
     ]
     if proposal is not None:
-        timeline.append({
-            "id": f"proposal-created-{proposal.id}",
-            "page_version_id": None,
-            "event_type": "proposal_created",
-            "payload": {"proposal_id": proposal.id},
-            "created_at": proposal.created_at,
-        })
-        if proposal.approved_at is not None:
-            timeline.append({
-                "id": f"proposal-approved-{proposal.id}",
-                "page_version_id": None,
-                "event_type": "proposal_approved",
-                "payload": {"proposal_id": proposal.id},
-                "created_at": proposal.approved_at,
-            })
-        draft_created_at = (
-            draft_job.completed_at
-            if draft_job is not None and draft_job.state == "completed"
-            else proposal.updated_at if proposal.state == "draft_created" else None
+        proposal_versions = list(
+            session.scalars(
+                select(PagePackageProposal).where(
+                    PagePackageProposal.project_id == proposal.project_id,
+                    PagePackageProposal.proposal_group_id
+                    == proposal.proposal_group_id,
+                )
+            )
         )
-        if draft_created_at is not None:
-            timeline.append({
-                "id": f"draft-created-{proposal.id}",
-                "page_version_id": None,
-                "event_type": "draft_created",
-                "payload": {
-                    "proposal_id": proposal.id,
-                    "draft_job_id": draft_job.id if draft_job is not None else None,
-                },
-                "created_at": draft_created_at,
-            })
-        for version in versions:
-            if (
-                version.proposal_version_id == proposal.id
-                and version.published_at is not None
-            ):
-                timeline.append({
-                    "id": f"published-{version.id}",
-                    "page_version_id": version.id,
-                    "event_type": "published",
-                    "payload": {"proposal_id": proposal.id},
-                    "created_at": version.published_at,
-                })
+        proposal_ids = [version.id for version in proposal_versions]
+        candidates = list(
+            session.scalars(
+                select(PagePackageRegenerationCandidate).where(
+                    PagePackageRegenerationCandidate.proposal_group_id
+                    == proposal.proposal_group_id
+                )
+            )
+        )
+        draft_jobs = list(
+            session.scalars(
+                select(WordPressDraftJob).where(
+                    WordPressDraftJob.project_id == proposal.project_id,
+                    WordPressDraftJob.proposal_version_id.in_(proposal_ids),
+                )
+            )
+        )
+        for version in proposal_versions:
+            timeline.append(
+                _state_event(
+                    f"proposal-version-{version.id}",
+                    "proposal_version_created",
+                    version.created_at,
+                    {
+                        "proposal_id": version.id,
+                        "version_number": version.version_number,
+                    },
+                )
+            )
+            if version.approved_at is not None:
+                timeline.append(
+                    _state_event(
+                        f"proposal-approved-{version.id}",
+                        "proposal_approved",
+                        version.approved_at,
+                        {"proposal_id": version.id},
+                    )
+                )
+        for candidate in candidates:
+            timeline.append(
+                _state_event(
+                    f"candidate-created-{candidate.id}",
+                    "candidate_created",
+                    candidate.created_at,
+                    {"candidate_id": candidate.id},
+                )
+            )
+            if candidate.status in {"accepted", "discarded", "failed"}:
+                timeline.append(
+                    _state_event(
+                        f"candidate-{candidate.status}-{candidate.id}",
+                        f"candidate_{candidate.status}",
+                        candidate.updated_at,
+                        {"candidate_id": candidate.id},
+                    )
+                )
+        for job in draft_jobs:
+            timeline.append(
+                _state_event(
+                    f"draft-requested-{job.id}",
+                    "draft_requested",
+                    job.created_at,
+                    {"draft_job_id": job.id, "proposal_id": job.proposal_version_id},
+                )
+            )
+            terminal_at = {
+                "completed": job.completed_at,
+                "failed": job.failed_at,
+                "cancelled": job.cancelled_at,
+            }.get(job.state)
+            if terminal_at is not None:
+                event_type = (
+                    "draft_created"
+                    if job.state == "completed"
+                    else f"draft_{job.state}"
+                )
+                timeline.append(
+                    _state_event(
+                        f"draft-{job.state}-{job.id}",
+                        event_type,
+                        terminal_at,
+                        {
+                            "draft_job_id": job.id,
+                            "proposal_id": job.proposal_version_id,
+                        },
+                    )
+                )
     return sorted(
         timeline,
         key=lambda event: (_utc_timestamp(event["created_at"]), event["id"]),
@@ -576,6 +658,50 @@ def _utc_timestamp(value: datetime) -> float:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.timestamp()
+
+
+def _as_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _state_event(
+    event_id: str,
+    event_type: str,
+    created_at: datetime,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "page_version_id": None,
+        "event_type": event_type,
+        "payload": payload,
+        "created_at": created_at,
+    }
+
+
+def _version_payload(version: PageObservedVersion) -> dict[str, Any]:
+    return {
+        "id": version.id,
+        "content_hash": version.content_hash,
+        "source": version.source,
+        "snapshot_payload": version.snapshot_payload,
+        "proposal_version_id": version.proposal_version_id,
+        "draft_job_id": version.draft_job_id,
+        "observed_at": version.observed_at,
+        "published_at": version.published_at,
+    }
+
+
+def _score_payload(score: PageScoreSnapshot) -> dict[str, Any]:
+    return {
+        "id": score.id,
+        "page_version_id": score.page_version_id,
+        "overall_score": score.overall_score,
+        "factors": score.factors,
+        "created_at": score.created_at,
+    }
 
 
 def _projected_score(

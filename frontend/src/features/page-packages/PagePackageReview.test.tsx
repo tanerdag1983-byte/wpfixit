@@ -234,8 +234,23 @@ describe("PagePackageReview", () => {
           page: { id: "wordpress-page-1", status: "proposal_ready" },
           latest_sync_at: "2026-08-07T08:00:00Z",
           next_check_at: "2026-08-14T08:00:00Z",
-          versions: [],
+          captured_version: {
+            id: "version-1",
+            content_hash: "captured-hash",
+            snapshot_payload: {},
+          },
+          live_changed_since_capture: true,
+          versions: [
+            { id: "version-live", content_hash: "live-hash", observed_at: "2026-08-08T08:00:00Z" },
+            { id: "version-1", content_hash: "captured-hash", observed_at: "2026-08-07T08:00:00Z" },
+          ],
           scores: [{
+            id: "score-live",
+            page_version_id: "version-live",
+            overall_score: 90,
+            factors: [],
+            created_at: "2026-08-08T08:00:00Z",
+          }, {
             id: "score-current",
             page_version_id: "version-1",
             overall_score: 61,
@@ -250,6 +265,21 @@ describe("PagePackageReview", () => {
             }],
             created_at: "2026-08-07T08:00:00Z",
           }],
+          captured_score: {
+            id: "score-current",
+            page_version_id: "version-1",
+            overall_score: 61,
+            factors: [{
+              key: "meta_description",
+              value: "",
+              points: 0,
+              max_points: 10,
+              explanation: "Meta description needs attention.",
+              suggested_action: "Add a meta description.",
+              evidence: { value: "" },
+            }],
+            created_at: "2026-08-07T08:00:00Z",
+          },
           projected_score: {
             overall_score: 78,
             factors: [{
@@ -285,6 +315,10 @@ describe("PagePackageReview", () => {
     ).toBeTruthy();
     expect(screen.getByText("Huidige score 61")).toBeVisible();
     expect(screen.getByText("Verwachte score 78")).toBeVisible();
+    expect(screen.getByText("Vastgelegde bronversie")).toBeVisible();
+    expect(screen.getByRole("status", {
+      name: "Live pagina gewijzigd sinds vastlegging",
+    })).toBeVisible();
     expect(screen.getByText("Laatste controle")).toBeVisible();
     expect(screen.getByText("Volgende controle")).toBeVisible();
     expect(screen.getByRole("button", { name: "WordPress-concept aanmaken" })).toBeDisabled();
@@ -301,9 +335,154 @@ describe("PagePackageReview", () => {
     ).toBe(2));
 
     fireEvent.click(screen.getByRole("button", { name: "Nu controleren" }));
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", {
+      name: "De pagina is gecontroleerd.",
+    })).toHaveTextContent(
       "De pagina is gecontroleerd.",
     );
+  });
+
+  it("saves unsaved edits before approving the exact proposal package", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      field_errors: {},
+    };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.includes("/monitoring?proposal_id=")) {
+        return Promise.resolve({
+          page: { id: "wordpress-page-1", status: "proposal_ready" },
+          latest_sync_at: null,
+          next_check_at: null,
+          captured_version: null,
+          captured_score: null,
+          live_changed_since_capture: false,
+          versions: [],
+          scores: [],
+          projected_score: null,
+          recommendations: [],
+          events: [],
+        });
+      }
+      if (init?.method === "PUT") {
+        const written = JSON.parse(init.body as string).package.text_replacements;
+        return Promise.resolve({
+          ...existingPageProposal,
+          package: {
+            text_replacements: Object.fromEntries(
+              Object.entries(written).map(([key, value]) => [
+                key,
+                (value as { value: string }).value,
+              ]),
+            ),
+          },
+        });
+      }
+      if (path.endsWith("/approve") && init?.method === "POST") {
+        return Promise.resolve({ ...existingPageProposal, state: "approved" });
+      }
+      return Promise.resolve(existingPageProposal);
+    });
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Hero-label"), {
+      target: { value: "Eerst opgeslagen" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Voorstel goedkeuren" }));
+
+    await waitFor(() => {
+      const mutations = apiRequest.mock.calls.filter(([, init]) => init?.method);
+      expect(mutations.map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
+      expect(mutations[1][0]).toBe(
+        "/projects/project-1/page-proposals/proposal-1/approve",
+      );
+      expect(JSON.parse(mutations[0][1].body as string).package.text_replacements[
+        "acf:hero:label"
+      ]).toEqual({ value: "Eerst opgeslagen" });
+    });
+    expect(screen.getByText(/Voorstel goedgekeurd/)).toBeVisible();
+  });
+
+  it("does not approve when persisting unsaved edits fails", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      field_errors: {},
+    };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.includes("/monitoring?proposal_id=")) return new Promise(() => undefined);
+      if (init?.method === "PUT") return Promise.reject(new Error("save failed"));
+      return Promise.resolve(existingPageProposal);
+    });
+    render(<PagePackageReview projectId="project-1" />);
+    fireEvent.change(await screen.findByLabelText("Hero-label"), {
+      target: { value: "Niet opgeslagen" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Voorstel goedkeuren" }));
+
+    expect(await screen.findByText(
+      "Wijzigingen opslaan mislukt. Het voorstel is niet goedgekeurd.",
+    )).toBeVisible();
+    expect(apiRequest.mock.calls.some(([path]) => path.endsWith("/approve"))).toBe(false);
+  });
+
+  it("clears stale monitoring while a saved package refreshes", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      field_errors: {},
+    };
+    let monitoringCalls = 0;
+    let resolveRefresh: ((value: unknown) => void) | undefined;
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.includes("/monitoring?proposal_id=")) {
+        monitoringCalls += 1;
+        if (monitoringCalls === 1) {
+          return Promise.resolve({
+            page: { id: "wordpress-page-1", status: "proposal_ready" },
+            latest_sync_at: null,
+            next_check_at: null,
+            captured_version: { id: "version-1", content_hash: "hash-1" },
+            captured_score: { id: "score-1", page_version_id: "version-1", overall_score: 61, factors: [] },
+            live_changed_since_capture: false,
+            versions: [],
+            scores: [],
+            projected_score: { overall_score: 78, factors: [] },
+            recommendations: [],
+            events: [],
+          });
+        }
+        return new Promise((resolve) => {
+          resolveRefresh = resolve;
+        });
+      }
+      if (init?.method === "PUT") return Promise.resolve(existingPageProposal);
+      return Promise.resolve(existingPageProposal);
+    });
+    render(<PagePackageReview projectId="project-1" />);
+    expect(await screen.findByText("Huidige score 61")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Wijzigingen opslaan" }));
+
+    expect(await screen.findByRole("status", { name: "Monitoring laden" })).toBeVisible();
+    expect(screen.queryByText("Huidige score 61")).not.toBeInTheDocument();
+    resolveRefresh?.({
+      page: { id: "wordpress-page-1", status: "proposal_ready" },
+      latest_sync_at: null,
+      next_check_at: null,
+      captured_version: null,
+      captured_score: null,
+      live_changed_since_capture: false,
+      versions: [],
+      scores: [],
+      projected_score: null,
+      recommendations: [],
+      events: [],
+    });
   });
 
   it("shows a saved candidate compare flow and can accept or discard it", async () => {

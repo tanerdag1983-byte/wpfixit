@@ -39,5 +39,7 @@ describe("ScoreFactors", () => {
     expect(
       screen.getByRole("row", { name: /Meta description.*0 van 10.*10 van 10/ }),
     ).toBeVisible();
+    expect(screen.getByText("Meta description needs attention.")).toBeVisible();
+    expect(screen.getByText("Meta description is present.")).toBeVisible();
   });
 });

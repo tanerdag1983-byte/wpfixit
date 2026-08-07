@@ -28,6 +28,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
   const [message, setMessage] = useState("");
   const [monitoring, setMonitoring] = useState<PageMonitoring | null>(null);
   const [monitoringError, setMonitoringError] = useState("");
+  const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [monitoringRevision, setMonitoringRevision] = useState(0);
   const [importUrl, setImportUrl] = useState<string | null>(null);
@@ -87,19 +88,26 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     if (!pageId || !proposalId) {
       setMonitoring(null);
       setMonitoringError("");
+      setMonitoringLoading(false);
       return;
     }
     let active = true;
+    setMonitoring(null);
     setMonitoringError("");
+    setMonitoringLoading(true);
     apiRequest<PageMonitoring>(
       `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
     )
       .then((result) => {
-        if (active) setMonitoring(result);
+        if (active) {
+          setMonitoring(result);
+          setMonitoringLoading(false);
+        }
       })
       .catch((error) => {
         if (active) {
           setMonitoringError(actionError(error, "Paginamonitoring laden mislukt."));
+          setMonitoringLoading(false);
         }
       });
     return () => {
@@ -125,6 +133,9 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     if (!proposal || !draft) return;
     setBusy(true);
     setMessage("");
+    setMonitoring(null);
+    setMonitoringError("");
+    setMonitoringLoading(true);
     try {
       const result = await writeDraft(proposal, draft);
       setProposal(result);
@@ -134,6 +145,8 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setMessage("Het complete paginapakket is opgeslagen.");
     } catch (error) {
       setMessage(actionError(error, "Opslaan mislukt."));
+      setMonitoringError("Monitoring kon niet worden vernieuwd omdat opslaan mislukte.");
+      setMonitoringLoading(false);
     } finally {
       setBusy(false);
     }
@@ -144,8 +157,33 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     setBusy(true);
     setMessage("");
     try {
+      let activeProposal = proposal;
+      if (
+        draft
+        && JSON.stringify(draft) !== JSON.stringify(proposal.package)
+      ) {
+        setMonitoring(null);
+        setMonitoringError("");
+        setMonitoringLoading(true);
+        try {
+          activeProposal = await writeDraft(proposal, draft);
+        } catch {
+          setMonitoringError(
+            "Monitoring kon niet worden vernieuwd omdat opslaan mislukte.",
+          );
+          setMonitoringLoading(false);
+          setMessage(
+            "Wijzigingen opslaan mislukt. Het voorstel is niet goedgekeurd.",
+          );
+          return;
+        }
+        setProposal(activeProposal);
+        setCandidate(readActiveCandidate(activeProposal));
+        setDraft(activeProposal.package);
+        setMonitoringRevision((current) => current + 1);
+      }
       const result = await apiRequest<Proposal>(
-        `/projects/${projectId}/page-proposals/${proposal.id}/approve`,
+        `/projects/${projectId}/page-proposals/${activeProposal.id}/approve`,
         { method: "POST" },
       );
       setProposal(result);
@@ -336,7 +374,9 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     const proposalId = proposal?.id;
     if (!pageId || !proposalId) return;
     setChecking(true);
+    setMonitoring(null);
     setMonitoringError("");
+    setMonitoringLoading(true);
     try {
       await apiRequest(
         `/projects/${projectId}/wordpress-pages/${pageId}/checks`,
@@ -350,6 +390,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     } catch (error) {
       setMonitoringError(actionError(error, "Pagina controleren mislukt."));
     } finally {
+      setMonitoringLoading(false);
       setChecking(false);
     }
   }
@@ -496,16 +537,26 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
           {existingPage && (
             <section aria-labelledby="current-proposed-heading" className="proposal-compare-shell">
               <div>
-                <p className="eyebrow">Veldvergelijking</p>
+                <p className="eyebrow">Vastgelegde bronversie</p>
                 <h2 id="current-proposed-heading">Huidig en voorgesteld</h2>
               </div>
+              {monitoring?.live_changed_since_capture && (
+                <p
+                  aria-label="Live pagina gewijzigd sinds vastlegging"
+                  className="settings-message"
+                  role="status"
+                >
+                  De live pagina is intussen gewijzigd. Deze vergelijking blijft
+                  gekoppeld aan de vastgelegde bronversie van dit voorstel.
+                </p>
+              )}
               <div className="proposal-compare-grid">
                 {comparisons.map((field) => (
                   <div className="proposal-compare-column" key={field.id}>
                     <h3>{field.label}</h3>
                     <div className="diff-grid">
                       <div className="diff-before">
-                        <span>Huidig</span>
+                        <span>Vastgelegd</span>
                         <p>{field.current || "Leeg"}</p>
                       </div>
                       <div className="diff-after">
@@ -519,20 +570,40 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
             </section>
           )}
 
-          {existingPage && monitoring?.scores[0] && monitoring.projected_score && (
+          {existingPage && monitoringLoading && (
+            <p
+              aria-label="Monitoring laden"
+              className="settings-message"
+              role="status"
+            >
+              Paginamonitoring laden...
+            </p>
+          )}
+
+          {existingPage && monitoring?.captured_score && monitoring.projected_score && (
             <ScoreFactors
-              current={monitoring.scores[0]}
+              current={monitoring.captured_score}
               projected={monitoring.projected_score}
             />
           )}
 
+          {existingPage && monitoring && !monitoring.captured_version && (
+            <p className="settings-message" role="alert">
+              De vastgelegde bronversie is niet beschikbaar. Daarom wordt geen
+              vergelijking of verwachte score getoond.
+            </p>
+          )}
+
           {existingPage && monitoring && (
             <PageTimeline
+              capturedVersionId={monitoring.captured_version?.id ?? null}
               checking={checking}
               events={monitoring.events}
               latestSyncAt={monitoring.latest_sync_at}
               nextCheckAt={monitoring.next_check_at}
               onCheck={() => void runManualCheck()}
+              recommendations={monitoring.recommendations}
+              scores={monitoring.scores}
               status={monitoring.page.status}
             />
           )}
@@ -679,7 +750,16 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         </>
       )}
 
-      {message && <p aria-live="polite" className="settings-message" role="status">{message}</p>}
+      {message && (
+        <p
+          aria-label={message}
+          aria-live="polite"
+          className="settings-message"
+          role="status"
+        >
+          {message}
+        </p>
+      )}
     </section>
   );
 }

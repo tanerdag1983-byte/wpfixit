@@ -37,9 +37,26 @@ export function ScoreFactors({
               <strong role="cell">{factorLabel(key)}</strong>
               <span role="cell">{pointsLabel(before?.points, before?.max_points)}</span>
               <span role="cell">{pointsLabel(after?.points, after?.max_points)}</span>
-              <small role="cell">
-                {after?.suggested_action || after?.explanation || before?.explanation}
-              </small>
+              <div className="score-factor-explanations" role="cell">
+                {before && (
+                  <small>
+                    <strong>Vastgelegd:</strong>{" "}
+                    <span>{before.explanation}</span>
+                    {before.suggested_action && (
+                      <span> {before.suggested_action}</span>
+                    )}
+                  </small>
+                )}
+                {after && (
+                  <small>
+                    <strong>Verwacht:</strong>{" "}
+                    <span>{after.explanation}</span>
+                    {after.suggested_action && (
+                      <span> {after.suggested_action}</span>
+                    )}
+                  </small>
+                )}
+              </div>
             </div>
           );
         })}

@@ -24,6 +24,7 @@ class PageCheckResult:
     version_created: bool
     score: PageScoreSnapshot
     recommendations_created: int
+    checked_at: datetime
 
 
 def record_page_version(
@@ -34,6 +35,7 @@ def record_page_version(
     source: str,
     proposal_version_id: str | None = None,
     draft_job_id: str | None = None,
+    published_at: datetime | None = None,
 ) -> tuple[PageObservedVersion, bool]:
     content_hash = facts.get("content_hash")
     if not isinstance(content_hash, str) or not content_hash or len(content_hash) > 128:
@@ -43,6 +45,12 @@ def record_page_version(
 
     version = _page_version(session, page.id, content_hash)
     if version is not None:
+        _bind_version_lineage(
+            version,
+            proposal_version_id=proposal_version_id,
+            draft_job_id=draft_job_id,
+            published_at=published_at,
+        )
         return version, False
 
     version = PageObservedVersion(
@@ -54,6 +62,7 @@ def record_page_version(
         snapshot_payload=facts,
         proposal_version_id=proposal_version_id,
         draft_job_id=draft_job_id,
+        published_at=published_at,
     )
     try:
         with session.begin_nested():
@@ -83,7 +92,11 @@ def check_page(
     facts: dict,
     *,
     trigger: str,
+    proposal_version_id: str | None = None,
+    draft_job_id: str | None = None,
+    published_at: datetime | None = None,
 ) -> PageCheckResult:
+    checked_at = datetime.now(UTC)
     profile = session.get(CompanyProfile, page.project_id)
     snapshot_facts = dict(facts)
     if profile is not None:
@@ -96,6 +109,9 @@ def check_page(
         page,
         snapshot_facts,
         source=trigger,
+        proposal_version_id=proposal_version_id,
+        draft_job_id=draft_job_id,
+        published_at=published_at,
     )
     score, score_created = _score_for_version(session, version)
     recommendations_created = _record_recommendations(session, version, score.factors)
@@ -108,7 +124,7 @@ def check_page(
                 page_version_id=version.id,
                 event_type="version_observed",
                 payload={"content_hash": version.content_hash, "trigger": trigger},
-                created_at=datetime.now(UTC),
+                created_at=checked_at,
             )
         )
     if score_created:
@@ -120,15 +136,27 @@ def check_page(
                 page_version_id=version.id,
                 event_type="score_created",
                 payload={"overall_score": score.overall_score, "trigger": trigger},
-                created_at=datetime.now(UTC),
+                created_at=checked_at,
             )
         )
+    session.add(
+        PageTimelineEvent(
+            id=f"ptimeline_{uuid4().hex}",
+            project_id=page.project_id,
+            wordpress_page_id=page.id,
+            page_version_id=version.id,
+            event_type="page_checked",
+            payload={"overall_score": score.overall_score, "trigger": trigger},
+            created_at=checked_at,
+        )
+    )
     session.flush()
     return PageCheckResult(
         version=version,
         version_created=version_created,
         score=score,
         recommendations_created=recommendations_created,
+        checked_at=checked_at,
     )
 
 
@@ -348,6 +376,20 @@ def _record_recommendations(
                     session.flush()
             except IntegrityError:
                 continue
+            session.add(
+                PageTimelineEvent(
+                    id=f"ptimeline_{uuid4().hex}",
+                    project_id=version.project_id,
+                    wordpress_page_id=version.wordpress_page_id,
+                    page_version_id=version.id,
+                    event_type="recommendation_created",
+                    payload={
+                        "recommendation_id": recommendation.id,
+                        "suggested_action": recommendation.suggested_action,
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
             created += 1
     return created
 
@@ -361,6 +403,25 @@ def _page_version(
             PageObservedVersion.content_hash == content_hash,
         )
     )
+
+
+def _bind_version_lineage(
+    version: PageObservedVersion,
+    *,
+    proposal_version_id: str | None,
+    draft_job_id: str | None,
+    published_at: datetime | None,
+) -> None:
+    if proposal_version_id is not None:
+        if version.proposal_version_id not in {None, proposal_version_id}:
+            raise ValueError("page version proposal lineage conflict")
+        version.proposal_version_id = proposal_version_id
+    if draft_job_id is not None:
+        if version.draft_job_id not in {None, draft_job_id}:
+            raise ValueError("page version draft lineage conflict")
+        version.draft_job_id = draft_job_id
+    if published_at is not None and version.published_at is None:
+        version.published_at = published_at
 
 
 def _text(value: object) -> str:

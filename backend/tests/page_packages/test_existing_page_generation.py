@@ -413,6 +413,39 @@ def test_approved_existing_page_uses_only_the_outbound_snapshot_draft_path(
     assert proposal.source_wordpress_page_id == captured.source.id
 
 
+def test_proposed_existing_page_can_save_edits_before_exact_approval(
+    client: TestClient,
+    session: Session,
+    captured_existing_page,
+) -> None:
+    captured = captured_existing_page
+    created = client.post(captured.route, json={"page_type": "service"})
+    proposal = session.get(PagePackageProposal, created.json()["id"])
+    assert proposal is not None
+    assert proposal.state == "proposed"
+    replacements = {
+        field_id: {"value": value}
+        for field_id, value in proposal.package["text_replacements"].items()
+    }
+    replacements["seo:meta_description"] = {
+        "value": "Handmatig aangescherpte meta description voor deze pagina."
+    }
+
+    saved = client.put(
+        f"/projects/{proposal.project_id}/page-proposals/{proposal.id}",
+        json={"package": {"text_replacements": replacements}},
+    )
+    approved = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/{proposal.id}/approve"
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["package"]["text_replacements"][
+        "seo:meta_description"
+    ] == replacements["seo:meta_description"]["value"]
+
+
 def test_regeneration_version_preserves_existing_page_source_and_context(
     client: TestClient,
     session: Session,
