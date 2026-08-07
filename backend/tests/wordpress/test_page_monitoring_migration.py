@@ -258,3 +258,40 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
 
     assert revision == "0025_versioned_recs"
     engine.dispose()
+
+
+def test_page_monitoring_migration_resumes_partially_applied_constraint(
+    migration_database_url: str,
+) -> None:
+    _upgrade("0024_page_monitoring")
+    engine = create_engine(migration_database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE page_recommendations DROP COLUMN "
+                "wordpress_page_id CASCADE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE page_recommendations ADD CONSTRAINT "
+                "uq_page_recommendations_version_fingerprint UNIQUE "
+                "(page_version_id, fingerprint)"
+            )
+        )
+
+    _upgrade("head")
+
+    with engine.connect() as connection:
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("page_recommendations")
+        }
+        constraints = inspect(connection).get_unique_constraints(
+            "page_recommendations"
+        )
+    assert "wordpress_page_id" in columns
+    assert ["page_version_id", "fingerprint"] in [
+        constraint["column_names"] for constraint in constraints
+    ]
+    engine.dispose()

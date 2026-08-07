@@ -18,15 +18,44 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_constraint(
-        "uq_page_recommendations_page_fingerprint",
-        "page_recommendations",
-        type_="unique",
+    op.execute(
+        "ALTER TABLE page_recommendations ADD COLUMN IF NOT EXISTS "
+        "wordpress_page_id VARCHAR(64)"
     )
-    op.create_unique_constraint(
-        "uq_page_recommendations_version_fingerprint",
-        "page_recommendations",
-        ["page_version_id", "fingerprint"],
+    op.execute(
+        "UPDATE page_recommendations AS recommendation "
+        "SET wordpress_page_id = version.wordpress_page_id "
+        "FROM page_observed_versions AS version "
+        "WHERE version.id = recommendation.page_version_id "
+        "AND recommendation.wordpress_page_id IS NULL"
+    )
+    op.execute(
+        "ALTER TABLE page_recommendations ALTER COLUMN wordpress_page_id "
+        "SET NOT NULL"
+    )
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
+        "'page_recommendations_wordpress_page_id_fkey' AND conrelid = "
+        "'page_recommendations'::regclass) THEN "
+        "ALTER TABLE page_recommendations ADD CONSTRAINT "
+        "page_recommendations_wordpress_page_id_fkey FOREIGN KEY "
+        "(wordpress_page_id) REFERENCES wordpress_pages (id) ON DELETE CASCADE; "
+        "END IF; END $$"
+    )
+    op.execute(
+        "ALTER TABLE page_recommendations DROP CONSTRAINT IF EXISTS "
+        "uq_page_recommendations_page_fingerprint"
+    )
+    op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = "
+        "'uq_page_recommendations_version_fingerprint' AND conrelid = "
+        "'page_recommendations'::regclass) THEN "
+        "ALTER TABLE page_recommendations ADD CONSTRAINT "
+        "uq_page_recommendations_version_fingerprint UNIQUE "
+        "(page_version_id, fingerprint); "
+        "END IF; END $$"
     )
     op.execute(
         sa.text(
