@@ -89,7 +89,8 @@ $controller = new WPFixPilot_Change_Controller([
     new Monitoring_Test_Adapter('bricks', '_bricks_page_content_2', '<a href="/contact">Visible contact</a>'),
     new Monitoring_Test_Adapter('acf', 'hero_visual', '', [
         321,
-        ['id' => 321, 'alt' => 'ACF maatwerk'],
+        ['id' => 321, 'url' => 'https://example.test/acf.jpg', 'alt' => 'ACF maatwerk'],
+        'https://example.test/acf.jpg',
     ], true),
 ]);
 $state = $controller->current_state(10, 'yoast');
@@ -106,7 +107,7 @@ assert($state['values']['visible_builder_content'] === [
     '<img alt="Elementor transmissie">',
     '<img alt="Bricks diagnose">',
     '<img alt="ACF maatwerk">',
-]);
+], wp_json_encode($state['values']['visible_builder_content']));
 assert($controller->current_state(10, 'yoast')['content_hash'] === $state['content_hash']);
 
 echo "change controller monitoring tests passed\n";

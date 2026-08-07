@@ -1144,25 +1144,20 @@ final class WPFixPilot_ACF_Adapter implements
     private function is_visible_fallback_container(string $key): bool
     {
         return preg_match(
-            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics)(?:$|_)/',
+            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics|id|key|type|layout|template|variant|theme|color|font|size|width|height|align|animation|position|order|enabled|target|rel)(?:$|_)/',
             strtolower($key)
         ) !== 1;
     }
 
     private function is_visible_fallback_content_key(string $key): bool
     {
-        return preg_match(
-            '/(?:^|_)(?:title|heading|headline|subtitle|subheading|description|intro|introduction|body|content|text|copy|question|answer|caption|label)$/',
-            strtolower($key)
-        ) === 1;
+        return $this->is_visible_fallback_container($key);
     }
 
     private function is_visible_fallback_link_key(string $key): bool
     {
-        return preg_match(
-            '/^(?:url|link|href|cta_(?:url|link)|button_(?:url|link)|contact_(?:url|link)|read_more_(?:url|link))$/',
-            strtolower($key)
-        ) === 1;
+        return $this->is_visible_fallback_container($key)
+            && preg_match('/(?:^|_)(?:url|link|href)$/', strtolower($key)) === 1;
     }
 
     /** @param array<int, mixed> $images */

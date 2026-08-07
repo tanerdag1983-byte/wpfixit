@@ -91,11 +91,15 @@ $test_acf_fields[200] = [
             1 => [
                 'acf_fc_layout' => 'benefits',
                 'title' => 'Benefit Title',
+                'eyebrow' => 'Specialistische kennis',
+                'testimonial' => 'Zeer vakkundig geholpen',
+                'usp' => 'Diagnose in eigen werkplaats',
                 'description' => '<p>Rich text content</p>',
                 'css_class' => 'revisie dsg technisch',
                 'background_image' => ['url' => 'https://example.test/keyword-background.jpg'],
                 'tracking_url' => 'https://example.test/keyword-tracking',
                 'cta_url' => 'https://example.test/contact',
+                'primary_cta_url' => 'https://example.test/afspraak',
             ],
         ],
     ],
@@ -163,8 +167,12 @@ foreach ($schema2['blocks'] as $block) {
     }
 }
 assert(in_array('Benefit Title', $visibleValues, true), 'Visible fallback title should remain included');
+assert(in_array('Specialistische kennis', $visibleValues, true), 'Visible eyebrow should remain included');
+assert(in_array('Zeer vakkundig geholpen', $visibleValues, true), 'Visible testimonial should remain included');
+assert(in_array('Diagnose in eigen werkplaats', $visibleValues, true), 'Visible USP should remain included');
 assert(in_array('<p>Rich text content</p>', $visibleValues, true), 'Visible fallback copy should remain included');
 assert(in_array('https://example.test/contact', $visibleValues, true), 'Visible CTA URL should remain included');
+assert(in_array('https://example.test/afspraak', $visibleValues, true), 'Visible suffixed CTA URL should remain included');
 assert(!in_array('revisie dsg technisch', $visibleValues, true), 'Technical classes must not become visible text');
 assert(!in_array('https://example.test/keyword-background.jpg', $visibleValues, true), 'Background images must not become visible links');
 assert(!in_array('https://example.test/keyword-tracking', $visibleValues, true), 'Tracking URLs must not become visible links');

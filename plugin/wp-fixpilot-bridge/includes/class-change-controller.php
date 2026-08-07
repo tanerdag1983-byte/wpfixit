@@ -250,6 +250,7 @@ final class WPFixPilot_Change_Controller
     {
         $content = [];
         $images = [];
+        $imageAliases = [];
         foreach ($this->builder_adapters() as $adapter) {
             if (!isset($builders[$adapter->key()])) {
                 continue;
@@ -257,7 +258,36 @@ final class WPFixPilot_Change_Controller
             foreach ($this->builder_images($postId, $adapter, $builders[$adapter->key()]) as $image) {
                 $marker = $this->image_marker($image);
                 if ($marker !== null) {
-                    $images[$marker['identity']] = $marker['html'];
+                    $matches = [];
+                    foreach ($marker['identities'] as $alias) {
+                        if (isset($imageAliases[$alias])) {
+                            $matches[] = $imageAliases[$alias];
+                        }
+                    }
+                    $matches = array_values(array_unique($matches));
+                    $identity = $matches[0] ?? $marker['identities'][0];
+                    foreach ($matches as $match) {
+                        if (
+                            isset($images[$match])
+                            && (!isset($images[$identity]) || $images[$match]['quality'] > $images[$identity]['quality'])
+                        ) {
+                            $images[$identity] = $images[$match];
+                        }
+                        if ($match !== $identity) {
+                            unset($images[$match]);
+                        }
+                    }
+                    if (!isset($images[$identity]) || $marker['quality'] > $images[$identity]['quality']) {
+                        $images[$identity] = $marker;
+                    }
+                    foreach ($imageAliases as $alias => $mappedIdentity) {
+                        if (in_array($mappedIdentity, $matches, true)) {
+                            $imageAliases[$alias] = $identity;
+                        }
+                    }
+                    foreach ($marker['identities'] as $alias) {
+                        $imageAliases[$alias] = $identity;
+                    }
                 }
             }
             $schema = $adapter->schema($postId);
@@ -283,7 +313,10 @@ final class WPFixPilot_Change_Controller
             }
         }
 
-        return array_merge($content, array_values($images));
+        return array_merge(
+            $content,
+            array_map(static fn (array $image): string => $image['html'], array_values($images))
+        );
     }
 
     /** @return array<int, mixed> */
@@ -336,7 +369,7 @@ final class WPFixPilot_Change_Controller
         return $images;
     }
 
-    /** @return array{identity: string, html: string}|null */
+    /** @return array{identities: array<int, string>, alt: string, quality: int, html: string}|null */
     private function image_marker(mixed $image): ?array
     {
         $id = 0;
@@ -354,12 +387,24 @@ final class WPFixPilot_Change_Controller
         if ($id <= 0 && $url === '') {
             return null;
         }
-        if ($alt === '' && $id > 0) {
+        $quality = $alt !== '' ? 2 : 0;
+        if ($quality === 0 && $id > 0) {
             $alt = (string) get_post_meta($id, '_wp_attachment_image_alt', true);
+            $quality = $alt !== '' ? 1 : 0;
+        }
+
+        $identities = [];
+        if ($id > 0) {
+            $identities[] = 'id:' . $id;
+        }
+        if ($url !== '') {
+            $identities[] = 'url:' . $url;
         }
 
         return [
-            'identity' => $id > 0 ? 'id:' . $id : 'url:' . $url,
+            'identities' => $identities,
+            'alt' => $alt,
+            'quality' => $quality,
             'html' => '<img alt="' . htmlspecialchars($alt, ENT_QUOTES) . '">',
         ];
     }
