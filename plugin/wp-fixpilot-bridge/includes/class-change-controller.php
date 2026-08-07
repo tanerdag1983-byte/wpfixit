@@ -166,7 +166,8 @@ final class WPFixPilot_Change_Controller
             ),
             'values' => $this->semantic_values(
                 $values,
-                $seoPlugin ?? $this->detected_seo_plugin()
+                $seoPlugin ?? $this->detected_seo_plugin(),
+                $postId
             ),
         ];
     }
@@ -177,7 +178,8 @@ final class WPFixPilot_Change_Controller
      */
     private function semantic_values(
         array $values,
-        string $seoPlugin
+        string $seoPlugin,
+        int $postId
     ): array
     {
         if ($seoPlugin === 'rank_math') {
@@ -233,7 +235,48 @@ final class WPFixPilot_Change_Controller
             'featured_image_id' => $values['featured_image_id'],
             'featured_image_alt' => $values['featured_image_alt'],
             'builders' => $values['builders'],
+            'visible_builder_content' => $this->visible_builder_content(
+                $postId,
+                $values['builders']
+            ),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $builders
+     * @return array<int, string>
+     */
+    private function visible_builder_content(int $postId, array $builders): array
+    {
+        $content = [];
+        foreach ($this->builder_adapters() as $adapter) {
+            if (!isset($builders[$adapter->key()])) {
+                continue;
+            }
+            $schema = $adapter->schema($postId);
+            if ($schema instanceof WP_Error) {
+                continue;
+            }
+            foreach ((array) ($schema['blocks'] ?? []) as $block) {
+                foreach ((array) ($block['fields'] ?? []) as $field) {
+                    $value = $field['current_value'] ?? null;
+                    if (!is_string($value) || trim($value) === '') {
+                        continue;
+                    }
+                    $type = (string) ($field['value_type'] ?? '');
+                    if ($type === 'heading') {
+                        $value = '<h2>' . htmlspecialchars($value, ENT_QUOTES) . '</h2>';
+                    } elseif ($type === 'url') {
+                        $value = '<a href="' . htmlspecialchars($value, ENT_QUOTES) . '"></a>';
+                    } elseif (!in_array($type, ['html', 'rich_text', 'plain_text'], true)) {
+                        continue;
+                    }
+                    $content[] = $value;
+                }
+            }
+        }
+
+        return $content;
     }
 
     /** @return array<string, mixed> */

@@ -1,4 +1,3 @@
-import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -52,6 +51,8 @@ def record_page_version(
             draft_job_id=draft_job_id,
             published_at=published_at,
         )
+        version.observed_at = datetime.now(UTC)
+        page.content_hash = content_hash
         return version, False
 
     version = PageObservedVersion(
@@ -205,8 +206,10 @@ def _score_for_version(
 
 def _score_factors(facts: dict) -> list[dict]:
     values = facts.get("values") if isinstance(facts.get("values"), dict) else {}
-    content = "\n".join(_analysis_fragments(values.get("content")))
-    builder_content = "\n".join(_analysis_fragments(values.get("builders")))
+    content = _text(values.get("content"))
+    builder_content = "\n".join(
+        _analysis_fragments(values.get("visible_builder_content"))
+    )
     if builder_content:
         content = "\n".join(filter(None, (content, builder_content)))
     plain_content = _plain_text(content)
@@ -403,6 +406,8 @@ def _record_recommendations(
                 )
             )
             created += 1
+        elif existing.state != "open":
+            existing.state = "open"
     return created
 
 
@@ -465,15 +470,7 @@ def _analysis_fragments(value: object) -> list[str]:
         return [fragment for item in value for fragment in _analysis_fragments(item)]
     if not isinstance(value, str) or not value.strip():
         return []
-    candidate = value.strip()
-    if candidate[:1] in {"[", "{"}:
-        try:
-            decoded = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        else:
-            return _analysis_fragments(decoded)
-    return [candidate]
+    return [value.strip()]
 
 
 def _combine_image_paths(featured: bool | None, inline: bool | None) -> bool | None:

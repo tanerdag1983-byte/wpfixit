@@ -164,6 +164,68 @@ def test_page_monitoring_migration_round_trip(migration_database_url: str) -> No
         for constraint in recommendation_unique_constraints
     )
 
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO organizations (id, name) "
+                "VALUES ('downgrade-org', 'Downgrade')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, organization_id, name, domain) "
+                "VALUES ('downgrade-project', 'downgrade-org', 'Downgrade', "
+                "'https://downgrade.example')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO wordpress_pages "
+                "(id, project_id, wordpress_object_id, post_type, status, title, "
+                "slug, url, content_hash) VALUES "
+                "('downgrade-page', 'downgrade-project', 1, 'page', 'publish', "
+                "'Downgrade', 'downgrade', 'https://downgrade.example/page', 'hash-b')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO page_observed_versions "
+                "(id, project_id, wordpress_page_id, content_hash, source, "
+                "snapshot_payload, observed_at) VALUES "
+                "('downgrade-version-a', 'downgrade-project', 'downgrade-page', "
+                "'hash-a', 'sync', '{}', '2026-08-01T10:00:00Z'), "
+                "('downgrade-version-b', 'downgrade-project', 'downgrade-page', "
+                "'hash-b', 'sync', '{}', '2026-08-02T10:00:00Z')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO page_recommendations "
+                "(id, page_version_id, wordpress_page_id, fingerprint, state, "
+                "evidence, suggested_action, created_at) VALUES "
+                "('downgrade-rec-a', 'downgrade-version-a', 'downgrade-page', "
+                "'same-fingerprint', 'superseded', '{}', 'Old', "
+                "'2026-08-01T10:00:00Z'), "
+                "('downgrade-rec-b', 'downgrade-version-b', 'downgrade-page', "
+                "'same-fingerprint', 'open', '{}', 'Current', "
+                "'2026-08-02T10:00:00Z')"
+            )
+        )
+
+    _downgrade("0024_page_monitoring")
+
+    with engine.connect() as connection:
+        retained = connection.execute(
+            text(
+                "SELECT id FROM page_recommendations "
+                "WHERE wordpress_page_id = 'downgrade-page'"
+            )
+        ).scalars().all()
+
+    assert retained == ["downgrade-rec-b"]
+
+    _upgrade("head")
+
     _downgrade("0023_keyword_sync_lifecycle")
 
     with engine.connect() as connection:

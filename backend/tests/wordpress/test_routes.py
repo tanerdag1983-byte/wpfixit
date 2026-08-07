@@ -715,9 +715,25 @@ def test_failed_draft_job_does_not_report_draft_ready() -> None:
         SimpleNamespace(state="failed"),
         [],
         [],
+        None,
     )
 
     assert status == "proposal_ready"
+
+
+def test_monitoring_status_ignores_open_recommendations_from_old_versions() -> None:
+    status = wordpress_routes._monitoring_status(
+        None,
+        None,
+        [
+            SimpleNamespace(page_version_id="current", overall_score=80),
+            SimpleNamespace(page_version_id="old", overall_score=60),
+        ],
+        [SimpleNamespace(page_version_id="old", state="open")],
+        "current",
+    )
+
+    assert status == "improved"
 
 
 def test_historical_superseded_recommendation_does_not_mark_page_attention(
@@ -733,6 +749,7 @@ def test_historical_superseded_recommendation_does_not_mark_page_attention(
         title="Improved with attention",
         slug="improved-with-attention",
         url="https://member.example/improved-with-attention",
+        content_hash="attention-new-hash",
     )
     old_version = PageObservedVersion(
         id="attention-old-version",
@@ -775,7 +792,7 @@ def test_historical_superseded_recommendation_does_not_mark_page_attention(
             page_version_id=old_version.id,
             wordpress_page_id=page.id,
             fingerprint="persistent-recommendation-fingerprint",
-            state="superseded",
+            state="open",
             evidence={},
             suggested_action="Keep this page-scoped recommendation open.",
         ),
@@ -788,7 +805,7 @@ def test_historical_superseded_recommendation_does_not_mark_page_attention(
 
     assert response.status_code == 200
     assert response.json()["page"]["status"] == "improved"
-    assert len(response.json()["recommendations"]) == 1
+    assert response.json()["recommendations"] == []
 
 
 def test_failed_manual_fetch_does_not_advance_latest_check(

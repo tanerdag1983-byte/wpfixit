@@ -154,12 +154,43 @@ def test_clean_version_supersedes_historical_recommendations(
     assert recommendation.state == "superseded"
 
 
-def test_builder_payload_contributes_to_page_score(session, projects) -> None:
+def test_returning_content_hash_becomes_current_again(session, projects) -> None:
+    page = make_page(session, projects)
+
+    first = check_page(session, page, page_facts("hash-a"), trigger="sync")
+    second = check_page(
+        session,
+        page,
+        page_facts("hash-b", canonical="https://member.example/transmissie-revisie"),
+        trigger="sync",
+    )
+    returned = check_page(session, page, page_facts("hash-a"), trigger="sync")
+
+    session.refresh(first.version)
+    recommendations = list(
+        session.scalars(
+            select(PageRecommendation).order_by(PageRecommendation.created_at)
+        )
+    )
+    assert returned.version.id == first.version.id
+    assert page.content_hash == "hash-a"
+    assert first.version.observed_at > second.version.observed_at
+    assert [item.state for item in recommendations] == ["open"]
+
+
+def test_raw_builder_metadata_does_not_contribute_to_page_score(
+    session, projects
+) -> None:
     page = make_page(session, projects)
     facts = page_facts("builder-hash")
     facts["values"]["content"] = ""
+    facts["values"]["seo_title"] = "Source"
+    facts["values"]["meta_description"] = (
+        "A neutral description without the target phrase."
+    )
     facts["values"]["builders"] = {
         "elementor": {
+            "structure_hash": "transmissie revisie",
             "meta": {
                 "_elementor_data": (
                     '[{"settings":{"editor":"<h1>Transmissie revisie</h1>'
@@ -180,6 +211,27 @@ def test_builder_payload_contributes_to_page_score(session, projects) -> None:
             }
         },
     }
+    facts["values"]["featured_image_id"] = 0
+
+    result = check_page(session, page, facts, trigger="sync")
+    factors = {factor["key"]: factor for factor in result.score.factors}
+
+    assert factors["headings"]["points"] == 0
+    assert factors["keyword_coverage"]["points"] == 0
+    assert factors["links"]["points"] == 0
+    assert factors["images"]["points"] == 0
+
+
+def test_visible_builder_content_contributes_to_page_score(session, projects) -> None:
+    page = make_page(session, projects)
+    facts = page_facts("visible-builder-hash")
+    facts["values"]["content"] = ""
+    facts["values"]["visible_builder_content"] = (
+        '<h1>Transmissie revisie</h1>'
+        '<p>Onze specialisten verzorgen transmissie revisie.</p>'
+        '<a href="/contact">Contact</a>'
+        '<img src="revisie.jpg" alt="Transmissie revisie">'
+    )
     facts["values"]["featured_image_id"] = 0
 
     result = check_page(session, page, facts, trigger="sync")

@@ -49,6 +49,25 @@ def downgrade() -> None:
         "page_recommendations",
         type_="unique",
     )
+    op.execute(
+        sa.text(
+            "DELETE FROM page_recommendations WHERE id IN ("
+            "SELECT id FROM ("
+            "SELECT recommendation.id, ROW_NUMBER() OVER ("
+            "PARTITION BY recommendation.wordpress_page_id, "
+            "recommendation.fingerprint ORDER BY "
+            "CASE WHEN version.content_hash = page.content_hash THEN 0 ELSE 1 END, "
+            "version.observed_at DESC, recommendation.created_at DESC, "
+            "recommendation.id DESC"
+            ") AS position "
+            "FROM page_recommendations AS recommendation "
+            "JOIN page_observed_versions AS version "
+            "ON version.id = recommendation.page_version_id "
+            "JOIN wordpress_pages AS page "
+            "ON page.id = recommendation.wordpress_page_id"
+            ") AS ranked WHERE position > 1)"
+        )
+    )
     op.create_unique_constraint(
         "uq_page_recommendations_page_fingerprint",
         "page_recommendations",

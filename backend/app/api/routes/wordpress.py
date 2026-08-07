@@ -389,6 +389,10 @@ def get_page_monitoring(
             )
         )
     )
+    current_version = next(
+        (version for version in versions if version.content_hash == page.content_hash),
+        versions[0] if versions else None,
+    )
     scores = list(
         session.scalars(
             select(PageScoreSnapshot)
@@ -398,7 +402,7 @@ def get_page_monitoring(
             )
             .where(PageObservedVersion.wordpress_page_id == page.id)
             .order_by(
-                PageScoreSnapshot.created_at.desc(),
+                PageObservedVersion.observed_at.desc(),
                 PageScoreSnapshot.id.desc(),
             )
         )
@@ -406,7 +410,10 @@ def get_page_monitoring(
     recommendations = list(
         session.scalars(
             select(PageRecommendation)
-            .where(PageRecommendation.wordpress_page_id == page.id)
+            .where(
+                PageRecommendation.page_version_id
+                == (current_version.id if current_version is not None else "")
+            )
             .order_by(
                 PageRecommendation.created_at.desc(),
                 PageRecommendation.id.desc(),
@@ -471,7 +478,13 @@ def get_page_monitoring(
         ),
         None,
     )
-    page_status = _monitoring_status(proposal, draft_job, scores, recommendations)
+    page_status = _monitoring_status(
+        proposal,
+        draft_job,
+        scores,
+        recommendations,
+        current_version.id if current_version is not None else None,
+    )
     timeline = _monitoring_events(session, events, proposal)
     projected_score = (
         _projected_score(
@@ -516,8 +529,8 @@ def get_page_monitoring(
         ),
         "live_changed_since_capture": bool(
             captured_version is not None
-            and versions
-            and versions[0].id != captured_version.id
+            and current_version is not None
+            and current_version.id != captured_version.id
         ),
         "versions": [
             _version_payload(version)
@@ -548,6 +561,7 @@ def _monitoring_status(
     draft_job: WordPressDraftJob | None,
     scores: list[PageScoreSnapshot],
     recommendations: list[PageRecommendation],
+    current_version_id: str | None,
 ) -> str:
     if proposal is not None and (
         proposal.state == "draft_created"
@@ -561,9 +575,22 @@ def _monitoring_status(
         "draft_in_progress",
     }:
         return "proposal_ready"
-    if any(item.state == "open" for item in recommendations):
+    if any(
+        item.page_version_id == current_version_id and item.state == "open"
+        for item in recommendations
+    ):
         return "needs_attention"
-    if len(scores) > 1 and scores[0].overall_score > scores[1].overall_score:
+    current_score = next(
+        (item for item in scores if item.page_version_id == current_version_id), None
+    )
+    previous_score = next(
+        (item for item in scores if item.page_version_id != current_version_id), None
+    )
+    if (
+        current_score is not None
+        and previous_score is not None
+        and current_score.overall_score > previous_score.overall_score
+    ):
         return "improved"
     return "monitoring"
 

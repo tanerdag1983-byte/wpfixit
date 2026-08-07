@@ -33,6 +33,7 @@ def test_concurrent_same_hash_checks_reuse_version_and_score() -> None:
     page_id = f"monitoring-page-{suffix}"
     with Session(engine) as session:
         session.add(Organization(id=organization_id, name="Monitoring concurrency"))
+        session.flush()
         session.add(
             Project(
                 id=project_id,
@@ -41,6 +42,7 @@ def test_concurrent_same_hash_checks_reuse_version_and_score() -> None:
                 domain=f"https://{suffix}.example",
             )
         )
+        session.flush()
         session.add(
             WordPressPage(
                 id=page_id,
