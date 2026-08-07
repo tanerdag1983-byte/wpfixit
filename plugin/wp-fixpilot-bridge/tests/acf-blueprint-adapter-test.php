@@ -92,8 +92,22 @@ $test_acf_fields[200] = [
                 'acf_fc_layout' => 'benefits',
                 'title' => 'Benefit Title',
                 'description' => '<p>Rich text content</p>',
+                'css_class' => 'revisie dsg technisch',
+                'background_image' => ['url' => 'https://example.test/keyword-background.jpg'],
+                'tracking_url' => 'https://example.test/keyword-tracking',
+                'cta_url' => 'https://example.test/contact',
             ],
         ],
+    ],
+];
+
+$test_acf_fields[300] = [
+    [
+        'key' => 'field_hero_visual',
+        'name' => 'hero_visual',
+        'label' => 'Hero visual',
+        'type' => 'image',
+        'value' => 321,
     ],
 ];
 
@@ -142,6 +156,20 @@ $heroBlock = $schema2['blocks'][0];
 assert($heroBlock['layout'] === 'hero', 'First block should be hero layout');
 assert($heroBlock['semantic_role'] === 'hero', 'Should infer hero semantic role');
 assert(count($heroBlock['fields']) >= 2, 'Hero should have at least 2 fields');
+$visibleValues = [];
+foreach ($schema2['blocks'] as $block) {
+    foreach ($block['fields'] as $schemaField) {
+        $visibleValues[] = $schemaField['current_value'];
+    }
+}
+assert(in_array('Benefit Title', $visibleValues, true), 'Visible fallback title should remain included');
+assert(in_array('<p>Rich text content</p>', $visibleValues, true), 'Visible fallback copy should remain included');
+assert(in_array('https://example.test/contact', $visibleValues, true), 'Visible CTA URL should remain included');
+assert(!in_array('revisie dsg technisch', $visibleValues, true), 'Technical classes must not become visible text');
+assert(!in_array('https://example.test/keyword-background.jpg', $visibleValues, true), 'Background images must not become visible links');
+assert(!in_array('https://example.test/keyword-tracking', $visibleValues, true), 'Tracking URLs must not become visible links');
+assert(method_exists($adapter, 'analysis_images'), 'ACF adapter should expose typed image fields for analysis');
+assert($adapter->analysis_images(300) === [321], 'Image fields must be detected by ACF type, not field name');
 echo "✓ Flexible content schema extraction pass\n";
 echo "  Blocks found: " . count($schema2['blocks']) . "\n";
 echo "  Hero fields: " . count($heroBlock['fields']) . "\n\n";

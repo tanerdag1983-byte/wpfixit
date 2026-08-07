@@ -249,9 +249,16 @@ final class WPFixPilot_Change_Controller
     private function visible_builder_content(int $postId, array $builders): array
     {
         $content = [];
+        $images = [];
         foreach ($this->builder_adapters() as $adapter) {
             if (!isset($builders[$adapter->key()])) {
                 continue;
+            }
+            foreach ($this->builder_images($postId, $adapter, $builders[$adapter->key()]) as $image) {
+                $marker = $this->image_marker($image);
+                if ($marker !== null) {
+                    $images[$marker['identity']] = $marker['html'];
+                }
             }
             $schema = $adapter->schema($postId);
             if ($schema instanceof WP_Error) {
@@ -275,56 +282,86 @@ final class WPFixPilot_Change_Controller
                 }
             }
         }
-        if ($this->has_builder_image($builders)) {
-            $content[] = '<img alt="">';
-        }
 
-        return $content;
+        return array_merge($content, array_values($images));
     }
 
-    private function has_builder_image(mixed $value, string $key = ''): bool
+    /** @return array<int, mixed> */
+    private function builder_images(int $postId, object $adapter, array $builder): array
     {
-        if (is_string($value) && in_array(substr(trim($value), 0, 1), ['[', '{'], true)) {
-            $decoded = json_decode($value, true);
-            if (is_array($decoded)) {
-                return $this->has_builder_image($decoded, $key);
-            }
-        }
-        if (!is_array($value)) {
-            return false;
-        }
-        foreach ($value as $childKey => $child) {
-            $childKey = strtolower((string) $childKey);
-            if (
-                preg_match('/(^|_)(image|photo|picture|thumbnail)($|_)/', $childKey) === 1
-                && $this->is_image_value($child)
-            ) {
-                return true;
-            }
-            if ($this->has_builder_image($child, $childKey)) {
-                return true;
-            }
+        if ($adapter->key() === 'acf' && method_exists($adapter, 'analysis_images')) {
+            return $adapter->analysis_images($postId);
         }
 
-        return false;
+        $key = $adapter->key();
+        $meta = (array) ($builder['meta'] ?? []);
+        if ($key === 'elementor') {
+            $document = json_decode((string) ($meta['_elementor_data'] ?? ''), true);
+            return is_array($document)
+                ? $this->widget_images($document, 'widgetType')
+                : [];
+        }
+        if ($key === 'bricks') {
+            return $this->widget_images(
+                (array) ($meta['_bricks_page_content_2'] ?? []),
+                'name'
+            );
+        }
+
+        return [];
     }
 
-    private function is_image_value(mixed $value): bool
+    /** @return array<int, mixed> */
+    private function widget_images(array $elements, string $typeKey): array
     {
-        if (is_int($value) || (is_string($value) && ctype_digit($value))) {
-            return (int) $value > 0;
-        }
-        if (is_string($value)) {
-            return str_contains(strtolower($value), '<img')
-                || preg_match('/\.(jpe?g|png|gif|webp|avif|svg)(?:[?#]|$)/i', $value) === 1;
-        }
-        if (!is_array($value)) {
-            return false;
+        $images = [];
+        foreach ($elements as $element) {
+            if (!is_array($element)) {
+                continue;
+            }
+            $settings = (array) ($element['settings'] ?? []);
+            if (strtolower((string) ($element[$typeKey] ?? '')) === 'image') {
+                $image = $settings['image'] ?? null;
+                if (is_array($image) && empty($image['alt']) && isset($settings['alt'])) {
+                    $image['alt'] = (string) $settings['alt'];
+                }
+                $images[] = $image;
+            }
+            $images = array_merge(
+                $images,
+                $this->widget_images((array) ($element['elements'] ?? []), $typeKey)
+            );
         }
 
-        return (isset($value['id']) && (int) $value['id'] > 0)
-            || (isset($value['url']) && $this->is_image_value($value['url']))
-            || (isset($value['source_url']) && $this->is_image_value($value['source_url']));
+        return $images;
+    }
+
+    /** @return array{identity: string, html: string}|null */
+    private function image_marker(mixed $image): ?array
+    {
+        $id = 0;
+        $url = '';
+        $alt = '';
+        if (is_int($image) || (is_string($image) && ctype_digit($image))) {
+            $id = (int) $image;
+        } elseif (is_array($image)) {
+            $id = (int) ($image['id'] ?? $image['ID'] ?? $image['attachment_id'] ?? 0);
+            $url = (string) ($image['url'] ?? $image['source_url'] ?? '');
+            $alt = (string) ($image['alt'] ?? '');
+        } elseif (is_string($image)) {
+            $url = $image;
+        }
+        if ($id <= 0 && $url === '') {
+            return null;
+        }
+        if ($alt === '' && $id > 0) {
+            $alt = (string) get_post_meta($id, '_wp_attachment_image_alt', true);
+        }
+
+        return [
+            'identity' => $id > 0 ? 'id:' . $id : 'url:' . $url,
+            'html' => '<img alt="' . htmlspecialchars($alt, ENT_QUOTES) . '">',
+        ];
     }
 
     /** @return array<string, mixed> */

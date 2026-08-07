@@ -181,6 +181,17 @@ final class WPFixPilot_ACF_Adapter implements
         return hash('sha256', (string) wp_json_encode($normalized));
     }
 
+    /** @return array<int, mixed> */
+    public function analysis_images(int $postId): array
+    {
+        $images = [];
+        foreach ($this->field_objects($postId) as $field) {
+            $this->collect_analysis_images($field, $field['value'] ?? null, $images);
+        }
+
+        return $images;
+    }
+
     public function apply_replacements(
         int $postId,
         array $schema,
@@ -1081,6 +1092,9 @@ final class WPFixPilot_ACF_Adapter implements
             $segments = [...$valueSegments, (string) $key];
             $childIdSegments = [...$idSegments, (string) $key];
             if (is_array($child)) {
+                if (!$this->is_visible_fallback_container((string) $key)) {
+                    continue;
+                }
                 $fields = array_merge(
                     $fields,
                     $this->schema_fields_from_value(
@@ -1099,9 +1113,16 @@ final class WPFixPilot_ACF_Adapter implements
                 continue;
             }
 
-            $valueType = wp_strip_all_tags($child) !== $child
-                ? 'rich_text'
-                : (filter_var($child, FILTER_VALIDATE_URL) === false ? 'plain_text' : 'url');
+            $isUrl = filter_var($child, FILTER_VALIDATE_URL) !== false;
+            if (
+                (!$isUrl && !$this->is_visible_fallback_content_key((string) $key))
+                || ($isUrl && !$this->is_visible_fallback_link_key((string) $key))
+            ) {
+                continue;
+            }
+            $valueType = $isUrl
+                ? 'url'
+                : (wp_strip_all_tags($child) !== $child ? 'rich_text' : 'plain_text');
             $fields[] = [
                 'id' => wpfixpilot_field_id('acf', implode('/', $childIdSegments)),
                 'path' => $this->field_path($topFieldKey, $topFieldName, $segments),
@@ -1118,6 +1139,82 @@ final class WPFixPilot_ACF_Adapter implements
         }
 
         return $fields;
+    }
+
+    private function is_visible_fallback_container(string $key): bool
+    {
+        return preg_match(
+            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics)(?:$|_)/',
+            strtolower($key)
+        ) !== 1;
+    }
+
+    private function is_visible_fallback_content_key(string $key): bool
+    {
+        return preg_match(
+            '/(?:^|_)(?:title|heading|headline|subtitle|subheading|description|intro|introduction|body|content|text|copy|question|answer|caption|label)$/',
+            strtolower($key)
+        ) === 1;
+    }
+
+    private function is_visible_fallback_link_key(string $key): bool
+    {
+        return preg_match(
+            '/^(?:url|link|href|cta_(?:url|link)|button_(?:url|link)|contact_(?:url|link)|read_more_(?:url|link))$/',
+            strtolower($key)
+        ) === 1;
+    }
+
+    /** @param array<int, mixed> $images */
+    private function collect_analysis_images(array $field, mixed $value, array &$images): void
+    {
+        $type = (string) ($field['type'] ?? '');
+        if ($type === 'image') {
+            if ($value !== null && $value !== '' && $value !== 0) {
+                $images[] = $value;
+            }
+            return;
+        }
+
+        if ($type === 'group') {
+            $values = is_array($value) ? $value : [];
+            foreach ($this->sub_fields($field) as $subField) {
+                $name = (string) ($subField['name'] ?? '');
+                $this->collect_analysis_images($subField, $values[$name] ?? null, $images);
+            }
+            return;
+        }
+
+        if ($type === 'repeater') {
+            foreach ((array) $value as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                foreach ($this->sub_fields($field) as $subField) {
+                    $name = (string) ($subField['name'] ?? '');
+                    $this->collect_analysis_images($subField, $row[$name] ?? null, $images);
+                }
+            }
+            return;
+        }
+
+        if ($type !== 'flexible_content') {
+            return;
+        }
+        $layouts = $this->layouts_by_name($field);
+        foreach ((array) $value as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $layout = $layouts[(string) ($row['acf_fc_layout'] ?? '')] ?? null;
+            if (!is_array($layout)) {
+                continue;
+            }
+            foreach ($this->sub_fields($layout) as $subField) {
+                $name = (string) ($subField['name'] ?? '');
+                $this->collect_analysis_images($subField, $row[$name] ?? null, $images);
+            }
+        }
     }
 
     /** @return array<string, mixed> */
