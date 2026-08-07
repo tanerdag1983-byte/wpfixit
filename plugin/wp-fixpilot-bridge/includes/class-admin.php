@@ -115,10 +115,11 @@ final class WPFixPilot_Admin
     {
         $this->require_capability('edit_pages');
         check_admin_referer('wp_fixpilot_fetch_draft_job');
-        $result = $this->poll_draft_jobs();
-        $notice = is_wp_error($result)
+        do_action('wp_fixpilot_poll_draft_jobs');
+        $status = (string) get_option('wp_fixpilot_outbound_last_status', 'empty');
+        $notice = $status === 'error'
             ? 'outbound_error'
-            : ($result === null ? 'outbound_empty' : 'outbound_completed');
+            : ($status === 'empty' ? 'outbound_empty' : 'outbound_completed');
         $this->redirect_settings($notice);
     }
 

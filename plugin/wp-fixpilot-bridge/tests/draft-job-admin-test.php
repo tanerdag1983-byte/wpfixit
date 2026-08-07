@@ -41,11 +41,18 @@ $GLOBALS['wpfixpilot_actions'] = [];
 $GLOBALS['wpfixpilot_filters'] = [];
 $GLOBALS['wpfixpilot_capabilities'] = ['manage_options', 'edit_pages'];
 $GLOBALS['wpfixpilot_processed_job_count'] = 0;
+$GLOBALS['wpfixpilot_processed_snapshot_count'] = 0;
 $GLOBALS['wpfixpilot_redirect_to'] = '';
 
 function add_action(string $hook, callable $callback): void
 {
     $GLOBALS['wpfixpilot_actions'][$hook][] = $callback;
+}
+function do_action(string $hook): void
+{
+    foreach ($GLOBALS['wpfixpilot_actions'][$hook] ?? [] as $callback) {
+        $callback();
+    }
 }
 function add_filter(string $hook, callable $callback): void
 {
@@ -101,6 +108,9 @@ assert(isset($GLOBALS['wpfixpilot_actions']['admin_post_wp_fixpilot_test_outboun
 assert(isset($GLOBALS['wpfixpilot_actions']['admin_post_wp_fixpilot_fetch_draft_job']));
 assert(isset($GLOBALS['wpfixpilot_actions']['wp_fixpilot_poll_draft_jobs']));
 assert(isset($GLOBALS['wpfixpilot_filters']['cron_schedules']));
+add_action('wp_fixpilot_poll_draft_jobs', static function (): void {
+    $GLOBALS['wpfixpilot_processed_snapshot_count']++;
+});
 
 $_POST = [
     'backend_base_url' => 'https://api.example.test/',
@@ -118,6 +128,7 @@ assert(get_option('wp_fixpilot_outbound_last_contact') !== '');
 
 $admin->fetch_draft_job();
 assert($GLOBALS['wpfixpilot_processed_job_count'] === 1);
+assert($GLOBALS['wpfixpilot_processed_snapshot_count'] === 1);
 assert(get_option('wp_fixpilot_outbound_last_status') === 'completed');
 
 $cronCallback = $GLOBALS['wpfixpilot_actions']['wp_fixpilot_poll_draft_jobs'][0];
