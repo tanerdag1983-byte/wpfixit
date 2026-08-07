@@ -117,6 +117,7 @@ function AppShell({
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     const updateRoute = () =>
@@ -207,6 +208,21 @@ function AppShell({
     window.location.hash = "login";
   }
 
+  async function syncWordPress() {
+    if (!activeProjectId) return;
+    setSyncing(true);
+    setProjectError(null);
+    try {
+      await apiRequest(`/projects/${activeProjectId}/sync-pages`, {
+        method: "POST",
+      });
+    } catch (error) {
+      setProjectError((error as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Hoofdnavigatie">
@@ -258,8 +274,13 @@ function AppShell({
               <span className="sr-only">Zoeken</span>
               <input placeholder="Zoek pagina of issue" />
             </label>
-            <button className="sync-button" type="button">
-              <Activity size={16} /> Synchroniseren
+            <button
+              className="sync-button"
+              type="button"
+              disabled={!activeProjectId || syncing}
+              onClick={syncWordPress}
+            >
+              <Activity size={16} /> {syncing ? "Synchroniseren..." : "Synchroniseren"}
             </button>
             <button className="logout-button" type="button" onClick={signOut}>
               <LogOut size={16} /> Uitloggen

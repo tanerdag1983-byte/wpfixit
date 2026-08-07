@@ -49,6 +49,31 @@ describe("App", () => {
     expect(supabase!.auth.signOut).toHaveBeenCalledOnce();
   });
 
+  it("synchronizes the active WordPress project from the top bar", async () => {
+    vi.mocked(apiRequest)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "project-1",
+            organization_id: "org-1",
+            name: "SHM Transmissie",
+            domain: "https://shmtransmissie.nl",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ status: "ok", saved_count: 91 });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Synchroniseren" }));
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith("/projects/project-1/sync-pages", {
+        method: "POST",
+      }),
+    );
+  });
+
   it("deletes the active project and selects the next project", async () => {
     vi.mocked(apiRequest)
       .mockResolvedValueOnce({
