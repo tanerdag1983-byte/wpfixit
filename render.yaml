@@ -1,4 +1,17 @@
 services:
+  - type: cron
+    name: wp-fixpilot-weekly-page-checks
+    runtime: python
+    rootDir: backend
+    schedule: "15 3 * * *"
+    buildCommand: pip install -e .
+    startCommand: python -m app.maintenance weekly-page-checks
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: WP_FIXPILOT_DATABASE_URL
+        sync: false
+
   - type: web
     name: wp-fixpilot-api
     runtime: python

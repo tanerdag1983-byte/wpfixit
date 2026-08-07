@@ -92,6 +92,12 @@ signature failures, sync failures and publish conflicts. Keep provider request
 IDs and internal job IDs in logs, but never log tokens, prompts containing
 private data or API keys.
 
+The Render cron `wp-fixpilot-weekly-page-checks` runs daily at 03:15 UTC. It
+checks only pages whose newest successful `page_checked` event is at least seven
+days old; a failed page does not stop checks for other due pages. Use
+`cd backend && python -m app.maintenance weekly-page-checks --dry-run` to list
+the due count without writing to the database.
+
 ## Recovery
 
 Database migrations are reversible one revision at a time. WordPress publishes
