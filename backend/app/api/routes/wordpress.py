@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from app.core.database import get_session
 from app.core.security import CurrentUser, get_current_user
 from app.domains.audits.models import SeoRecommendation
 from app.domains.audits.service import audit_project
+from app.domains.page_packages.models import PagePackageProposal
 from app.domains.projects.service import get_membership, get_project
 from app.domains.recommendations.provider import (
     PUBLISHABLE_ACTION_TYPES,
@@ -21,11 +22,17 @@ from app.domains.recommendations.provider import (
 from app.domains.wordpress.client import WordPressClient
 from app.domains.wordpress.demo import DemoWordPressClient
 from app.domains.wordpress.models import (
+    PageObservedVersion,
+    PageRecommendation,
+    PageScoreSnapshot,
+    PageTimelineEvent,
     WordPressChangeEvent,
     WordPressChangeProposal,
     WordPressConnection,
+    WordPressDraftJob,
     WordPressPage,
 )
+from app.domains.wordpress.monitoring import _score_factors, check_page
 from app.domains.wordpress.publishing import (
     MutationResult,
     PublishConflict,
@@ -115,6 +122,18 @@ def _proposal_or_404(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Change proposal not found")
     return proposal
+
+
+def _page_or_404(session: Session, project_id: str, page_id: str) -> WordPressPage:
+    page = session.scalar(
+        select(WordPressPage).where(
+            WordPressPage.id == page_id,
+            WordPressPage.project_id == project_id,
+        )
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="WordPress page not found")
+    return page
 
 
 def _publishable_change_type(action_type: str) -> str:
@@ -290,6 +309,315 @@ def get_pages(
             }
             for page in pages
         ],
+    }
+
+
+@router.post("/wordpress-pages/{page_id}/checks")
+def check_wordpress_page(
+    project_id: str,
+    page_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+) -> dict[str, Any]:
+    _project_or_404(session, user, project_id)
+    page = _page_or_404(session, project_id, page_id)
+    facts = _current_wordpress_state(session, project_id, page)
+    checked_at = datetime.now(UTC)
+    result = check_page(session, page, facts, trigger="manual")
+    page.last_synced_at = checked_at
+    session.commit()
+    return {
+        "version_id": result.version.id,
+        "version_created": result.version_created,
+        "overall_score": result.score.overall_score,
+        "recommendations_created": result.recommendations_created,
+        "checked_at": checked_at,
+    }
+
+
+@router.get("/wordpress-pages/{page_id}/monitoring")
+def get_page_monitoring(
+    project_id: str,
+    page_id: str,
+    session: SessionDependency,
+    user: UserDependency,
+    proposal_id: str | None = None,
+) -> dict[str, Any]:
+    _project_or_404(session, user, project_id)
+    page = _page_or_404(session, project_id, page_id)
+    versions = list(
+        session.scalars(
+            select(PageObservedVersion)
+            .where(PageObservedVersion.wordpress_page_id == page.id)
+            .order_by(
+                PageObservedVersion.observed_at.desc(),
+                PageObservedVersion.id.desc(),
+            )
+        )
+    )
+    scores = list(
+        session.scalars(
+            select(PageScoreSnapshot)
+            .join(
+                PageObservedVersion,
+                PageObservedVersion.id == PageScoreSnapshot.page_version_id,
+            )
+            .where(PageObservedVersion.wordpress_page_id == page.id)
+            .order_by(
+                PageScoreSnapshot.created_at.desc(),
+                PageScoreSnapshot.id.desc(),
+            )
+        )
+    )
+    recommendations = list(
+        session.scalars(
+            select(PageRecommendation)
+            .where(PageRecommendation.wordpress_page_id == page.id)
+            .order_by(
+                PageRecommendation.created_at.desc(),
+                PageRecommendation.id.desc(),
+            )
+        )
+    )
+    events = list(
+        session.scalars(
+            select(PageTimelineEvent)
+            .where(PageTimelineEvent.wordpress_page_id == page.id)
+            .order_by(
+                PageTimelineEvent.created_at.desc(),
+                PageTimelineEvent.id.desc(),
+            )
+        )
+    )
+    proposal_query = select(PagePackageProposal).where(
+        PagePackageProposal.project_id == project_id,
+        PagePackageProposal.source_wordpress_page_id == page.id,
+    )
+    if proposal_id is not None:
+        proposal = session.scalar(
+            proposal_query.where(PagePackageProposal.id == proposal_id)
+        )
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Page proposal not found")
+    else:
+        proposal = session.scalar(
+            proposal_query.where(PagePackageProposal.is_current.is_(True)).order_by(
+                PagePackageProposal.updated_at.desc(),
+                PagePackageProposal.id.desc(),
+            )
+        )
+    draft_job = (
+        session.scalar(
+            select(WordPressDraftJob).where(
+                WordPressDraftJob.proposal_version_id == proposal.id
+            )
+        )
+        if proposal is not None
+        else None
+    )
+    page_status = _monitoring_status(proposal, draft_job, scores, recommendations)
+    timeline = _monitoring_events(events, versions, proposal, draft_job)
+    projected_score = (
+        _projected_score(
+            versions[0].snapshot_payload,
+            proposal.config_snapshot,
+            proposal.package,
+            proposal.rendered_html,
+        )
+        if versions and proposal is not None and proposal.package
+        else None
+    )
+    return {
+        "page": {
+            "id": page.id,
+            "title": page.title,
+            "url": page.url,
+            "wordpress_status": page.status,
+            "status": page_status,
+        },
+        "latest_sync_at": page.last_synced_at,
+        "next_check_at": page.last_synced_at + timedelta(days=7),
+        "versions": [
+            {
+                "id": version.id,
+                "content_hash": version.content_hash,
+                "source": version.source,
+                "snapshot_payload": version.snapshot_payload,
+                "proposal_version_id": version.proposal_version_id,
+                "draft_job_id": version.draft_job_id,
+                "observed_at": version.observed_at,
+                "published_at": version.published_at,
+            }
+            for version in versions
+        ],
+        "scores": [
+            {
+                "id": score.id,
+                "page_version_id": score.page_version_id,
+                "overall_score": score.overall_score,
+                "factors": score.factors,
+                "created_at": score.created_at,
+            }
+            for score in scores
+        ],
+        "projected_score": projected_score,
+        "recommendations": [
+            {
+                "id": recommendation.id,
+                "page_version_id": recommendation.page_version_id,
+                "state": recommendation.state,
+                "evidence": recommendation.evidence,
+                "suggested_action": recommendation.suggested_action,
+                "created_at": recommendation.created_at,
+            }
+            for recommendation in recommendations
+        ],
+        "events": timeline,
+    }
+
+
+def _monitoring_status(
+    proposal: PagePackageProposal | None,
+    draft_job: WordPressDraftJob | None,
+    scores: list[PageScoreSnapshot],
+    recommendations: list[PageRecommendation],
+) -> str:
+    if proposal is not None and (
+        proposal.state == "draft_created"
+        or (draft_job is not None and draft_job.state == "completed")
+    ):
+        return "draft_ready"
+    if proposal is not None and proposal.state in {
+        "proposed",
+        "needs_attention",
+        "approved",
+        "draft_in_progress",
+    }:
+        return "proposal_ready"
+    if len(scores) > 1 and scores[0].overall_score > scores[1].overall_score:
+        return "improved"
+    latest_version_id = scores[0].page_version_id if scores else None
+    if any(
+        item.state == "open" and item.page_version_id == latest_version_id
+        for item in recommendations
+    ):
+        return "needs_attention"
+    return "monitoring"
+
+
+def _monitoring_events(
+    events: list[PageTimelineEvent],
+    versions: list[PageObservedVersion],
+    proposal: PagePackageProposal | None,
+    draft_job: WordPressDraftJob | None,
+) -> list[dict[str, Any]]:
+    timeline = [
+        {
+            "id": event.id,
+            "page_version_id": event.page_version_id,
+            "event_type": event.event_type,
+            "payload": event.payload,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
+    if proposal is not None:
+        timeline.append({
+            "id": f"proposal-created-{proposal.id}",
+            "page_version_id": None,
+            "event_type": "proposal_created",
+            "payload": {"proposal_id": proposal.id},
+            "created_at": proposal.created_at,
+        })
+        if proposal.approved_at is not None:
+            timeline.append({
+                "id": f"proposal-approved-{proposal.id}",
+                "page_version_id": None,
+                "event_type": "proposal_approved",
+                "payload": {"proposal_id": proposal.id},
+                "created_at": proposal.approved_at,
+            })
+        draft_created_at = (
+            draft_job.completed_at
+            if draft_job is not None and draft_job.state == "completed"
+            else proposal.updated_at if proposal.state == "draft_created" else None
+        )
+        if draft_created_at is not None:
+            timeline.append({
+                "id": f"draft-created-{proposal.id}",
+                "page_version_id": None,
+                "event_type": "draft_created",
+                "payload": {
+                    "proposal_id": proposal.id,
+                    "draft_job_id": draft_job.id if draft_job is not None else None,
+                },
+                "created_at": draft_created_at,
+            })
+        for version in versions:
+            if (
+                version.proposal_version_id == proposal.id
+                and version.published_at is not None
+            ):
+                timeline.append({
+                    "id": f"published-{version.id}",
+                    "page_version_id": version.id,
+                    "event_type": "published",
+                    "payload": {"proposal_id": proposal.id},
+                    "created_at": version.published_at,
+                })
+    return sorted(
+        timeline,
+        key=lambda event: (_utc_timestamp(event["created_at"]), event["id"]),
+        reverse=True,
+    )
+
+
+def _utc_timestamp(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
+
+
+def _projected_score(
+    snapshot: dict,
+    config_snapshot: dict,
+    package: dict,
+    rendered_html: str,
+) -> dict[str, Any]:
+    facts = dict(snapshot)
+    values = dict(snapshot.get("values") or {})
+    schema = config_snapshot.get("content_schema") or {}
+    fields = list(schema.get("document_fields") or [])
+    for block in schema.get("blocks") or []:
+        fields.extend(block.get("fields") or [])
+    replacements = package.get("text_replacements") or {}
+    path_keys = {
+        "post_title": "title",
+        "seo.title": "seo_title",
+        "seo.meta_description": "meta_description",
+        "seo.focus_keyword": "focus_keyword",
+        "seo.canonical": "canonical",
+    }
+    for field in fields:
+        field_id = field.get("id")
+        value = replacements.get(field_id)
+        if isinstance(value, dict):
+            value = value.get("value")
+        value_key = path_keys.get(field.get("path"))
+        if value_key is not None and isinstance(value, str):
+            values[value_key] = value
+    if rendered_html:
+        values["content"] = rendered_html
+    facts["values"] = values
+    factors = _score_factors(facts)
+    maximum = sum(factor["max_points"] for factor in factors)
+    return {
+        "overall_score": (
+            round(100 * sum(factor["points"] for factor in factors) / maximum)
+            if maximum
+            else 0
+        ),
+        "factors": factors,
     }
 
 

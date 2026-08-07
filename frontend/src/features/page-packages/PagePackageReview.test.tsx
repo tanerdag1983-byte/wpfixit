@@ -220,6 +220,92 @@ describe("PagePackageReview", () => {
     expect(screen.getByLabelText("Extra instructies")).toBeVisible();
   });
 
+  it("shows current and proposed existing-page content and explainable scores", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      rendered_html: "<h1>Voorgestelde DSG revisie</h1>",
+      field_errors: {},
+    };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.includes("/monitoring?proposal_id=")) {
+        return Promise.resolve({
+          page: { id: "wordpress-page-1", status: "proposal_ready" },
+          latest_sync_at: "2026-08-07T08:00:00Z",
+          next_check_at: "2026-08-14T08:00:00Z",
+          versions: [],
+          scores: [{
+            id: "score-current",
+            page_version_id: "version-1",
+            overall_score: 61,
+            factors: [{
+              key: "meta_description",
+              value: "",
+              points: 0,
+              max_points: 10,
+              explanation: "Meta description needs attention.",
+              suggested_action: "Add a meta description.",
+              evidence: { value: "" },
+            }],
+            created_at: "2026-08-07T08:00:00Z",
+          }],
+          projected_score: {
+            overall_score: 78,
+            factors: [{
+              key: "meta_description",
+              value: "Deskundige DSG revisie in Schiedam.",
+              points: 10,
+              max_points: 10,
+              explanation: "Meta description is present.",
+              suggested_action: "",
+              evidence: { value: "Deskundige DSG revisie in Schiedam." },
+            }],
+          },
+          recommendations: [],
+          events: [],
+        });
+      }
+      if (path.endsWith("/checks") && init?.method === "POST") {
+        return Promise.resolve({ version_id: "version-1", version_created: false });
+      }
+      if (init?.method === "PUT") return Promise.resolve(existingPageProposal);
+      return Promise.resolve(existingPageProposal);
+    });
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    const preview = await screen.findByLabelText("Pagina-voorbeeld");
+    const comparison = await screen.findByRole("heading", {
+      name: "Huidig en voorgesteld",
+    });
+    expect(preview).toBeVisible();
+    expect(
+      preview.compareDocumentPosition(comparison) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Huidige score 61")).toBeVisible();
+    expect(screen.getByText("Verwachte score 78")).toBeVisible();
+    expect(screen.getByText("Laatste controle")).toBeVisible();
+    expect(screen.getByText("Volgende controle")).toBeVisible();
+    expect(screen.getByRole("button", { name: "WordPress-concept aanmaken" })).toBeDisabled();
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/wordpress-pages/wordpress-page-1/monitoring?proposal_id=proposal-1",
+    );
+
+    fireEvent.change(screen.getByLabelText("Hero-label"), {
+      target: { value: "DSG-specialist" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wijzigingen opslaan" }));
+    await waitFor(() => expect(
+      apiRequest.mock.calls.filter(([path]) => path.includes("/monitoring?proposal_id=")).length,
+    ).toBe(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "Nu controleren" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "De pagina is gecontroleerd.",
+    );
+  });
+
   it("shows a saved candidate compare flow and can accept or discard it", async () => {
     apiRequest.mockImplementation((path: string) => {
       if (path.endsWith("/accept")) {

@@ -111,6 +111,93 @@ describe("OpportunitiesPage", () => {
     expect(window.location.hash).toBe("#page-proposal");
   });
 
+  it("creates an improvement proposal for an existing page", async () => {
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [{
+            id: "existing-1",
+            keyword: "dsg revisie",
+            search_volume: 320,
+            cpc: 4.25,
+            competition_level: "medium",
+            keyword_difficulty: 38,
+            intent: "commercial",
+            target_url: "https://example.com/dsg-revisie",
+            target_classification: "existing_page",
+            target_score: 91,
+            target_evidence: ["strong_existing_page_match"],
+            recommended_action: "Verbeter de bestaande pagina.",
+            source: "dataforseo",
+          }],
+        });
+      }
+      if (init?.method === "POST") return Promise.resolve({ id: "proposal-existing" });
+      return Promise.resolve({});
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    fireEvent.change(await screen.findByLabelText("Paginatype voor dsg revisie"), {
+      target: { value: "service" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Verbeteringsvoorstel maken" }),
+    );
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      "/projects/project-1/keyword-opportunities/existing-1/page-proposal",
+      { method: "POST", body: JSON.stringify({ page_type: "service" }) },
+    ));
+    expect(window.sessionStorage.getItem("page-proposal-id:project-1")).toBe(
+      "proposal-existing",
+    );
+  });
+
+  it("keeps an existing-page opportunity open while WordPress captures its snapshot", async () => {
+    window.sessionStorage.removeItem("page-proposal-id:project-1");
+    window.location.hash = "";
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/page-blueprints")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/keyword-opportunities")) {
+        return Promise.resolve({
+          items: [{
+            id: "existing-waiting",
+            keyword: "automaat revisie",
+            search_volume: 110,
+            target_url: "https://example.com/automaat-revisie",
+            target_classification: "existing_page",
+            target_score: 88,
+            target_evidence: ["strong_existing_page_match"],
+            recommended_action: "Verbeter de bestaande pagina.",
+            source: "dataforseo",
+          }],
+        });
+      }
+      if (init?.method === "POST") {
+        return Promise.resolve({
+          stage: "waiting_for_wordpress_snapshot",
+          snapshot_job_id: "snapshot-job-1",
+          source_wordpress_page_id: "wordpress-page-1",
+        });
+      }
+      return Promise.resolve({});
+    });
+    render(<OpportunitiesPage projectId="project-1" />);
+
+    fireEvent.change(await screen.findByLabelText("Paginatype voor automaat revisie"), {
+      target: { value: "service" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verbeteringsvoorstel maken" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "WordPress maakt eerst een veilige momentopname",
+    );
+    expect(window.sessionStorage.getItem("page-proposal-id:project-1")).toBeNull();
+    expect(window.location.hash).not.toBe("#page-proposal");
+    expect(screen.getByRole("button", { name: "Verbeteringsvoorstel maken" })).toBeEnabled();
+  });
+
   it("regenerates a saved proposal using its existing page type", async () => {
     apiRequest.mockImplementation((path: string, init?: RequestInit) => {
       if (path.endsWith("/page-blueprints")) {

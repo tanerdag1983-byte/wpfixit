@@ -164,10 +164,20 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
     setCreatingProposalId(item.id);
     setProposalErrors((current) => ({ ...current, [item.id]: "" }));
     try {
-      const response = await apiRequest<{ id: string }>(
+      const response = await apiRequest<{
+        id?: string;
+        stage?: "waiting_for_wordpress_snapshot";
+      }>(
         `/projects/${projectId}/keyword-opportunities/${item.id}/page-proposal`,
         { method: "POST", body: JSON.stringify({ page_type: pageType }) },
       );
+      if (!response.id) {
+        setProposalErrors((current) => ({
+          ...current,
+          [item.id]: "WordPress maakt eerst een veilige momentopname. Klik straks opnieuw op Verbeteringsvoorstel maken.",
+        }));
+        return;
+      }
       window.sessionStorage.setItem(`page-proposal-id:${projectId}`, response.id);
       window.location.hash = "page-proposal";
     } catch (error) {
@@ -282,7 +292,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 </small>
               )}
             </div>
-            {item.target_classification === "new_page" && item.proposal_summary ? (
+            {item.target_classification !== "review" && item.proposal_summary ? (
               <div className="opportunity-create-action">
                 <span className="priority-tag generated">Gegenereerd</span>
                 <button
@@ -307,7 +317,7 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                   </p>
                 )}
               </div>
-            ) : item.target_classification === "new_page" ? (
+            ) : item.target_classification !== "review" ? (
               <div className="opportunity-create-action">
                 <label>
                   <span>Paginatype</span>
@@ -326,15 +336,21 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                       const blueprint = blueprints.find(
                         (item) => item.page_type === value && item.state === "ready" && item.is_default_for_page_type,
                       );
+                      const available = item.target_classification === "existing_page"
+                        || !!blueprint;
                       return (
-                        <option disabled={!blueprint} key={value} value={value}>
-                          {blueprint ? `${label} · ${blueprint.name} v${blueprint.version}` : `${label} · geen standaardblueprint`}
+                        <option disabled={!available} key={value} value={value}>
+                          {item.target_classification === "existing_page"
+                            ? label
+                            : blueprint
+                              ? `${label} · ${blueprint.name} v${blueprint.version}`
+                              : `${label} · geen standaardblueprint`}
                         </option>
                       );
                     })}
                   </select>
                 </label>
-                {!blueprints.some(
+                {item.target_classification === "new_page" && !blueprints.some(
                   (blueprint) => blueprint.state === "ready" && blueprint.is_default_for_page_type,
                 ) && <a className="back-link" href="#settings">Standaardblueprint instellen</a>}
                 <button
@@ -345,7 +361,9 @@ export function OpportunitiesPage({ projectId }: { projectId: string }) {
                 >
                   {creatingProposalId === item.id
                     ? "Voorstel maken..."
-                    : "Pagina laten maken"}
+                    : item.target_classification === "existing_page"
+                      ? "Verbeteringsvoorstel maken"
+                      : "Pagina laten maken"}
                 </button>
                 {proposalErrors[item.id] && (
                   <p className="opportunity-create-error" role="alert">

@@ -2,6 +2,9 @@ import { CheckCircle2, FileEdit, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { apiRequest } from "../../lib/api";
+import type { PageMonitoring } from "../../lib/api";
+import { PageTimeline } from "../page-monitoring/PageTimeline";
+import { ScoreFactors } from "../page-monitoring/ScoreFactors";
 import { ProposalRegenerationPanel } from "./ProposalRegenerationPanel";
 import { ProposalStageList } from "./ProposalStageList";
 import { ProposalVersionCompare } from "./ProposalVersionCompare";
@@ -23,8 +26,13 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [monitoring, setMonitoring] = useState<PageMonitoring | null>(null);
+  const [monitoringError, setMonitoringError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [monitoringRevision, setMonitoringRevision] = useState(0);
   const [importUrl, setImportUrl] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const proposalSourcePageId = sourcePageId(proposal);
 
   useEffect(() => {
     const proposalId = window.sessionStorage.getItem(
@@ -73,6 +81,32 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     };
   }, [projectId, refreshKey]);
 
+  useEffect(() => {
+    const pageId = proposalSourcePageId;
+    const proposalId = proposal?.id;
+    if (!pageId || !proposalId) {
+      setMonitoring(null);
+      setMonitoringError("");
+      return;
+    }
+    let active = true;
+    setMonitoringError("");
+    apiRequest<PageMonitoring>(
+      `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
+    )
+      .then((result) => {
+        if (active) setMonitoring(result);
+      })
+      .catch((error) => {
+        if (active) {
+          setMonitoringError(actionError(error, "Paginamonitoring laden mislukt."));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [monitoringRevision, projectId, proposal?.id, proposal?.state, proposalSourcePageId]);
+
   function writeDraft(activeProposal: Proposal, packageDraft: ProposalPackage) {
     return apiRequest<Proposal>(
       `/projects/${projectId}/page-proposals/${activeProposal.id}`,
@@ -96,6 +130,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setProposal(result);
       setCandidate(readActiveCandidate(result));
       setDraft(result.package);
+      setMonitoringRevision((current) => current + 1);
       setMessage("Het complete paginapakket is opgeslagen.");
     } catch (error) {
       setMessage(actionError(error, "Opslaan mislukt."));
@@ -296,6 +331,29 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     }
   }
 
+  async function runManualCheck() {
+    const pageId = proposalSourcePageId;
+    const proposalId = proposal?.id;
+    if (!pageId || !proposalId) return;
+    setChecking(true);
+    setMonitoringError("");
+    try {
+      await apiRequest(
+        `/projects/${projectId}/wordpress-pages/${pageId}/checks`,
+        { method: "POST" },
+      );
+      const result = await apiRequest<PageMonitoring>(
+        `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
+      );
+      setMonitoring(result);
+      setMessage("De pagina is gecontroleerd.");
+    } catch (error) {
+      setMonitoringError(actionError(error, "Pagina controleren mislukt."));
+    } finally {
+      setChecking(false);
+    }
+  }
+
   if (loading) {
     return (
       <section className="page-package-review">
@@ -339,8 +397,15 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
   }
 
   const fieldErrors = proposalFieldErrors(proposal);
+  const existingPage = !!proposalSourcePageId;
   const editable = proposal.state === "needs_attention"
-    || (proposal.state === "proposed" && !isSnapshotTextPackage(draft));
+    || (
+      proposal.state === "proposed"
+      && (existingPage || !isSnapshotTextPackage(draft))
+    );
+  const comparisons = existingPage
+    ? comparisonFields(proposal.config_snapshot.content_schema, draft)
+    : [];
   return (
     <section className="page-package-review">
       <a className="back-link" href="#opportunities">
@@ -348,8 +413,10 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       </a>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Nieuw WordPress-concept</p>
-          <h1>Paginapakket beoordelen</h1>
+          <p className="eyebrow">
+            {existingPage ? "Bestaande pagina verbeteren" : "Nieuw WordPress-concept"}
+          </p>
+          <h1>{existingPage ? "Verbeteringsvoorstel beoordelen" : "Paginapakket beoordelen"}</h1>
           <p className="subtitle">
             Controleer eerst alle inhoud. Er wordt pas na je goedkeuring een concept
             in WordPress aangemaakt.
@@ -425,6 +492,51 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
               }}
             />
           </section>
+
+          {existingPage && (
+            <section aria-labelledby="current-proposed-heading" className="proposal-compare-shell">
+              <div>
+                <p className="eyebrow">Veldvergelijking</p>
+                <h2 id="current-proposed-heading">Huidig en voorgesteld</h2>
+              </div>
+              <div className="proposal-compare-grid">
+                {comparisons.map((field) => (
+                  <div className="proposal-compare-column" key={field.id}>
+                    <h3>{field.label}</h3>
+                    <div className="diff-grid">
+                      <div className="diff-before">
+                        <span>Huidig</span>
+                        <p>{field.current || "Leeg"}</p>
+                      </div>
+                      <div className="diff-after">
+                        <span>Voorgesteld</span>
+                        <p>{field.proposed || "Leeg"}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {existingPage && monitoring?.scores[0] && monitoring.projected_score && (
+            <ScoreFactors
+              current={monitoring.scores[0]}
+              projected={monitoring.projected_score}
+            />
+          )}
+
+          {existingPage && monitoring && (
+            <PageTimeline
+              checking={checking}
+              events={monitoring.events}
+              latestSyncAt={monitoring.latest_sync_at}
+              nextCheckAt={monitoring.next_check_at}
+              onCheck={() => void runManualCheck()}
+              status={monitoring.page.status}
+            />
+          )}
+          {monitoringError && <p className="settings-message" role="alert">{monitoringError}</p>}
 
           <div className="page-package-layout">
             <div className="page-package-form">
@@ -567,7 +679,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         </>
       )}
 
-      {message && <p className="settings-message">{message}</p>}
+      {message && <p aria-live="polite" className="settings-message" role="status">{message}</p>}
     </section>
   );
 }
@@ -913,6 +1025,31 @@ function packageTitle(value: ProposalPackage) {
   return isSnapshotTextPackage(value)
     ? value.text_replacements["document:title"] || "Gegenereerde pagina"
     : value.title;
+}
+
+function sourcePageId(proposal: Proposal | null) {
+  return (proposal as (Proposal & { source_wordpress_page_id?: string | null }) | null)
+    ?.source_wordpress_page_id ?? null;
+}
+
+function comparisonFields(schema: BlueprintSchema | undefined, draft: ProposalPackage) {
+  const fields = [
+    ...(schema?.document_fields ?? []),
+    ...(schema?.blocks.flatMap((block) => block.fields) ?? []),
+  ];
+  return fields
+    .map((field) => {
+      const proposed = isSnapshotTextPackage(draft)
+        ? draft.text_replacements[field.id] ?? ""
+        : draft.replacements.find((item) => item.field_id === field.id)?.value ?? "";
+      return {
+        id: field.id,
+        label: field.label,
+        current: field.current_value,
+        proposed,
+      };
+    })
+    .filter((field) => field.current !== field.proposed);
 }
 
 function fieldInputId(fieldId: string) {

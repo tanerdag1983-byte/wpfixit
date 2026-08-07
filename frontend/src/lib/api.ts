@@ -96,3 +96,47 @@ function formatValidationItem(item: unknown): string {
     : "";
   return location ? `${location}: ${message}` : message;
 }
+
+export type ScoreFactor = {
+  key: string;
+  value: unknown;
+  points: number;
+  max_points: number;
+  explanation: string;
+  suggested_action: string;
+  evidence: Record<string, unknown>;
+};
+
+export type ScoreSnapshot = {
+  overall_score: number;
+  factors: ScoreFactor[];
+};
+
+export type PageTimelineEvent = {
+  id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  page_version_id?: string | null;
+};
+
+export type PageMonitoring = {
+  page: {
+    id: string;
+    title?: string;
+    url?: string;
+    wordpress_status?: string;
+    status: string;
+  };
+  latest_sync_at: string;
+  next_check_at: string;
+  versions: Array<Record<string, unknown>>;
+  scores: Array<ScoreSnapshot & {
+    id: string;
+    page_version_id: string;
+    created_at: string;
+  }>;
+  projected_score: ScoreSnapshot | null;
+  recommendations: Array<Record<string, unknown>>;
+  events: PageTimelineEvent[];
+};
