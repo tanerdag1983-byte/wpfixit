@@ -1012,7 +1012,7 @@ function SnapshotPackageFields({
           </div>
           <div className="settings-field-grid">
             {section.fields.map((field) => {
-              const value = draft.text_replacements[field.id] ?? "";
+              const value = draft.text_replacements[field.id] ?? field.current_value;
               const change = (nextValue: string) => onChange({
                 text_replacements: {
                   ...draft.text_replacements,
@@ -1175,7 +1175,7 @@ function comparisonFields(schema: BlueprintSchema | undefined, draft: ProposalPa
   return fields
     .map((field) => {
       const proposed = isSnapshotTextPackage(draft)
-        ? draft.text_replacements[field.id] ?? ""
+        ? draft.text_replacements[field.id] ?? field.current_value
         : draft.replacements.find((item) => item.field_id === field.id)?.value ?? "";
       return {
         id: field.id,

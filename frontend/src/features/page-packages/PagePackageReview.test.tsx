@@ -220,6 +220,20 @@ describe("PagePackageReview", () => {
     expect(screen.getByLabelText("Extra instructies")).toBeVisible();
   });
 
+  it("preserves snapshot values omitted by the AI", async () => {
+    const sparseProposal = structuredClone(attentionProposal);
+    Reflect.deleteProperty(sparseProposal.package.text_replacements, "acf:hero:copy");
+    sparseProposal.config_snapshot.content_schema.blocks[0].fields[1].current_value =
+      "<p>Bestaande introductie.</p>";
+    apiRequest.mockResolvedValue(sparseProposal);
+
+    render(<PagePackageReview projectId="project-1" />);
+
+    expect(await screen.findByLabelText("Introductie")).toHaveValue(
+      "<p>Bestaande introductie.</p>",
+    );
+  });
+
   it("shows current and proposed existing-page content and explainable scores", async () => {
     const existingPageProposal = {
       ...attentionProposal,

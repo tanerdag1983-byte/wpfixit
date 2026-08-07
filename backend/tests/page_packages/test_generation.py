@@ -321,7 +321,7 @@ def test_invalid_optional_field_does_not_fail_valid_required_fields() -> None:
     assert result.ready is True
 
 
-def test_required_missing_and_invalid_fields_block_only_validation() -> None:
+def test_missing_required_fields_preserve_the_snapshot_value() -> None:
     payload = valid_snapshot_text_package()
     del payload["text_replacements"]["document:title"]
     payload["text_replacements"]["document:slug"] = {
@@ -332,9 +332,20 @@ def test_required_missing_and_invalid_fields_block_only_validation() -> None:
 
     assert result.field_errors == {"document:slug": "invalid_slug"}
     assert result.blocking_field_ids == ["document:slug"]
-    assert result.missing_required_field_ids == ["document:title"]
+    assert result.missing_required_field_ids == []
+    assert result.replacements["document:title"] == "Bestaande titel"
     assert result.replacements["seo:focus_keyword"] == "dsg revisie schiedam"
     assert result.ready is False
+
+
+def test_empty_ai_values_preserve_existing_content() -> None:
+    payload = valid_snapshot_text_package()
+    payload["text_replacements"]["acf:hero:label"] = {"value": ""}
+
+    result = normalize_snapshot_text_package(payload, snapshot_context())
+
+    assert result.replacements["acf:hero:label"] == "Meer informatie"
+    assert result.field_errors == {}
 
 
 def test_snapshot_plain_text_decodes_entities_before_safety_and_markup_rules() -> None:

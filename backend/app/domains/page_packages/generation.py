@@ -261,6 +261,17 @@ def normalize_snapshot_text_package(
             value,
             approved_urls,
         )
+        if (
+            error is None
+            and normalized is not None
+            and not _strip_markup(normalized)
+            and fields[field_id].current_value
+        ):
+            normalized, error = _snapshot_field_value(
+                fields[field_id],
+                fields[field_id].current_value,
+                approved_urls,
+            )
         if error is not None:
             field_errors[field_id] = error
         else:
@@ -282,6 +293,21 @@ def normalize_snapshot_text_package(
             assert normalized is not None
             replacements[focus_field.id] = normalized
             field_errors.pop(focus_field.id, None)
+
+    for field in fields.values():
+        if not field.required or field.id in provided_field_ids:
+            continue
+        normalized, error = _snapshot_field_value(
+            field,
+            field.current_value,
+            approved_urls,
+        )
+        if error is not None:
+            field_errors[field.id] = error
+            continue
+        assert normalized is not None
+        provided_field_ids.add(field.id)
+        replacements[field.id] = normalized
 
     missing_required = sorted(
         field.id
