@@ -1234,6 +1234,17 @@ def approve_page_package_proposal(
     opportunity = session.get(KeywordOpportunity, proposal.opportunity_id)
     if project_context is None or opportunity is None:
         raise HTTPException(status_code=409, detail="Proposal context is unavailable")
+    if proposal.source_wordpress_page_id is not None:
+        source_page = session.get(WordPressPage, proposal.source_wordpress_page_id)
+        if (
+            source_page is None
+            or opportunity.target_classification != "existing_page"
+            or opportunity.target_url != source_page.url
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Opportunity target changed; generate again",
+            )
     if snapshot_schema:
         validation = session.scalar(
             select(PageProposalStage)

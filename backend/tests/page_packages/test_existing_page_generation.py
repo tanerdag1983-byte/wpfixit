@@ -413,6 +413,27 @@ def test_approved_existing_page_uses_only_the_outbound_snapshot_draft_path(
     assert proposal.source_wordpress_page_id == captured.source.id
 
 
+def test_existing_page_approval_rejects_a_reclassified_opportunity(
+    client: TestClient,
+    session: Session,
+    captured_existing_page,
+) -> None:
+    captured = captured_existing_page
+    created = client.post(captured.route, json={"page_type": "service"})
+    proposal = session.get(PagePackageProposal, created.json()["id"])
+    assert proposal is not None
+    captured.opportunity.target_classification = "new_page"
+    captured.opportunity.target_url = None
+    session.commit()
+
+    approved = client.post(
+        f"/projects/{proposal.project_id}/page-proposals/{proposal.id}/approve"
+    )
+
+    assert approved.status_code == 409
+    assert approved.json()["detail"] == "Opportunity target changed; generate again"
+
+
 def test_proposed_existing_page_can_save_edits_before_exact_approval(
     client: TestClient,
     session: Session,
