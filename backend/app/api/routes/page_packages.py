@@ -295,6 +295,8 @@ def create_page_package_proposal(
             try:
                 snapshot_job = create_or_get_snapshot_job(session, source_page)
             except SnapshotJobError as error:
+                if error.persist_changes:
+                    session.commit()
                 raise HTTPException(status_code=409, detail=str(error)) from error
             session.commit()
             return {

@@ -129,3 +129,79 @@ def test_existing_page_source_drift_replaces_the_frozen_capture_job(
     assert stale.state == "failed"
     assert fresh is not None
     assert fresh.state == "queued"
+
+
+def test_existing_page_waits_for_a_synced_hash_before_replacing_drifted_job(
+    client: TestClient,
+    session: Session,
+    auth_as,
+    projects: ProjectFixtures,
+) -> None:
+    auth_as(projects.member)
+    opportunity = _existing_opportunity(session, projects)
+    session.add(
+        WordPressOutboundCredential(
+            id="existing-null-hash-credential",
+            project_id=opportunity.project_id,
+            key_hash=hash_project_key("wpfx_existing_null_hash"),
+            site_url="https://member.example",
+        )
+    )
+    session.commit()
+    route = (
+        f"/projects/{opportunity.project_id}/keyword-opportunities/"
+        f"{opportunity.id}/page-proposal"
+    )
+    first = client.post(route, json={"page_type": "service"})
+    claimed = claim_next_snapshot_job(
+        session,
+        opportunity.project_id,
+        "https://member.example",
+    )
+    assert claimed is not None
+    source = session.get(WordPressPage, "existing-route-page")
+    assert source is not None
+    source.content_hash = None
+    session.commit()
+
+    waiting_for_sync = client.post(route, json={"page_type": "service"})
+
+    assert waiting_for_sync.status_code == 409
+    assert waiting_for_sync.json()["detail"] == (
+        "snapshot job source content hash missing"
+    )
+    stale = session.get(
+        WordPressSnapshotCaptureJob,
+        first.json()["snapshot_job_id"],
+    )
+    assert stale is not None
+    assert stale.state == "failed"
+    assert (
+        session.query(WordPressSnapshotCaptureJob)
+        .filter(
+            WordPressSnapshotCaptureJob.wordpress_page_id == source.id,
+            WordPressSnapshotCaptureJob.state.in_(("queued", "claimed")),
+        )
+        .count()
+        == 0
+    )
+
+    source.content_hash = "existing-route-resynced-hash"
+    session.commit()
+    recovered = client.post(route, json={"page_type": "service"})
+    fresh = session.get(
+        WordPressSnapshotCaptureJob,
+        recovered.json()["snapshot_job_id"],
+    )
+
+    assert recovered.status_code == 202
+    assert recovered.json()["snapshot_job_id"] != first.json()["snapshot_job_id"]
+    assert fresh is not None
+    assert fresh.state == "queued"
+    claimed_fresh = claim_next_snapshot_job(
+        session,
+        opportunity.project_id,
+        "https://member.example",
+    )
+    assert claimed_fresh is not None
+    assert claimed_fresh.job.id == fresh.id

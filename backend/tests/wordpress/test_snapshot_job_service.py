@@ -313,16 +313,17 @@ def test_completion_rejects_a_legacy_null_source_hash(session, wordpress_page):
     assert conflict.value.code == "snapshot_source_changed"
     session.refresh(claimed.job)
     assert claimed.job.state == "failed"
-    fresh = (
+    assert (
         session.query(WordPressSnapshotCaptureJob)
         .filter(
             WordPressSnapshotCaptureJob.wordpress_page_id == wordpress_page.id,
             WordPressSnapshotCaptureJob.state.in_(("queued", "claimed")),
         )
-        .one()
+        .count()
+        == 0
     )
-    assert fresh.id != claimed.job.id
-    assert fresh.state == "queued"
+    with pytest.raises(SnapshotJobError, match="content hash missing"):
+        create_or_get_snapshot_job(session, wordpress_page)
 
 
 def test_completion_is_idempotent_only_for_the_same_result(session, wordpress_page):

@@ -153,12 +153,17 @@ def claim_next_snapshot_job(
         recovered_drift = False
         if frozen_identity is not None and frozen_identity != current_identity:
             _retire_source_drift(job, requested_at)
+            if not page.content_hash:
+                session.flush()
+                raise SnapshotJobError(
+                    "snapshot job source content hash missing",
+                    persist_changes=True,
+                )
             job = _create_or_reuse_current_job(
                 session,
                 page,
                 now=requested_at,
                 exclude_job_id=job.id,
-                allow_missing_content_hash=True,
             )
             recovered_drift = True
             if job.state == "claimed":
@@ -250,13 +255,13 @@ def complete_snapshot_job(
     if page is not None and _page_identity(page) != frozen_identity:
         requested_at = now or datetime.now(UTC)
         _retire_source_drift(job, requested_at)
-        _create_or_reuse_current_job(
-            session,
-            page,
-            now=requested_at,
-            exclude_job_id=job.id,
-            allow_missing_content_hash=True,
-        )
+        if page.content_hash:
+            _create_or_reuse_current_job(
+                session,
+                page,
+                now=requested_at,
+                exclude_job_id=job.id,
+            )
         session.flush()
         raise SnapshotJobError(
             "snapshot job source identity changed",
@@ -330,7 +335,6 @@ def _create_or_reuse_current_job(
     *,
     now: datetime,
     exclude_job_id: str | None = None,
-    allow_missing_content_hash: bool = False,
 ) -> "WordPressSnapshotCaptureJob":
     from app.domains.wordpress.models import WordPressSnapshotCaptureJob
 
@@ -356,20 +360,23 @@ def _create_or_reuse_current_job(
     retired_stale = False
     for existing in session.scalars(statement).all():
         frozen_identity = _claim_identity(existing)
-        if frozen_identity is None or frozen_identity == current_identity:
+        if frozen_identity is None and not page.content_hash:
+            _retire_source_drift(existing, now)
+            retired_stale = True
+        elif frozen_identity is None or frozen_identity == current_identity:
             reusable = reusable or existing
         else:
             _retire_source_drift(existing, now)
             retired_stale = True
+    if not page.content_hash:
+        session.flush()
+        raise SnapshotJobError(
+            "snapshot job source content hash missing",
+            persist_changes=retired_stale,
+        )
     if reusable is not None:
         session.flush()
         return reusable
-    if (
-        not page.content_hash
-        and not allow_missing_content_hash
-        and not retired_stale
-    ):
-        raise SnapshotJobError("snapshot job source content hash missing")
 
     job = WordPressSnapshotCaptureJob(
         id=f"wsnapjob_{uuid4().hex}",
