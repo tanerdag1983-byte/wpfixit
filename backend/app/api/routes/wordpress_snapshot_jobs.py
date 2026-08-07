@@ -23,6 +23,7 @@ SessionDependency = Annotated[Session, Depends(get_session)]
 ALLOWED_FAILURE_CODES = {
     "builder_unsupported",
     "snapshot_invalid",
+    "source_identity_changed",
     "wordpress_error",
 }
 
@@ -59,6 +60,11 @@ class SnapshotJobFailWrite(BaseModel):
     claim_token: str = Field(min_length=20, max_length=128)
     error_code: str = Field(min_length=1, max_length=64)
     error_message: str = Field(default="", max_length=500)
+    source_post_id: int | None = Field(default=None, gt=0, strict=True)
+    source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    source_content_hash: str | None = Field(
+        default=None, min_length=1, max_length=128
+    )
 
 
 @router.post("/claim", response_model=None)
@@ -130,6 +136,22 @@ def fail_claimed_snapshot_job(
             status_code=422,
             detail="Unsupported snapshot job error code",
         )
+    source_identity = None
+    reported_identity = (
+        payload.source_post_id,
+        payload.source_url,
+        payload.source_content_hash,
+    )
+    if payload.error_code == "source_identity_changed":
+        if any(value is None for value in reported_identity):
+            raise HTTPException(status_code=422, detail="Source identity required")
+        source_identity = {
+            "source_post_id": payload.source_post_id,
+            "source_url": payload.source_url,
+            "source_content_hash": payload.source_content_hash,
+        }
+    elif any(value is not None for value in reported_identity):
+        raise HTTPException(status_code=422, detail="Source identity not allowed")
     try:
         job = fail_snapshot_job(
             session,
@@ -137,6 +159,7 @@ def fail_claimed_snapshot_job(
             payload.claim_token,
             error_code=payload.error_code,
             error_message=payload.error_message,
+            source_identity=source_identity,
         )
     except SnapshotJobError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error

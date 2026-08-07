@@ -432,6 +432,36 @@ assert(str_ends_with(
     '/wordpress-snapshot-jobs/snapshot-job-1/complete'
 ));
 
+$staleIdentity = $outboundIdentity['content_hash'];
+$GLOBALS['wpfixpilot_posts'][42]->post_title = 'Changed before snapshot';
+$freshIdentity = optimization_source_hash(42);
+$GLOBALS['wpfixpilot_optimization_responses'] = [
+    optimization_response(200, [
+        'job' => [
+            'id' => 'snapshot-job-source-drift',
+            'source_post_id' => 42,
+            'source_url' => get_permalink(42),
+            'source_content_hash' => $staleIdentity,
+        ],
+        'claim_token' => 'source-drift-claim-token-valid-length',
+    ]),
+    optimization_response(200, [
+        'id' => 'snapshot-job-source-drift',
+        'state' => 'failed',
+    ]),
+];
+$sourceDrift = $client->process_next_snapshot($controller);
+$sourceDriftRequest = json_decode(
+    $GLOBALS['wpfixpilot_optimization_requests'][3]['args']['body'],
+    true
+);
+assert(is_wp_error($sourceDrift));
+assert($sourceDriftRequest['error_code'] === 'source_identity_changed');
+assert($sourceDriftRequest['source_post_id'] === 42);
+assert($sourceDriftRequest['source_url'] === get_permalink(42));
+assert($sourceDriftRequest['source_content_hash'] === $freshIdentity);
+$GLOBALS['wpfixpilot_posts'][42]->post_title = 'Existing page';
+
 $snapshotCountBeforeAmbiguous = count(array_filter(
     $GLOBALS['wpfixpilot_posts'],
     static fn (WP_Post $post): bool =>

@@ -298,14 +298,32 @@ def fail_snapshot_job(
     *,
     error_code: str,
     error_message: str,
+    source_identity: dict | None = None,
     now: datetime | None = None,
 ) -> "WordPressSnapshotCaptureJob":
-    from app.domains.wordpress.models import WordPressSnapshotCaptureJob
+    from app.domains.wordpress.models import (
+        WordPressPage,
+        WordPressSnapshotCaptureJob,
+    )
 
     if not error_code or len(error_code) > 64:
         raise SnapshotJobError("snapshot job error code invalid")
     if len(error_message) > 500:
         raise SnapshotJobError("snapshot job error message invalid")
+    identity = session.execute(
+        select(
+            WordPressSnapshotCaptureJob.project_id,
+            WordPressSnapshotCaptureJob.wordpress_page_id,
+        ).where(WordPressSnapshotCaptureJob.id == job_id)
+    ).one_or_none()
+    if identity is None:
+        raise SnapshotJobError("snapshot job not found")
+    page = session.scalar(
+        select(WordPressPage).where(
+            WordPressPage.id == identity.wordpress_page_id,
+            WordPressPage.project_id == identity.project_id,
+        ).with_for_update()
+    )
     job = session.scalar(
         select(WordPressSnapshotCaptureJob)
         .where(WordPressSnapshotCaptureJob.id == job_id)
@@ -319,12 +337,30 @@ def fail_snapshot_job(
             raise SnapshotJobError("snapshot job result conflict")
         return job
     _require_active_claim(job, claim_token, now=now)
+    if error_code == "source_identity_changed":
+        if (
+            page is None
+            or source_identity is None
+            or source_identity.get("source_post_id") != page.wordpress_object_id
+            or not isinstance(source_identity.get("source_url"), str)
+            or not isinstance(source_identity.get("source_content_hash"), str)
+        ):
+            raise SnapshotJobError("snapshot job source identity invalid")
+        page.url = source_identity["source_url"]
+        page.content_hash = source_identity["source_content_hash"]
     job.state = "failed"
     job.error_code = error_code
     job.error_message = error_message
     job.failed_at = now or datetime.now(UTC)
     job.terminal_claim_token_hash = _hash_claim_token(claim_token)
     _clear_claim(job)
+    if error_code == "source_identity_changed":
+        _create_or_reuse_current_job(
+            session,
+            page,
+            now=now or datetime.now(UTC),
+            exclude_job_id=job.id,
+        )
     session.flush()
     return job
 

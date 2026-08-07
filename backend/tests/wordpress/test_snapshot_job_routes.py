@@ -79,6 +79,40 @@ def test_plugin_claims_and_completes_snapshot_job(
     assert stored.snapshot_result == snapshot_result()
 
 
+def test_plugin_source_drift_refreshes_page_and_queues_one_fresh_job(
+    client: TestClient,
+    session,
+    projects: ProjectFixtures,
+    wordpress_page,
+) -> None:
+    job = create_or_get_snapshot_job(session, wordpress_page)
+    session.commit()
+    endpoint = (
+        f"/projects/{projects.member_project.id}/wordpress-snapshot-jobs"
+    )
+    claimed = client.post(f"{endpoint}/claim", headers=plugin_headers()).json()
+
+    failed = client.post(
+        f"{endpoint}/{job.id}/fail",
+        headers=plugin_headers(),
+        json={
+            "claim_token": claimed["claim_token"],
+            "error_code": "source_identity_changed",
+            "error_message": "Source changed before capture",
+            "source_post_id": 701,
+            "source_url": "https://member.example/monitoring-page",
+            "source_content_hash": "fresh-content-hash",
+        },
+    )
+
+    assert failed.status_code == 200
+    session.refresh(wordpress_page)
+    assert wordpress_page.content_hash == "fresh-content-hash"
+    fresh = client.post(f"{endpoint}/claim", headers=plugin_headers()).json()
+    assert fresh["job"]["id"] != job.id
+    assert fresh["job"]["source_content_hash"] == "fresh-content-hash"
+
+
 def test_snapshot_routes_reuse_project_key_and_site_binding(
     client: TestClient,
     session,

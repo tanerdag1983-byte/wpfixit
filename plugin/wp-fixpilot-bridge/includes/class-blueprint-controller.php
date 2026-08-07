@@ -93,7 +93,11 @@ final class WPFixPilot_Blueprint_Controller
                 (string) $sourceState['content_hash']
             )
         ) {
-            return $this->source_changed_error();
+            return $this->source_changed_error(
+                $sourcePostId,
+                $sourceUrl,
+                (string) $sourceState['content_hash']
+            );
         }
         $store = new WPFixPilot_Template_Snapshot_Store();
         $replaySnapshotId = $store->find_for_job($jobId);
@@ -109,7 +113,11 @@ final class WPFixPilot_Blueprint_Controller
                 $cleanup = $this->cleanup_blueprint($replaySnapshotId);
                 return is_wp_error($cleanup)
                     ? $cleanup
-                    : $this->source_changed_error();
+                    : $this->source_changed_error(
+                        $sourcePostId,
+                        $sourceUrl,
+                        (string) $sourceState['content_hash']
+                    );
             }
 
             return $stored;
@@ -142,7 +150,15 @@ final class WPFixPilot_Blueprint_Controller
             $cleanup = $this->cleanup_blueprint($snapshotId);
             return is_wp_error($cleanup)
                 ? $cleanup
-                : $this->source_changed_error();
+                : (
+                    is_wp_error($currentState)
+                        ? $currentState
+                        : $this->source_changed_error(
+                            $sourcePostId,
+                            (string) get_permalink($source),
+                            (string) $currentState['content_hash']
+                        )
+                );
         }
         $capture = [
             'job_id' => $jobId,
@@ -1509,12 +1525,21 @@ final class WPFixPilot_Blueprint_Controller
         );
     }
 
-    private function source_changed_error(): WP_Error
+    private function source_changed_error(
+        int $sourcePostId,
+        string $sourceUrl,
+        string $sourceContentHash
+    ): WP_Error
     {
         return new WP_Error(
             'wp_fixpilot_snapshot_source_changed',
             'De bronpagina wijzigde tijdens de snapshotopname.',
-            ['status' => 409]
+            [
+                'status' => 409,
+                'source_post_id' => $sourcePostId,
+                'source_url' => $sourceUrl,
+                'source_content_hash' => $sourceContentHash,
+            ]
         );
     }
 

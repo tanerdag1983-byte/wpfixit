@@ -80,18 +80,39 @@ final class WPFixPilot_Outbound_Client
             $sourceContentHash
         );
         if (is_wp_error($result)) {
+            $errorData = method_exists($result, 'get_error_data')
+                ? $result->get_error_data()
+                : ($result->data ?? null);
+            $resultCode = method_exists($result, 'get_error_code')
+                ? $result->get_error_code()
+                : (string) ($result->code ?? '');
+            $sourceChanged = $resultCode
+                === 'wp_fixpilot_snapshot_source_changed'
+                && is_array($errorData);
+            $failureBody = [
+                'claim_token' => $claimToken,
+                'error_code' => $sourceChanged
+                    ? 'source_identity_changed'
+                    : 'wordpress_error',
+                'error_message' => substr(
+                    $this->error_message($result),
+                    0,
+                    500
+                ),
+            ];
+            if ($sourceChanged) {
+                $failureBody += [
+                    'source_post_id' => (int) ($errorData['source_post_id'] ?? 0),
+                    'source_url' => (string) ($errorData['source_url'] ?? ''),
+                    'source_content_hash' => (string) (
+                        $errorData['source_content_hash'] ?? ''
+                    ),
+                ];
+            }
             $failure = $this->request(
                 'POST',
                 '/' . rawurlencode($jobId) . '/fail',
-                [
-                    'claim_token' => $claimToken,
-                    'error_code' => 'wordpress_error',
-                    'error_message' => substr(
-                        $this->error_message($result),
-                        0,
-                        500
-                    ),
-                ],
+                $failureBody,
                 [200],
                 'wordpress-snapshot-jobs'
             );
