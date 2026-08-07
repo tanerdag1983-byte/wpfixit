@@ -1147,7 +1147,7 @@ final class WPFixPilot_ACF_Adapter implements
     private function is_visible_fallback_container(string $key): bool
     {
         return preg_match(
-            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics|id|key|type|layout|template|variant|theme|color|font|size|width|height|align|animation|position|enabled|target|rel)(?:$|_)/',
+            '/(?:^|_)(?:background|config|setting|style|class|classes|image|icon|media|tracking|analytics|id|key|type|layout|template|variant|theme|color|font|size|width|height|align|animation|position|enabled|target|rel)(?:$|_)/',
             $this->normalize_fallback_key($key)
         ) !== 1;
     }
@@ -1164,6 +1164,12 @@ final class WPFixPilot_ACF_Adapter implements
         }
         $mimeType = strtolower((string) ($value['mime_type'] ?? $value['mimeType'] ?? ''));
         if (str_starts_with($mimeType, 'image/')) {
+            return true;
+        }
+        if (
+            $url !== ''
+            && array_intersect(['alt', 'caption', 'filename', 'sizes'], array_keys($value)) !== []
+        ) {
             return true;
         }
 

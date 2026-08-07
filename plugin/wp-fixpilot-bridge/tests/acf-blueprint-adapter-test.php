@@ -97,6 +97,7 @@ $test_acf_fields[200] = [
                 'customer_order_message' => 'Uw afspraak wordt persoonlijk bevestigd',
                 'description' => '<p>Rich text content</p>',
                 'css_class' => 'revisie dsg technisch',
+                'css_classes' => 'revisie dsg meervoud',
                 'backgroundColor' => 'revisie dsg achtergrond',
                 'trackingCode' => 'revisie-dsg-tracking',
                 'background_image' => ['url' => 'https://example.test/keyword-background.jpg'],
@@ -105,6 +106,11 @@ $test_acf_fields[200] = [
                     'url' => 'https://example.test/keyword-visual.jpg',
                     'alt' => 'revisie dsg afbeelding',
                     'caption' => 'revisie dsg bijschrift',
+                ],
+                'secondary_visual' => [
+                    'url' => 'https://cdn.example.test/asset/321',
+                    'alt' => 'revisie dsg cdn afbeelding',
+                    'caption' => 'revisie dsg cdn bijschrift',
                 ],
                 'tracking_url' => 'https://example.test/keyword-tracking',
                 'cta_url' => 'https://example.test/contact',
@@ -184,10 +190,13 @@ assert(in_array('<p>Rich text content</p>', $visibleValues, true), 'Visible fall
 assert(in_array('https://example.test/contact', $visibleValues, true), 'Visible CTA URL should remain included');
 assert(in_array('https://example.test/afspraak', $visibleValues, true), 'Visible suffixed CTA URL should remain included');
 assert(!in_array('revisie dsg technisch', $visibleValues, true), 'Technical classes must not become visible text');
+assert(!in_array('revisie dsg meervoud', $visibleValues, true), 'Plural technical classes must not become visible text');
 assert(!in_array('revisie dsg achtergrond', $visibleValues, true), 'CamelCase background metadata must not become visible text');
 assert(!in_array('revisie-dsg-tracking', $visibleValues, true), 'CamelCase tracking metadata must not become visible text');
 assert(!in_array('revisie dsg afbeelding', $visibleValues, true), 'Image alt metadata must not become AI-editable text');
 assert(!in_array('revisie dsg bijschrift', $visibleValues, true), 'Image captions must not become AI-editable fallback text');
+assert(!in_array('revisie dsg cdn afbeelding', $visibleValues, true), 'Extensionless image alt must not become AI-editable text');
+assert(!in_array('revisie dsg cdn bijschrift', $visibleValues, true), 'Extensionless image caption must not become AI-editable text');
 assert(!in_array('https://example.test/keyword-background.jpg', $visibleValues, true), 'Background images must not become visible links');
 assert(!in_array('https://example.test/keyword-tracking', $visibleValues, true), 'Tracking URLs must not become visible links');
 assert(method_exists($adapter, 'analysis_images'), 'ACF adapter should expose typed image fields for analysis');
