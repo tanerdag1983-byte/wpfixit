@@ -1092,7 +1092,10 @@ final class WPFixPilot_ACF_Adapter implements
             $segments = [...$valueSegments, (string) $key];
             $childIdSegments = [...$idSegments, (string) $key];
             if (is_array($child)) {
-                if (!$this->is_visible_fallback_container((string) $key)) {
+                if (
+                    $this->is_fallback_media_value($child)
+                    || !$this->is_visible_fallback_container((string) $key)
+                ) {
                     continue;
                 }
                 $fields = array_merge(
@@ -1144,9 +1147,34 @@ final class WPFixPilot_ACF_Adapter implements
     private function is_visible_fallback_container(string $key): bool
     {
         return preg_match(
-            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics|id|key|type|layout|template|variant|theme|color|font|size|width|height|align|animation|position|order|enabled|target|rel)(?:$|_)/',
-            strtolower($key)
+            '/(?:^|_)(?:background|config|setting|style|class|image|icon|media|tracking|analytics|id|key|type|layout|template|variant|theme|color|font|size|width|height|align|animation|position|enabled|target|rel)(?:$|_)/',
+            $this->normalize_fallback_key($key)
         ) !== 1;
+    }
+
+    /** @param array<int|string, mixed> $value */
+    private function is_fallback_media_value(array $value): bool
+    {
+        $url = (string) ($value['url'] ?? $value['source_url'] ?? '');
+        if (
+            $url !== ''
+            && preg_match('/\.(?:jpe?g|png|gif|webp|avif|svg)(?:[?#]|$)/i', $url) === 1
+        ) {
+            return true;
+        }
+        $mimeType = strtolower((string) ($value['mime_type'] ?? $value['mimeType'] ?? ''));
+        if (str_starts_with($mimeType, 'image/')) {
+            return true;
+        }
+
+        return isset($value['id']) || isset($value['ID']) || isset($value['attachment_id'])
+            ? array_intersect(['alt', 'caption', 'filename', 'sizes', 'url', 'source_url'], array_keys($value)) !== []
+            : false;
+    }
+
+    private function normalize_fallback_key(string $key): string
+    {
+        return strtolower((string) preg_replace('/(?<=[a-z0-9])(?=[A-Z])/', '_', $key));
     }
 
     private function is_visible_fallback_content_key(string $key): bool
@@ -1157,7 +1185,7 @@ final class WPFixPilot_ACF_Adapter implements
     private function is_visible_fallback_link_key(string $key): bool
     {
         return $this->is_visible_fallback_container($key)
-            && preg_match('/(?:^|_)(?:url|link|href)$/', strtolower($key)) === 1;
+            && preg_match('/(?:^|_)(?:url|link|href)$/', $this->normalize_fallback_key($key)) === 1;
     }
 
     /** @param array<int, mixed> $images */

@@ -94,9 +94,18 @@ $test_acf_fields[200] = [
                 'eyebrow' => 'Specialistische kennis',
                 'testimonial' => 'Zeer vakkundig geholpen',
                 'usp' => 'Diagnose in eigen werkplaats',
+                'customer_order_message' => 'Uw afspraak wordt persoonlijk bevestigd',
                 'description' => '<p>Rich text content</p>',
                 'css_class' => 'revisie dsg technisch',
+                'backgroundColor' => 'revisie dsg achtergrond',
+                'trackingCode' => 'revisie-dsg-tracking',
                 'background_image' => ['url' => 'https://example.test/keyword-background.jpg'],
+                'hero_visual' => [
+                    'ID' => 321,
+                    'url' => 'https://example.test/keyword-visual.jpg',
+                    'alt' => 'revisie dsg afbeelding',
+                    'caption' => 'revisie dsg bijschrift',
+                ],
                 'tracking_url' => 'https://example.test/keyword-tracking',
                 'cta_url' => 'https://example.test/contact',
                 'primary_cta_url' => 'https://example.test/afspraak',
@@ -170,10 +179,15 @@ assert(in_array('Benefit Title', $visibleValues, true), 'Visible fallback title 
 assert(in_array('Specialistische kennis', $visibleValues, true), 'Visible eyebrow should remain included');
 assert(in_array('Zeer vakkundig geholpen', $visibleValues, true), 'Visible testimonial should remain included');
 assert(in_array('Diagnose in eigen werkplaats', $visibleValues, true), 'Visible USP should remain included');
+assert(in_array('Uw afspraak wordt persoonlijk bevestigd', $visibleValues, true), 'Visible order message should remain included');
 assert(in_array('<p>Rich text content</p>', $visibleValues, true), 'Visible fallback copy should remain included');
 assert(in_array('https://example.test/contact', $visibleValues, true), 'Visible CTA URL should remain included');
 assert(in_array('https://example.test/afspraak', $visibleValues, true), 'Visible suffixed CTA URL should remain included');
 assert(!in_array('revisie dsg technisch', $visibleValues, true), 'Technical classes must not become visible text');
+assert(!in_array('revisie dsg achtergrond', $visibleValues, true), 'CamelCase background metadata must not become visible text');
+assert(!in_array('revisie-dsg-tracking', $visibleValues, true), 'CamelCase tracking metadata must not become visible text');
+assert(!in_array('revisie dsg afbeelding', $visibleValues, true), 'Image alt metadata must not become AI-editable text');
+assert(!in_array('revisie dsg bijschrift', $visibleValues, true), 'Image captions must not become AI-editable fallback text');
 assert(!in_array('https://example.test/keyword-background.jpg', $visibleValues, true), 'Background images must not become visible links');
 assert(!in_array('https://example.test/keyword-tracking', $visibleValues, true), 'Tracking URLs must not become visible links');
 assert(method_exists($adapter, 'analysis_images'), 'ACF adapter should expose typed image fields for analysis');
