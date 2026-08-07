@@ -29,6 +29,8 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
   const [monitoring, setMonitoring] = useState<PageMonitoring | null>(null);
   const [monitoringError, setMonitoringError] = useState("");
   const [monitoringLoading, setMonitoringLoading] = useState(false);
+  const [monitoringRefreshAvailable, setMonitoringRefreshAvailable] =
+    useState(false);
   const [checking, setChecking] = useState(false);
   const [monitoringRevision, setMonitoringRevision] = useState(0);
   const [importUrl, setImportUrl] = useState<string | null>(null);
@@ -89,12 +91,14 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
       setMonitoring(null);
       setMonitoringError("");
       setMonitoringLoading(false);
+      setMonitoringRefreshAvailable(false);
       return;
     }
     let active = true;
     setMonitoring(null);
     setMonitoringError("");
     setMonitoringLoading(true);
+    setMonitoringRefreshAvailable(false);
     apiRequest<PageMonitoring>(
       `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
     )
@@ -136,6 +140,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     setMonitoring(null);
     setMonitoringError("");
     setMonitoringLoading(true);
+    setMonitoringRefreshAvailable(false);
     try {
       const result = await writeDraft(proposal, draft);
       setProposal(result);
@@ -165,6 +170,7 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
         setMonitoring(null);
         setMonitoringError("");
         setMonitoringLoading(true);
+        setMonitoringRefreshAvailable(false);
         try {
           activeProposal = await writeDraft(proposal, draft);
         } catch {
@@ -374,24 +380,59 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
     const proposalId = proposal?.id;
     if (!pageId || !proposalId) return;
     setChecking(true);
+    setMessage("");
     setMonitoring(null);
     setMonitoringError("");
     setMonitoringLoading(true);
+    setMonitoringRefreshAvailable(false);
     try {
       await apiRequest(
         `/projects/${projectId}/wordpress-pages/${pageId}/checks`,
         { method: "POST" },
       );
+    } catch {
+      setMonitoringError("Pagina controleren mislukt.");
+      setMonitoringLoading(false);
+      setChecking(false);
+      return;
+    }
+    try {
       const result = await apiRequest<PageMonitoring>(
         `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
       );
       setMonitoring(result);
       setMessage("De pagina is gecontroleerd.");
-    } catch (error) {
-      setMonitoringError(actionError(error, "Pagina controleren mislukt."));
+    } catch {
+      setMonitoringError(
+        "De pagina is gecontroleerd, maar de vernieuwde resultaten konden niet worden geladen.",
+      );
+      setMonitoringRefreshAvailable(true);
     } finally {
       setMonitoringLoading(false);
       setChecking(false);
+    }
+  }
+
+  async function retryMonitoringRefresh() {
+    const pageId = proposalSourcePageId;
+    const proposalId = proposal?.id;
+    if (!pageId || !proposalId) return;
+    setMonitoring(null);
+    setMessage("");
+    setMonitoringError("");
+    setMonitoringLoading(true);
+    setMonitoringRefreshAvailable(false);
+    try {
+      const result = await apiRequest<PageMonitoring>(
+        `/projects/${projectId}/wordpress-pages/${pageId}/monitoring?proposal_id=${encodeURIComponent(proposalId)}`,
+      );
+      setMonitoring(result);
+      setMessage("De vernieuwde resultaten zijn geladen.");
+    } catch {
+      setMonitoringError("De vernieuwde resultaten konden niet worden geladen.");
+      setMonitoringRefreshAvailable(true);
+    } finally {
+      setMonitoringLoading(false);
     }
   }
 
@@ -607,7 +648,21 @@ export function PagePackageReview({ projectId }: { projectId: string }) {
               status={monitoring.page.status}
             />
           )}
-          {monitoringError && <p className="settings-message" role="alert">{monitoringError}</p>}
+          {monitoringError && (
+            <div className="settings-actions">
+              <p className="settings-message" role="alert">{monitoringError}</p>
+              {monitoringRefreshAvailable && (
+                <button
+                  className="secondary-button"
+                  disabled={monitoringLoading}
+                  onClick={() => void retryMonitoringRefresh()}
+                  type="button"
+                >
+                  Resultaten opnieuw laden
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="page-package-layout">
             <div className="page-package-form">

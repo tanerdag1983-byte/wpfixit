@@ -720,18 +720,74 @@ def test_failed_draft_job_does_not_report_draft_ready() -> None:
     assert status == "proposal_ready"
 
 
-def test_open_deduplicated_recommendation_keeps_page_attention_status() -> None:
-    status = wordpress_routes._monitoring_status(
-        None,
-        None,
-        [
-            SimpleNamespace(overall_score=60, page_version_id="new"),
-            SimpleNamespace(overall_score=60, page_version_id="old"),
-        ],
-        [SimpleNamespace(state="open", page_version_id="old")],
+def test_persisted_open_recommendation_precedes_improved_score_trend(
+    client: TestClient, session, auth_as, projects
+) -> None:
+    auth_as(projects.member)
+    page = WordPressPage(
+        id="improved-with-open-recommendation-page",
+        project_id=projects.member_project.id,
+        wordpress_object_id=712,
+        post_type="page",
+        status="publish",
+        title="Improved with attention",
+        slug="improved-with-attention",
+        url="https://member.example/improved-with-attention",
+    )
+    old_version = PageObservedVersion(
+        id="attention-old-version",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        content_hash="attention-old-hash",
+        source="sync",
+        snapshot_payload={"content_hash": "attention-old-hash", "values": {}},
+        observed_at=datetime(2026, 8, 1, 10, tzinfo=UTC),
+    )
+    new_version = PageObservedVersion(
+        id="attention-new-version",
+        project_id=page.project_id,
+        wordpress_page_id=page.id,
+        content_hash="attention-new-hash",
+        source="sync",
+        snapshot_payload={"content_hash": "attention-new-hash", "values": {}},
+        observed_at=datetime(2026, 8, 2, 10, tzinfo=UTC),
+    )
+    session.add_all([
+        page,
+        old_version,
+        new_version,
+        PageScoreSnapshot(
+            id="attention-old-score",
+            page_version_id=old_version.id,
+            overall_score=60,
+            factors=[],
+            created_at=datetime(2026, 8, 1, 10, tzinfo=UTC),
+        ),
+        PageScoreSnapshot(
+            id="attention-new-score",
+            page_version_id=new_version.id,
+            overall_score=70,
+            factors=[],
+            created_at=datetime(2026, 8, 2, 10, tzinfo=UTC),
+        ),
+        PageRecommendation(
+            id="persistent-deduplicated-recommendation",
+            page_version_id=old_version.id,
+            wordpress_page_id=page.id,
+            fingerprint="persistent-recommendation-fingerprint",
+            state="open",
+            evidence={},
+            suggested_action="Keep this page-scoped recommendation open.",
+        ),
+    ])
+    session.commit()
+
+    response = client.get(
+        f"/projects/{page.project_id}/wordpress-pages/{page.id}/monitoring"
     )
 
-    assert status == "needs_attention"
+    assert response.status_code == 200
+    assert response.json()["page"]["status"] == "needs_attention"
 
 
 def test_failed_manual_fetch_does_not_advance_latest_check(

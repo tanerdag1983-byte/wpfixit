@@ -528,10 +528,10 @@ def _monitoring_status(
         "draft_in_progress",
     }:
         return "proposal_ready"
-    if len(scores) > 1 and scores[0].overall_score > scores[1].overall_score:
-        return "improved"
     if any(item.state == "open" for item in recommendations):
         return "needs_attention"
+    if len(scores) > 1 and scores[0].overall_score > scores[1].overall_score:
+        return "improved"
     return "monitoring"
 
 

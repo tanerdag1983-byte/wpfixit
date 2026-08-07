@@ -2,8 +2,19 @@
 
 ## Status
 
-Complete after Round 1 review fixes. Monitoring and review data now remain bound to
-the proposal's captured source version, and no live-publishing action was added.
+Complete after Round 2 review fixes. Monitoring and review data remain bound to the
+proposal's captured source version, and no live-publishing action was added.
+
+## Round 2 Fixes
+
+- Split manual-check POST handling from the subsequent monitoring refresh. A failed
+  POST reports that the check failed; a committed check followed by a failed refresh
+  reports the successful check truthfully and offers `Resultaten opnieuw laden`.
+- Kept monitoring cleared and loading stopped after a refresh failure. The retry only
+  reloads monitoring and never repeats the already committed manual check.
+- Made persisted page-scoped open recommendations take precedence over an improved
+  score trend. Only pages without open recommendations can report `improved` or
+  `monitoring`.
 
 ## Round 1 Fixes
 
@@ -44,6 +55,16 @@ the proposal's captured source version, and no live-publishing action was added.
   239 passed, 8 skipped.
 - `backend/.venv/bin/ruff check app tests alembic`: passed.
 - `frontend npm test -- --run`: 29 files, 118 tests passed.
+- `frontend npm run lint`: passed.
+- `frontend npm run build`: passed.
+- `git diff --check`: passed.
+
+### Round 2 Verification
+
+- Focused backend route tests: 12 passed.
+- Focused frontend review tests: 27 passed.
+- `backend/.venv/bin/ruff check app tests alembic`: passed.
+- `frontend npm test -- --run`: 29 files, 120 tests passed.
 - `frontend npm run lint`: passed.
 - `frontend npm run build`: passed.
 - `git diff --check`: passed.

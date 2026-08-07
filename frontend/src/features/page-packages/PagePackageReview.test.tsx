@@ -485,6 +485,95 @@ describe("PagePackageReview", () => {
     });
   });
 
+  it("reports a committed check separately when refreshing results fails", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      field_errors: {},
+    };
+    const monitoringResponse = {
+      page: { id: "wordpress-page-1", status: "proposal_ready" },
+      latest_sync_at: "2026-08-07T08:00:00Z",
+      next_check_at: "2026-08-14T08:00:00Z",
+      captured_version: { id: "version-1", content_hash: "hash-1" },
+      captured_score: null,
+      live_changed_since_capture: false,
+      versions: [],
+      scores: [],
+      projected_score: null,
+      recommendations: [],
+      events: [],
+    };
+    let monitoringCalls = 0;
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/checks") && init?.method === "POST") {
+        return Promise.resolve({ version_id: "version-1", version_created: false });
+      }
+      if (path.includes("/monitoring?proposal_id=")) {
+        monitoringCalls += 1;
+        if (monitoringCalls === 2) {
+          return Promise.reject(new Error("refresh failed"));
+        }
+        return Promise.resolve(monitoringResponse);
+      }
+      return Promise.resolve(existingPageProposal);
+    });
+    render(<PagePackageReview projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Nu controleren" }));
+
+    expect(await screen.findByText(
+      "De pagina is gecontroleerd, maar de vernieuwde resultaten konden niet worden geladen.",
+    )).toBeVisible();
+    expect(screen.queryByText("Pagina controleren mislukt.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Monitoring laden")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Paginatijdlijn" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Resultaten opnieuw laden" }));
+
+    expect(await screen.findByRole("heading", { name: "Paginatijdlijn" })).toBeVisible();
+    expect(monitoringCalls).toBe(3);
+  });
+
+  it("reports check failure when the manual check POST fails", async () => {
+    const existingPageProposal = {
+      ...attentionProposal,
+      source_wordpress_page_id: "wordpress-page-1",
+      state: "proposed",
+      field_errors: {},
+    };
+    apiRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith("/checks") && init?.method === "POST") {
+        return Promise.reject(new Error("check failed"));
+      }
+      if (path.includes("/monitoring?proposal_id=")) {
+        return Promise.resolve({
+          page: { id: "wordpress-page-1", status: "proposal_ready" },
+          latest_sync_at: null,
+          next_check_at: null,
+          captured_version: null,
+          captured_score: null,
+          live_changed_since_capture: false,
+          versions: [],
+          scores: [],
+          projected_score: null,
+          recommendations: [],
+          events: [],
+        });
+      }
+      return Promise.resolve(existingPageProposal);
+    });
+    render(<PagePackageReview projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Nu controleren" }));
+
+    expect(await screen.findByText("Pagina controleren mislukt.")).toBeVisible();
+    expect(screen.queryByRole("button", {
+      name: "Resultaten opnieuw laden",
+    })).not.toBeInTheDocument();
+  });
+
   it("shows a saved candidate compare flow and can accept or discard it", async () => {
     apiRequest.mockImplementation((path: string) => {
       if (path.endsWith("/accept")) {
