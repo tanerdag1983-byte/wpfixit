@@ -1,7 +1,11 @@
+import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import pytest
 from sqlalchemy import func, select
 
+from app import maintenance
 from app.domains.wordpress.models import PageTimelineEvent, WordPressPage
 from app.maintenance import WeeklyPageCheckResult, main, run_weekly_page_checks
 
@@ -98,6 +102,69 @@ def test_weekly_runner_dry_run_does_not_write(session, projects) -> None:
     assert result.due_page_ids == (due_page.id,)
     assert result.checked_page_ids == ()
     assert session.scalar(select(func.count(PageTimelineEvent.id))) == 0
+
+
+def test_weekly_runner_rechecks_due_evidence_after_lock(
+    session, projects, monkeypatch
+) -> None:
+    page = _page(session, projects, "rechecked-page-1")
+    session.commit()
+
+    def lock_page(_session, page_id):
+        assert page_id == page.id
+        _checked(session, page, NOW)
+        session.flush()
+        return page
+
+    monkeypatch.setattr(maintenance, "_locked_page", lock_page)
+    monkeypatch.setattr(
+        maintenance,
+        "_current_wordpress_state",
+        lambda *_args: pytest.fail("a newly checked page must not be fetched"),
+    )
+
+    result = run_weekly_page_checks(session, now=NOW)
+
+    assert result.due_page_ids == (page.id,)
+    assert result.checked_page_ids == ()
+    assert result.failed_page_ids == ()
+
+
+@pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        ("token=secret-value", "secret-value"),
+        ("Authorization: Bearer bearer-secret", "bearer-secret"),
+    ],
+)
+def test_weekly_runner_logs_a_sanitized_failure(
+    session, projects, monkeypatch, caplog, message, secret
+) -> None:
+    page = _page(session, projects, "failed-log-page-1")
+    session.commit()
+    monkeypatch.setattr(
+        maintenance,
+        "_current_wordpress_state",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError(message)),
+    )
+    caplog.set_level(logging.ERROR, logger="app.maintenance")
+
+    result = run_weekly_page_checks(session, now=NOW)
+
+    assert result.failed_page_ids == (page.id,)
+    assert page.id in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_render_cron_reuses_the_api_encryption_secret() -> None:
+    render_yaml = Path(__file__).parents[3] / "render.yaml"
+
+    assert """- key: WP_FIXPILOT_ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: wp-fixpilot-api
+          envVarKey: WP_FIXPILOT_ENCRYPTION_KEY""" in render_yaml.read_text()
 
 
 def test_weekly_cli_returns_nonzero_for_failed_pages(monkeypatch) -> None:

@@ -11,6 +11,11 @@ services:
         value: 3.12.10
       - key: WP_FIXPILOT_DATABASE_URL
         sync: false
+      - key: WP_FIXPILOT_ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: wp-fixpilot-api
+          envVarKey: WP_FIXPILOT_ENCRYPTION_KEY
 
   - type: web
     name: wp-fixpilot-api

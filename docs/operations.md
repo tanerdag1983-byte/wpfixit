@@ -96,7 +96,11 @@ The Render cron `wp-fixpilot-weekly-page-checks` runs daily at 03:15 UTC. It
 checks only pages whose newest successful `page_checked` event is at least seven
 days old; a failed page does not stop checks for other due pages. Use
 `cd backend && python -m app.maintenance weekly-page-checks --dry-run` to list
-the due count without writing to the database.
+the due count without writing to the database. Its encryption key is referenced
+from `wp-fixpilot-api`; keep that API key stable so the cron can decrypt existing
+WordPress connection secrets. Failed checks log only the page ID plus a sanitized
+exception class and message, and the cron exits nonzero after processing all due
+pages.
 
 ## Recovery
 

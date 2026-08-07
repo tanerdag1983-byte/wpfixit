@@ -127,13 +127,20 @@ def _proposal_or_404(
     return proposal
 
 
-def _page_or_404(session: Session, project_id: str, page_id: str) -> WordPressPage:
-    page = session.scalar(
-        select(WordPressPage).where(
-            WordPressPage.id == page_id,
-            WordPressPage.project_id == project_id,
-        )
+def _page_or_404(
+    session: Session,
+    project_id: str,
+    page_id: str,
+    *,
+    for_update: bool = False,
+) -> WordPressPage:
+    statement = select(WordPressPage).where(
+        WordPressPage.id == page_id,
+        WordPressPage.project_id == project_id,
     )
+    if for_update:
+        statement = statement.with_for_update()
+    page = session.scalar(statement)
     if page is None:
         raise HTTPException(status_code=404, detail="WordPress page not found")
     return page
@@ -323,7 +330,7 @@ def check_wordpress_page(
     user: UserDependency,
 ) -> dict[str, Any]:
     _project_or_404(session, user, project_id)
-    page = _page_or_404(session, project_id, page_id)
+    page = _page_or_404(session, project_id, page_id, for_update=True)
     facts = _current_wordpress_state(session, project_id, page)
     result = check_page(session, page, facts, trigger="manual")
     session.commit()
