@@ -23,9 +23,9 @@ function get_post_meta(int $postId, string $key = '', bool $single = false): mix
     }
     if ($postId === 10) {
         return match ($key) {
-            '_elementor_data' => '[{"settings":{"editor":"<h2>Builder heading</h2>"}}]',
+            '_elementor_data' => '[{"settings":{"editor":"<h2>Builder heading</h2>","image":{"id":99,"url":"https://example.test/builder.jpg"},"image_size":"large"}}]',
             '_bricks_page_content_2' => [['settings' => ['text' => '<a href="/contact">Contact</a>']]],
-            'hero_image' => '<img src="builder.jpg" alt="Builder image">',
+            'hero_image' => 321,
             '' => [
                 '_elementor_data' => [''],
                 '_bricks_page_content_2' => [''],
@@ -71,7 +71,7 @@ require_once __DIR__ . '/../includes/class-change-controller.php';
 $controller = new WPFixPilot_Change_Controller([
     new Monitoring_Test_Adapter('elementor', '_elementor_data', '<h2>Visible heading</h2>'),
     new Monitoring_Test_Adapter('bricks', '_bricks_page_content_2', '<a href="/contact">Visible contact</a>'),
-    new Monitoring_Test_Adapter('acf', 'hero_image', '<img src="visible.jpg" alt="Visible image">'),
+    new Monitoring_Test_Adapter('acf', 'hero_image', 'Visible image caption'),
 ]);
 $state = $controller->current_state(10, 'yoast');
 assert(is_array($state));
@@ -80,11 +80,12 @@ assert($state['values']['featured_image_alt'] === 'Revisie in uitvoering');
 assert($state['values']['builders']['elementor']['structure_hash'] === 'stable-elementor-hash');
 assert(str_contains($state['values']['builders']['elementor']['meta']['_elementor_data'], 'Builder heading'));
 assert($state['values']['builders']['bricks']['meta']['_bricks_page_content_2'][0]['settings']['text'] === '<a href="/contact">Contact</a>');
-assert(str_contains($state['values']['builders']['acf']['meta']['hero_image'], 'Builder image'));
+assert($state['values']['builders']['acf']['meta']['hero_image'] === 321);
 assert($state['values']['visible_builder_content'] === [
     '<h2>Visible heading</h2>',
     '<a href="/contact">Visible contact</a>',
-    '<img src="visible.jpg" alt="Visible image">',
+    'Visible image caption',
+    '<img alt="">',
 ]);
 assert($controller->current_state(10, 'yoast')['content_hash'] === $state['content_hash']);
 

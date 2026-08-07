@@ -275,8 +275,56 @@ final class WPFixPilot_Change_Controller
                 }
             }
         }
+        if ($this->has_builder_image($builders)) {
+            $content[] = '<img alt="">';
+        }
 
         return $content;
+    }
+
+    private function has_builder_image(mixed $value, string $key = ''): bool
+    {
+        if (is_string($value) && in_array(substr(trim($value), 0, 1), ['[', '{'], true)) {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $this->has_builder_image($decoded, $key);
+            }
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+        foreach ($value as $childKey => $child) {
+            $childKey = strtolower((string) $childKey);
+            if (
+                preg_match('/(^|_)(image|photo|picture|thumbnail)($|_)/', $childKey) === 1
+                && $this->is_image_value($child)
+            ) {
+                return true;
+            }
+            if ($this->has_builder_image($child, $childKey)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function is_image_value(mixed $value): bool
+    {
+        if (is_int($value) || (is_string($value) && ctype_digit($value))) {
+            return (int) $value > 0;
+        }
+        if (is_string($value)) {
+            return str_contains(strtolower($value), '<img')
+                || preg_match('/\.(jpe?g|png|gif|webp|avif|svg)(?:[?#]|$)/i', $value) === 1;
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+
+        return (isset($value['id']) && (int) $value['id'] > 0)
+            || (isset($value['url']) && $this->is_image_value($value['url']))
+            || (isset($value['source_url']) && $this->is_image_value($value['source_url']));
     }
 
     /** @return array<string, mixed> */
