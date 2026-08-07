@@ -172,6 +172,24 @@ def upsert_keyword_opportunities(
     return synced
 
 
+def reclassify_keyword_opportunities(
+    session: Session,
+    project: Project,
+) -> None:
+    context = build_keyword_context(session, project)
+    opportunities = session.scalars(
+        select(KeywordOpportunity).where(
+            KeywordOpportunity.project_id == project.id,
+            KeywordOpportunity.source == "dataforseo",
+        )
+    ).all()
+    for opportunity in opportunities:
+        _apply_target_match(
+            opportunity,
+            classify_target(opportunity.keyword, context),
+        )
+
+
 def _upsert_keyword_opportunities(
     session: Session,
     project: Project,
@@ -189,11 +207,6 @@ def _upsert_keyword_opportunities(
             )
         ).all()
     }
-    for opportunity in existing.values():
-        _apply_target_match(
-            opportunity,
-            classify_target(opportunity.keyword, context),
-        )
     synced: list[KeywordOpportunity] = []
     created: set[tuple[str, int, str]] = set()
     updated: set[tuple[str, int, str]] = set()

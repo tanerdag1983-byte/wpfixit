@@ -506,6 +506,8 @@ def test_failed_provider_sync_keeps_existing_opportunities(
             location_code=2528,
             language_code="nl",
             source="dataforseo",
+            target_url=f"{projects.member_project.domain}/wrong-brand/",
+            target_classification="existing_page",
             raw_payload={},
         )
     )
@@ -539,7 +541,10 @@ def test_failed_provider_sync_keeps_existing_opportunities(
     assert response.json() == {
         "detail": "DataForSEO synchronization failed"
     }
-    assert session.get(KeywordOpportunity, "existing-opportunity") is not None
+    existing = session.get(KeywordOpportunity, "existing-opportunity")
+    assert existing is not None
+    assert existing.target_classification == "new_page"
+    assert existing.target_url is None
     failed_run = session.scalar(
         select(KeywordOpportunitySyncRun).where(
             KeywordOpportunitySyncRun.project_id

@@ -19,6 +19,7 @@ from app.domains.dataforseo.service import (
     SAFE_SYNC_ERROR,
     opportunity_impact_score,
     opportunity_payload,
+    reclassify_keyword_opportunities,
     sync_keyword_opportunity_window,
 )
 from app.domains.page_packages.models import PagePackageProposal
@@ -115,6 +116,8 @@ def sync_keyword_opportunities(
         raise HTTPException(status_code=422, detail="DataForSEO connection is disabled")
     password = decrypt_text(connection.encrypted_password)
     provider = DataForSeoProvider(connection.login, password)
+    reclassify_keyword_opportunities(session, project)
+    session.commit()
     try:
         result = sync_keyword_opportunity_window(
             session,

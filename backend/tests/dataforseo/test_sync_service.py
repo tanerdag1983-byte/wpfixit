@@ -7,6 +7,7 @@ from app.domains.dataforseo.models import (
     KeywordOpportunitySyncState,
 )
 from app.domains.dataforseo.service import (
+    reclassify_keyword_opportunities,
     seed_fingerprint,
     sync_keyword_opportunity_window,
 )
@@ -208,7 +209,8 @@ def test_sync_reclassifies_stale_opportunities_not_in_the_current_window(
     )
     session.commit()
 
-    sync_keyword_opportunity_window(session, project, StubProvider([[]]), limit=10)
+    reclassify_keyword_opportunities(session, project)
+    session.commit()
 
     opportunity = session.get(KeywordOpportunity, "stale-opportunity")
     assert opportunity.target_classification == "new_page"
