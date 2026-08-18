@@ -135,11 +135,15 @@ $cronCallback = $GLOBALS['wpfixpilot_actions']['wp_fixpilot_poll_draft_jobs'][0]
 $cronCallback();
 assert($GLOBALS['wpfixpilot_processed_job_count'] === 2);
 
+$GLOBALS['wpfixpilot_options']['wp_fixpilot_outbound_snapshot_status'] = 'error';
+$GLOBALS['wpfixpilot_options']['wp_fixpilot_outbound_snapshot_message'] = 'Snapshot failed';
 ob_start();
 $admin->render_settings_page();
 $settingsPage = ob_get_clean();
 assert(!str_contains($settingsPage, 'wpfx_secret'));
 assert(str_contains($settingsPage, 'Uitgaande verbinding'));
+assert(str_contains($settingsPage, 'Snapshotstatus'));
+assert(str_contains($settingsPage, 'Snapshot failed'));
 
 $GLOBALS['wpfixpilot_capabilities'] = [];
 try {

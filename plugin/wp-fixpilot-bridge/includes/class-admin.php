@@ -233,6 +233,14 @@ final class WPFixPilot_Admin
                 <?php submit_button('Concepttaken ophalen', 'secondary'); ?>
             </form>
             <p><strong>Status:</strong> <?php echo esc_html((string) get_option('wp_fixpilot_outbound_last_status', 'niet verbonden')); ?></p>
+            <p>
+                <strong>Snapshotstatus:</strong>
+                <?php echo esc_html((string) get_option('wp_fixpilot_outbound_snapshot_status', 'nog niet getest')); ?>
+                <?php $snapshotMessage = (string) get_option('wp_fixpilot_outbound_snapshot_message', ''); ?>
+                <?php if ($snapshotMessage !== '') : ?>
+                    - <?php echo esc_html($snapshotMessage); ?>
+                <?php endif; ?>
+            </p>
             <p><strong>Laatste contact:</strong> <?php echo esc_html((string) get_option('wp_fixpilot_outbound_last_contact', '')); ?></p>
             <?php $lastError = (string) get_option('wp_fixpilot_outbound_last_error', ''); ?>
             <?php if ($lastError !== '') : ?>

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP FixPilot Bridge
  * Description: Secure inventory and publishing bridge for WP FixPilot.
- * Version: 0.3.34
+ * Version: 0.3.35
  * Requires at least: 6.5
  * Requires PHP: 8.1
  */
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPFIXPILOT_BRIDGE_VERSION', '0.3.34');
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.35');
 
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';
@@ -89,14 +89,30 @@ add_action('wp_fixpilot_poll_draft_jobs', static function (): void {
             $projectId,
             $projectKey
         );
-        $client->process_snapshots(new WPFixPilot_Blueprint_Controller([
+        $result = $client->process_snapshots(new WPFixPilot_Blueprint_Controller([
             new WPFixPilot_ACF_Blueprint_Adapter(),
             new WPFixPilot_Elementor_Adapter(),
             new WPFixPilot_WPBakery_Adapter(),
             new WPFixPilot_Bricks_Adapter(),
             new WPFixPilot_Gutenberg_Adapter(),
         ]));
-    } catch (Throwable) {
+        update_option(
+            'wp_fixpilot_outbound_snapshot_status',
+            is_wp_error($result) ? 'error' : ($result > 0 ? 'completed' : 'empty'),
+            false
+        );
+        update_option(
+            'wp_fixpilot_outbound_snapshot_message',
+            is_wp_error($result) ? $result->get_error_message() : '',
+            false
+        );
+    } catch (Throwable $error) {
+        update_option('wp_fixpilot_outbound_snapshot_status', 'error', false);
+        update_option(
+            'wp_fixpilot_outbound_snapshot_message',
+            substr($error->getMessage(), 0, 500),
+            false
+        );
         return;
     }
 }, 5);
