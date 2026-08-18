@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP FixPilot Bridge
  * Description: Secure inventory and publishing bridge for WP FixPilot.
- * Version: 0.3.33
+ * Version: 0.3.34
  * Requires at least: 6.5
  * Requires PHP: 8.1
  */
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPFIXPILOT_BRIDGE_VERSION', '0.3.33');
+define('WPFIXPILOT_BRIDGE_VERSION', '0.3.34');
 
 require_once __DIR__ . '/includes/class-auth.php';
 require_once __DIR__ . '/includes/class-admin.php';
@@ -89,7 +89,7 @@ add_action('wp_fixpilot_poll_draft_jobs', static function (): void {
             $projectId,
             $projectKey
         );
-        $client->process_next_snapshot(new WPFixPilot_Blueprint_Controller([
+        $client->process_snapshots(new WPFixPilot_Blueprint_Controller([
             new WPFixPilot_ACF_Blueprint_Adapter(),
             new WPFixPilot_Elementor_Adapter(),
             new WPFixPilot_WPBakery_Adapter(),

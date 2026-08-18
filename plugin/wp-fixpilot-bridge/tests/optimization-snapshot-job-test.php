@@ -432,6 +432,31 @@ assert(str_ends_with(
     '/wordpress-snapshot-jobs/snapshot-job-1/complete'
 ));
 
+$GLOBALS['wpfixpilot_optimization_responses'] = [
+    optimization_response(200, [
+        'job' => [
+            'id' => 'snapshot-job-batch-1',
+            'source_post_id' => 42,
+            'source_url' => get_permalink(42),
+            'source_content_hash' => str_repeat('0', 64),
+        ],
+        'claim_token' => 'snapshot-batch-one-valid-claim-token',
+    ]),
+    optimization_response(200, ['state' => 'failed']),
+    optimization_response(200, [
+        'job' => [
+            'id' => 'snapshot-job-batch-2',
+            'source_post_id' => 42,
+            'source_url' => get_permalink(42),
+            'source_content_hash' => $outboundIdentity['content_hash'],
+        ],
+        'claim_token' => 'snapshot-batch-two-valid-claim-token',
+    ]),
+    optimization_response(200, ['state' => 'completed']),
+    optimization_response(204),
+];
+assert($client->process_snapshots($controller) === 1);
+
 $staleIdentity = $outboundIdentity['content_hash'];
 $GLOBALS['wpfixpilot_posts'][42]->post_title = 'Changed before snapshot';
 $freshIdentity = optimization_source_hash(42);
@@ -452,7 +477,9 @@ $GLOBALS['wpfixpilot_optimization_responses'] = [
 ];
 $sourceDrift = $client->process_next_snapshot($controller);
 $sourceDriftRequest = json_decode(
-    $GLOBALS['wpfixpilot_optimization_requests'][3]['args']['body'],
+    $GLOBALS['wpfixpilot_optimization_requests'][array_key_last(
+        $GLOBALS['wpfixpilot_optimization_requests']
+    )]['args']['body'],
     true
 );
 assert(is_wp_error($sourceDrift));

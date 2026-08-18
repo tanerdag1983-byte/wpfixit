@@ -149,6 +149,29 @@ final class WPFixPilot_Outbound_Client
         return $completed;
     }
 
+    public function process_snapshots(object $controller, int $limit = 10): int|WP_Error
+    {
+        $processed = 0;
+        for ($attempt = 0; $attempt < $limit; $attempt++) {
+            $result = $this->process_next_snapshot($controller);
+            if ($result === null) {
+                break;
+            }
+            if (is_wp_error($result)) {
+                $code = method_exists($result, 'get_error_code')
+                    ? $result->get_error_code()
+                    : (string) ($result->code ?? '');
+                if ($code === 'wp_fixpilot_snapshot_source_changed') {
+                    continue;
+                }
+                return $result;
+            }
+            $processed++;
+        }
+
+        return $processed;
+    }
+
     /** @param array<string, mixed> $draft */
     public function complete(
         string $jobId,
